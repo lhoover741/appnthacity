@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Applications | NThaCityRP</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="topbar container">
+      <a class="brand" href="index.html">NThaCityRP</a>
+      <button class="nav-toggle" aria-label="Open navigation">Menu</button>
+      <nav class="global-nav" aria-label="Main navigation">
+        <a href="index.html">Home</a>
+        <a href="rules.html">Rules</a>
+        <a href="civilian.html">Civilian Registration</a>
+        <a href="police.html">Police / CAD</a>
+        <a href="dmv.html">DMV</a>
+        <a href="businesses.html">Businesses</a>
+        <a href="applications.html">Applications</a>
+        <a href="donations.html">Donations</a>
+        <a href="complaints.html">Complaints</a>
+        <a class="button button-ghost" href="join.html">Join Discord</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel section page-hero">
+      <div class="container">
+        <p class="eyebrow">Role application center</p>
+        <h1>Applications</h1>
+        <p class="intro">Submit your interest for police, EMS, staff, business, gang, court, and DMV roles through a structured application process.</p>
+      </div>
+    </section>
+
+    <section class="container section cards-overview">
+      <div class="card-grid">
+        <article class="card feature-card">
+          <h3>Police Department</h3>
+          <p>Apply to join the police force and work on dispatch, investigations, and community safety.</p>
+        </article>
+        <article class="card feature-card">
+          <h3>EMS</h3>
+          <p>Join medical response teams to support injury RP, rescue scenes, and hospital roleplay.</p>
+        </article>
+        <article class="card feature-card">
+          <h3>Staff</h3>
+          <p>Help maintain community spaces, coordinate events, and support member experience.</p>
+        </article>
+        <article class="card feature-card">
+          <h3>Business Owner</h3>
+          <p>Request approval for storefronts, clubs, dealerships, and commercial faction operations.</p>
+        </article>
+        <article class="card feature-card">
+          <h3>Gang / Faction</h3>
+          <p>Apply for leadership or membership in a gang, crew, or street organization.</p>
+        </article>
+        <article class="card feature-card">
+          <h3>Court / Judge / Lawyer</h3>
+          <p>Take on legal roles that shape justice RP, trials, and courtroom scenes.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel section form-panel">
+      <div class="container">
+        <h2>Application form</h2>
+        <form id="application-form" class="system-form">
+          <div class="form-grid">
+            <label><span>Discord username</span><input name="appDiscord" type="text" required /></label>
+            <label><span>Character name</span><input name="appCharacter" type="text" required /></label>
+            <label><span>Application type</span><select name="applicationType" required><option value="">Select</option><option>Police Department</option><option>EMS</option><option>Staff</option><option>Business Owner</option><option>Gang / Faction</option><option>Court / Judge / Lawyer</option><option>DMV Worker</option></select></label>
+            <label><span>Age confirmation</span><select name="ageConfirmation" required><option value="">Select</option><option>18+</option><option>Under 18</option></select></label>
+            <label><span>RP experience</span><textarea name="experience" rows="3" required></textarea></label>
+            <label><span>Why do you want this role?</span><textarea name="roleReason" rows="3" required></textarea></label>
+            <label><span>Availability</span><input name="availability" type="text" placeholder="Evenings / Weekends" required /></label>
+            <label class="full-width"><span>Agreement to follow rules</span><select name="applicationAgreement" required><option value="">Select</option><option>I agree to follow all server rules and role requirements.</option><option>I do not agree.</option></select></label>
+          </div>
+          <div class="form-actions">
+            <button class="button button-primary" type="submit">Submit Application</button>
+          </div>
+          <div class="form-status" id="application-status"></div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <p>&copy; <span class="current-year"></span> NThaCityRP — Role application hub.</p>
+      <p>Application entries are captured locally and ready for future integration.</p>
+    </div>
+  </footer>
+
+  <script src="assets/js/main.js"></script>
+</body>
+</html>

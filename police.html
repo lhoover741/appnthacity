@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Police / CAD | NThaCityRP</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="topbar container">
+      <a class="brand" href="index.html">NThaCityRP</a>
+      <button class="nav-toggle" aria-label="Open navigation">Menu</button>
+      <nav class="global-nav" aria-label="Main navigation">
+        <a href="index.html">Home</a>
+        <a href="rules.html">Rules</a>
+        <a href="civilian.html">Civilian Registration</a>
+        <a href="police.html">Police / CAD</a>
+        <a href="dmv.html">DMV</a>
+        <a href="businesses.html">Businesses</a>
+        <a href="applications.html">Applications</a>
+        <a href="donations.html">Donations</a>
+        <a href="complaints.html">Complaints</a>
+        <a class="button button-ghost" href="join.html">Join Discord</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero page-hero panel">
+      <div class="container hero-grid">
+        <div>
+          <p class="eyebrow">Law enforcement command</p>
+          <h1>Police Department / CAD</h1>
+          <p class="intro">Official law enforcement hub for dispatch, warrants, arrests, reports, evidence, and officer activity.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#cad-dashboard">Open CAD Dashboard</a>
+            <a class="button button-secondary" href="#dispatch-form">Create 911 Call</a>
+            <a class="button button-secondary" href="#warrant-form">Add Warrant</a>
+          </div>
+        </div>
+        <div class="hero-panel card">
+          <h2>Law enforcement hub</h2>
+          <ul class="feature-list">
+            <li>Officers enforce RP law and manage traffic stops.</li>
+            <li>Respond to /911 calls and process arrests.</li>
+            <li>Control scenes professionally and remain in character.</li>
+            <li>Police cannot be killed unless approved by host/owner.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="container section content-grid">
+      <article class="card info-card">
+        <h2>Police Department overview</h2>
+        <ul>
+          <li>Officers enforce RP law and manage traffic stops.</li>
+          <li>Respond to /911 calls with procedure and authority.</li>
+          <li>Process arrests, evidence, and scene control.</li>
+          <li>Officers must stay in character and follow server rules.</li>
+          <li>Police cannot be killed unless scene is approved by host/owner.</li>
+        </ul>
+      </article>
+      <article class="card info-card">
+        <h2>Dispatch and investigation</h2>
+        <p>Use this interface to coordinate active units, identify active warrants, manage recent arrests, and keep investigative notes in the NThaCityRP system.</p>
+      </article>
+    </section>
+
+    <section class="panel section map-panel">
+      <div class="container">
+        <div class="panel-header">
+          <h2>Los Santos Interactive Map</h2>
+          <div class="filter-toolbar">
+            <button class="badge filter-btn active" data-filter="all">All</button>
+            <button class="badge filter-btn" data-filter="police">Police</button>
+            <button class="badge filter-btn" data-filter="dmv">DMV</button>
+            <button class="badge filter-btn" data-filter="business">Businesses</button>
+            <button class="badge filter-btn" data-filter="gang">Gangs</button>
+            <button class="badge filter-btn" data-filter="emergency">Emergency</button>
+            <button class="badge filter-btn" data-filter="court">Court</button>
+          </div>
+        </div>
+        <div class="map-panel-inner">
+          <iframe src="https://gta-5-map.com" class="gta-map-iframe" title="GTA 5 Los Santos Map" frameborder="0" allowfullscreen="true"></iframe>
+          <div id="map-details" class="map-details">
+            <div class="empty-state">
+              <div class="empty-icon">📍</div>
+              <h3>Click a location</h3>
+              <p>Select a pin on the map to view details.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel section cad-panel">
+      <div class="container">
+        <div class="panel-header">
+          <h2>CAD Command Center</h2>
+          <p>Real-time dispatch dashboard for law enforcement operations.</p>
+        </div>
+        <div class="command-dashboard">
+          <div class="dashboard-card" id="active-units-card">
+            <div class="card-icon">👮</div>
+            <span>Active Units</span>
+            <strong id="active-units">0</strong>
+            <div class="card-status">Available</div>
+            <div class="card-desc">Officers on duty</div>
+          </div>
+          <div class="dashboard-card" id="pending-calls-card">
+            <div class="card-icon">📞</div>
+            <span>Pending Calls</span>
+            <strong id="pending-calls">0</strong>
+            <div class="card-status badge badge-alert">Live</div>
+            <div class="card-desc">911 calls awaiting response</div>
+          </div>
+          <div class="dashboard-card" id="critical-calls-card">
+            <div class="card-icon">🚨</div>
+            <span>Critical Calls</span>
+            <strong id="critical-calls">0</strong>
+            <div class="card-status badge priority-critical">Priority</div>
+            <div class="card-desc">High-priority emergencies</div>
+          </div>
+          <div class="dashboard-card" id="active-warrants-card">
+            <div class="card-icon">📋</div>
+            <span>Active Warrants</span>
+            <strong id="active-warrants">0</strong>
+            <div class="card-status badge badge-warning">Outstanding</div>
+            <div class="card-desc">Unserved arrest warrants</div>
+          </div>
+          <div class="dashboard-card" id="recent-arrests-card">
+            <div class="card-icon">🔒</div>
+            <span>Recent Arrests</span>
+            <strong id="recent-arrests">0</strong>
+            <div class="card-status badge badge-success">Filed</div>
+            <div class="card-desc">Arrest reports this week</div>
+          </div>
+          <div class="dashboard-card" id="open-reports-card">
+            <div class="card-icon">📄</div>
+            <span>Open Reports</span>
+            <strong id="open-reports">0</strong>
+            <div class="card-status badge badge-primary">Active</div>
+            <div class="card-desc">Pending investigations</div>
+          </div>
+          <div class="dashboard-card" id="evidence-items-card">
+            <div class="card-icon">📦</div>
+            <span>Evidence Items</span>
+            <strong id="evidence-items">0</strong>
+            <div class="card-status badge badge-secondary">Locked</div>
+            <div class="card-desc">Items in lock-up</div>
+          </div>
+          <div class="dashboard-card" id="traffic-stops-card">
+            <div class="card-icon">🚗</div>
+            <span>Traffic Stops</span>
+            <strong id="traffic-stops">0</strong>
+            <div class="card-status badge badge-primary">Logged</div>
+            <div class="card-desc">Stops this week</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="container section dispatch-section">
+      <div class="dispatch-layout">
+        <div class="dispatch-main">
+          <div class="panel call-queue-panel">
+            <div class="panel-header">
+              <h2>Active 911 Call Queue</h2>
+              <p>Emergency calls requiring dispatch response.</p>
+            </div>
+            <div id="call-queue" class="call-queue">
+              <div class="empty-state">
+                <div class="empty-icon">📞</div>
+                <h3>No active calls</h3>
+                <p>All emergency calls have been resolved.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel warrants-panel">
+            <div class="panel-header">
+              <h2>Active Warrants</h2>
+              <div class="filter-toolbar">
+                <button class="badge filter-btn active" data-filter="active">Active</button>
+                <button class="badge filter-btn" data-filter="served">Served</button>
+                <button class="badge filter-btn" data-filter="expired">Expired</button>
+                <button class="badge filter-btn" data-filter="withdrawn">Withdrawn</button>
+                <button class="badge filter-btn" data-filter="all">All</button>
+              </div>
+            </div>
+            <div id="warrants-table" class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Warrant ID</th>
+                    <th>Suspect</th>
+                    <th>Charges</th>
+                    <th>Issued By</th>
+                    <th>Expiration</th>
+                    <th>Status</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="warrants-tbody">
+                  <tr>
+                    <td colspan="8" class="empty-row">No active warrants found.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel arrests-panel">
+            <div class="panel-header">
+              <h2>Arrest Records</h2>
+              <p>Recent arrest documentation and case details.</p>
+            </div>
+            <div id="arrests-table" class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Arrest ID</th>
+                    <th>Suspect</th>
+                    <th>Charges</th>
+                    <th>Officer</th>
+                    <th>Location</th>
+                    <th>Jail Time/Fine</th>
+                    <th>Evidence</th>
+                    <th>Created Date</th>
+                  </tr>
+                </thead>
+                <tbody id="arrests-tbody">
+                  <tr>
+                    <td colspan="8" class="empty-row">No arrest records have been filed locally yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel traffic-panel">
+            <div class="panel-header">
+              <h2>Traffic Stop Log</h2>
+              <p>Vehicle stops, citations, and enforcement actions.</p>
+            </div>
+            <div id="traffic-table" class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Stop ID</th>
+                    <th>Officer</th>
+                    <th>Driver</th>
+                    <th>Plate</th>
+                    <th>Vehicle</th>
+                    <th>Location</th>
+                    <th>Reason</th>
+                    <th>Outcome</th>
+                    <th>Notes</th>
+                    <th>Time</th>
+                  </tr>
+                </thead>
+                <tbody id="traffic-tbody">
+                  <tr>
+                    <td colspan="10" class="empty-row">No traffic stops logged yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel evidence-panel">
+            <div class="panel-header">
+              <h2>Evidence Lock-Up</h2>
+              <p>Secure storage for case evidence and digital files.</p>
+            </div>
+            <div id="evidence-table" class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Evidence ID</th>
+                    <th>Case Number</th>
+                    <th>Officer</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Link</th>
+                    <th>Storage Status</th>
+                    <th>Created Date</th>
+                  </tr>
+                </thead>
+                <tbody id="evidence-tbody">
+                  <tr>
+                    <td colspan="8" class="empty-row">No evidence submitted yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="dispatch-sidebar">
+          <div class="panel activity-feed-panel">
+            <div class="panel-header">
+              <h2>CAD Activity Feed</h2>
+              <p>Recent system actions and updates.</p>
+            </div>
+            <div id="activity-feed" class="activity-feed">
+              <div class="empty-state">
+                <div class="empty-icon">📋</div>
+                <h3>No recent activity</h3>
+                <p>System activity will appear here.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel officers-panel">
+            <div class="panel-header">
+              <h2>Officer Status Board</h2>
+              <p>Unit availability and current assignments.</p>
+            </div>
+            <div id="officers-board" class="officers-board">
+              <!-- Officer cards will be populated by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="container section forms-full">
+      <div class="panel-header">
+        <h2>Police operations forms</h2>
+        <p>Use these forms to capture dispatch events, stops, arrests, evidence, and warrants in the frontend system.</p>
+      </div>
+      <div class="card-grid">
+        <article class="card form-card">
+          <h3>Create 911 Call</h3>
+          <form id="dispatch-form" class="system-form">
+            <label><span>Caller name</span><input name="callerName" type="text" required /></label>
+            <label><span>Location</span><input name="location" type="text" placeholder="Legion Square" required /></label>
+            <label><span>Incident type</span><select name="incidentType" required><option value="">Select</option><option>Robbery</option><option>Assault</option><option>Suspicious activity</option></select></label>
+            <label><span>Description</span><textarea name="description" rows="3" required></textarea></label>
+            <label><span>Priority level</span><select name="priority" required><option value="">Select</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+            <label><span>Assigned unit</span><input name="assignedUnit" type="text" placeholder="Unit 12" required /></label>
+            <label><span>Status</span><select name="status" required><option value="">Select</option><option>New</option><option>Assigned</option><option>En Route</option><option>On Scene</option><option>Closed</option></select></label>
+            <button class="button button-primary" type="submit">Submit Call</button>
+            <div class="form-status" id="dispatch-status"></div>
+          </form>
+        </article>
+
+        <article class="card form-card">
+          <h3>Create Traffic Stop</h3>
+          <form id="traffic-form" class="system-form">
+            <label><span>Officer name</span><input name="officerName" type="text" required /></label>
+            <label><span>Location</span><input name="trafficLocation" type="text" required /></label>
+            <label><span>Vehicle make/model</span><input name="vehicleInfo" type="text" required /></label>
+            <label><span>Plate number</span><input name="trafficPlate" type="text" required /></label>
+            <label><span>Driver name</span><input name="driverName" type="text" required /></label>
+            <label><span>Reason for stop</span><textarea name="trafficReason" rows="3" required></textarea></label>
+            <label><span>Outcome</span><select name="trafficOutcome" required><option value="">Select</option><option>Citation</option><option>Warning</option><option>Arrest</option></select></label>
+            <button class="button button-primary" type="submit">Log Traffic Stop</button>
+            <div class="form-status" id="traffic-status"></div>
+          </form>
+        </article>
+      </div>
+
+      <div class="card-grid">
+        <article class="card form-card">
+          <h3>File Arrest Report</h3>
+          <form id="arrest-form" class="system-form">
+            <label><span>Suspect name</span><input name="suspectName" type="text" required /></label>
+            <label><span>Charges</span><input name="charges" type="text" required /></label>
+            <label><span>Arresting officer</span><input name="arrestingOfficer" type="text" required /></label>
+            <label><span>Location</span><input name="arrestLocation" type="text" required /></label>
+            <label><span>Evidence attached</span><input name="evidenceAttached" type="text" placeholder="Photos / case file" required /></label>
+            <label><span>Jail time / fine</span><input name="penalty" type="text" required /></label>
+            <label class="full-width"><span>Report notes</span><textarea name="reportNotes" rows="3"></textarea></label>
+            <button class="button button-primary" type="submit">Submit Arrest</button>
+            <div class="form-status" id="arrest-status"></div>
+          </form>
+        </article>
+
+        <article class="card form-card">
+          <h3>Submit Evidence</h3>
+          <form id="evidence-form" class="system-form">
+            <label><span>Case number</span><input name="caseNumber" type="text" required /></label>
+            <label><span>Officer</span><input name="evidenceOfficer" type="text" required /></label>
+            <label><span>Evidence type</span><select name="evidenceType" required><option value="">Select</option><option>Photo</option><option>Video clip</option><option>Weapon</option><option>Document</option></select></label>
+            <label><span>Description</span><textarea name="evidenceDescription" rows="3" required></textarea></label>
+            <label><span>Clip / screenshot link</span><input name="evidenceLink" type="url" placeholder="https://" /></label>
+            <label><span>Storage status</span><select name="storageStatus" required><option value="">Select</option><option>Locked</option><option>In transit</option><option>Filed</option></select></label>
+            <button class="button button-primary" type="submit">Log Evidence</button>
+            <div class="form-status" id="evidence-status"></div>
+          </form>
+        </article>
+      </div>
+
+      <div class="card-grid">
+        <article class="card form-card">
+          <h3>Add Warrant</h3>
+          <form id="warrant-form" class="system-form">
+            <label><span>Suspect name</span><input name="warrantName" type="text" required /></label>
+            <label><span>Charges</span><input name="warrantCharges" type="text" required /></label>
+            <label><span>Issued by</span><input name="warrantIssuer" type="text" required /></label>
+            <label><span>Expiration</span><input name="warrantExpiration" type="date" required /></label>
+            <label><span>Status</span><select name="warrantStatus" required><option value="">Select</option><option>Active</option><option>Suspended</option><option>Cleared</option></select></label>
+            <label class="full-width"><span>Notes</span><textarea name="warrantNotes" rows="3"></textarea></label>
+            <button class="button button-primary" type="submit">Create Warrant</button>
+            <div class="form-status" id="warrant-status"></div>
+          </form>
+        </article>
+
+        <article class="card form-card">
+          <h3>Lookup Civilian</h3>
+          <form id="civilian-lookup-form" class="system-form">
+            <label><span>Civilian name</span><input name="lookupName" type="text" required /></label>
+            <label><span>Date of birth</span><input name="lookupDob" type="date" /></label>
+            <label><span>License number</span><input name="lookupLicense" type="text" /></label>
+            <button class="button button-primary" type="submit">Search Civilian</button>
+            <div class="form-status" id="civilian-lookup-status"></div>
+          </form>
+        </article>
+      </div>
+
+      <div class="card-grid">
+        <article class="card form-card">
+          <h3>Lookup Vehicle Plate</h3>
+          <form id="plate-lookup-form" class="system-form">
+            <label><span>Plate number</span><input name="plateLookup" type="text" required /></label>
+            <label><span>Vehicle make/model</span><input name="plateVehicle" type="text" /></label>
+            <label><span>Registered owner</span><input name="plateOwner" type="text" /></label>
+            <button class="button button-primary" type="submit">Search Plate</button>
+            <div class="form-status" id="plate-lookup-status"></div>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <section class="container section lookup-results">
+      <div id="civilian-lookup-results"></div>
+      <div id="plate-lookup-results"></div>
+    </section>
+
+    <section class="container section content-grid">
+      <article class="card rule-card">
+        <h2>Police rules</h2>
+        <ul>
+          <li>First police interaction must be obeyed.</li>
+          <li>Officers must control scenes professionally.</li>
+          <li>No abuse of police power or arbitrary enforcement.</li>
+          <li>Police must use proper RP procedure for stops, arrests, and detentions.</li>
+          <li>Arrests should be documented in CAD and evidence logged.</li>
+          <li>Evidence should be placed in police evidence lock-up.</li>
+          <li>Complaints against officers go through complaint-ticket channels.</li>
+          <li>Killing cops is not allowed unless approved by host/owner.</li>
+        </ul>
+      </article>
+      <article class="card rule-card">
+        <h2>Discord channel references</h2>
+        <ul>
+          <li>#911-dispatch</li>
+          <li>#traffic-stop-1</li>
+          <li>#traffic-stop-2</li>
+          <li>#traffic-stop-3</li>
+          <li>JAIL VOICE</li>
+          <li>POLICE INTERROGATION ROOM</li>
+          <li>#active-warrants</li>
+          <li>#police-evidence-lock-up</li>
+          <li>#criminal-files</li>
+          <li>#city-hall</li>
+          <li>Courtroom</li>
+          <li>JuryDuty</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <p>&copy; <span class="current-year"></span> NThaCityRP — Police terminal and CAD.</p>
+      <p>Keep all police actions documented in the RP system and follow host-approved procedures.</p>
+    </div>
+  </footer>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="assets/js/main.js"></script>
+</body>
+</html>
