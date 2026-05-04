@@ -227,6 +227,7 @@
       <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('complaints', this)">Complaints</button>
         <button class="tab-btn" onclick="switchTab('applications', this)">Applications</button>
+        <button class="tab-btn" onclick="switchTab('status', this)">Server Status</button>
       </div>
 
       <!-- COMPLAINTS TAB -->
@@ -247,6 +248,52 @@
           <input class="search-box" type="text" placeholder="Search complaints…" oninput="renderComplaints()" id="search-complaints" />
         </div>
         <div class="complaints-list" id="complaints-list"><div class="loading">Loading…</div></div>
+      </div>
+
+      <!-- SERVER STATUS TAB -->
+      <div class="tab-panel" id="tab-status">
+        <div class="status-control-card" style="background:var(--surface-strong);border:1px solid #222;border-radius:var(--radius);padding:32px;max-width:560px;">
+          <h3 style="margin:0 0 24px;font-size:1.1rem;">City Status Control</h3>
+
+          <div style="margin-bottom:20px;">
+            <div class="detail-label" style="margin-bottom:10px;">City Status</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;" id="status-btns">
+              <button class="action-btn" id="sbtn-ACTIVE" onclick="setStatusMode('ACTIVE')" style="background:rgba(255,45,45,0.2);color:var(--accent);border:1px solid rgba(255,45,45,0.4);">ACTIVE</button>
+              <button class="action-btn" id="sbtn-OFFLINE" onclick="setStatusMode('OFFLINE')" style="background:rgba(85,85,85,0.2);color:#aaa;border:1px solid rgba(85,85,85,0.4);">OFFLINE</button>
+              <button class="action-btn" id="sbtn-MAINTENANCE" onclick="setStatusMode('MAINTENANCE')" style="background:rgba(74,158,255,0.2);color:var(--blue);border:1px solid rgba(74,158,255,0.4);">MAINTENANCE</button>
+              <button class="action-btn" id="sbtn-WHITELIST" onclick="setStatusMode('WHITELIST')" style="background:rgba(245,166,35,0.2);color:var(--yellow);border:1px solid rgba(245,166,35,0.4);">WHITELIST</button>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+            <div>
+              <div class="detail-label" style="margin-bottom:6px;">Players Online</div>
+              <input type="number" id="input-players" min="0" max="999" placeholder="0"
+                style="width:100%;padding:10px 12px;background:#0b0b0b;border:1px solid #333;border-radius:8px;color:var(--text);font-size:0.95rem;outline:none;" />
+            </div>
+            <div>
+              <div class="detail-label" style="margin-bottom:6px;">Max Players</div>
+              <input type="number" id="input-maxplayers" min="1" max="999" placeholder="32"
+                style="width:100%;padding:10px 12px;background:#0b0b0b;border:1px solid #333;border-radius:8px;color:var(--text);font-size:0.95rem;outline:none;" />
+            </div>
+          </div>
+
+          <div style="margin-bottom:24px;">
+            <div class="detail-label" style="margin-bottom:6px;">Custom Message <span style="color:#444;font-weight:400;">(shown on homepage)</span></div>
+            <input type="text" id="input-message" maxlength="200" placeholder="e.g. Events tonight at 8PM EST"
+              style="width:100%;padding:10px 12px;background:#0b0b0b;border:1px solid #333;border-radius:8px;color:var(--text);font-size:0.95rem;outline:none;" />
+          </div>
+
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button class="action-btn btn-resolve" style="padding:12px 28px;font-size:0.9rem;" onclick="saveServerStatus()">Save & Publish</button>
+            <span id="status-save-msg" style="font-size:0.85rem;color:var(--green);display:none;">Status updated!</span>
+          </div>
+
+          <div style="margin-top:24px;padding-top:20px;border-top:1px solid #1e1e1e;">
+            <div class="detail-label" style="margin-bottom:8px;">Current Live Status</div>
+            <div id="status-preview" style="color:var(--muted);font-size:0.9rem;">Loading…</div>
+          </div>
+        </div>
       </div>
 
       <!-- APPLICATIONS TAB -->
@@ -294,6 +341,69 @@
       btn.classList.add('active');
       document.getElementById('tab-' + tab).classList.add('active');
       if (tab === 'applications' && allApplications.length === 0) loadApplications();
+      if (tab === 'status') loadServerStatus();
+    }
+
+    /* ── SERVER STATUS ── */
+    let currentStatusMode = 'ACTIVE';
+
+    function setStatusMode(mode) {
+      currentStatusMode = mode;
+      document.querySelectorAll('#status-btns .action-btn').forEach(b => {
+        b.style.outline = 'none';
+        b.style.boxShadow = 'none';
+      });
+      const btn = document.getElementById('sbtn-' + mode);
+      if (btn) btn.style.boxShadow = '0 0 0 2px white';
+    }
+
+    async function loadServerStatus() {
+      try {
+        const res = await fetch('/api/server-status');
+        const s = await res.json();
+        currentStatusMode = s.cityStatus || 'ACTIVE';
+        document.getElementById('input-players').value = s.playerCount ?? 0;
+        document.getElementById('input-maxplayers').value = s.maxPlayers ?? 32;
+        document.getElementById('input-message').value = s.customMessage || '';
+        setStatusMode(currentStatusMode);
+        renderStatusPreview(s);
+      } catch {
+        document.getElementById('status-preview').textContent = 'Failed to load status.';
+      }
+    }
+
+    function renderStatusPreview(s) {
+      const labels = { ACTIVE:'🟢 ACTIVE', OFFLINE:'🔴 OFFLINE', MAINTENANCE:'🔵 MAINTENANCE', WHITELIST:'🟡 WHITELIST' };
+      document.getElementById('status-preview').innerHTML = `
+        <strong>${labels[s.cityStatus] || s.cityStatus}</strong> &nbsp;·&nbsp;
+        ${s.playerCount} / ${s.maxPlayers} players
+        ${s.customMessage ? `&nbsp;·&nbsp; "${s.customMessage}"` : ''}
+        ${s.lastUpdated ? `<br><span style="color:#444;font-size:0.8rem;">Last saved: ${new Date(s.lastUpdated).toLocaleString()}</span>` : ''}
+      `;
+    }
+
+    async function saveServerStatus() {
+      const payload = {
+        cityStatus: currentStatusMode,
+        playerCount: parseInt(document.getElementById('input-players').value) || 0,
+        maxPlayers: parseInt(document.getElementById('input-maxplayers').value) || 32,
+        customMessage: document.getElementById('input-message').value.trim()
+      };
+      try {
+        const res = await fetch('/api/server-status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (json.success) {
+          renderStatusPreview(json.status);
+          const msg = document.getElementById('status-save-msg');
+          msg.style.display = 'inline';
+          setTimeout(() => { msg.style.display = 'none'; }, 2500);
+        }
+      } catch {
+        alert('Failed to save status. Try again.');
+      }
     }
 
     async function doLogin() {

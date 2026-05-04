@@ -17,6 +17,29 @@ app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
 
 COMPLAINTS_FILE = 'complaints_data.json'
 APPLICATIONS_FILE = 'applications_data.json'
+SERVER_STATUS_FILE = 'server_status.json'
+
+DEFAULT_STATUS = {
+    'cityStatus': 'ACTIVE',
+    'playerCount': 0,
+    'maxPlayers': 32,
+    'customMessage': '24/7 dispatch channel live',
+    'lastUpdated': None
+}
+
+
+def load_server_status():
+    if os.path.exists(SERVER_STATUS_FILE):
+        with open(SERVER_STATUS_FILE, 'r') as f:
+            return json.load(f)
+    return dict(DEFAULT_STATUS)
+
+
+def save_server_status(status):
+    status['lastUpdated'] = datetime.now().isoformat()
+    with open(SERVER_STATUS_FILE, 'w') as f:
+        json.dump(status, f, indent=2)
+    return status
 
 
 def load_applications():
@@ -498,6 +521,35 @@ def delete_application(app_id):
         return jsonify({'success': False, 'error': 'Application not found'}), 404
     save_applications(applications)
     return jsonify({'success': True})
+
+
+@app.route('/api/server-status', methods=['GET'])
+def get_server_status():
+    return jsonify(load_server_status())
+
+
+@app.route('/api/server-status', methods=['POST'])
+@admin_required
+def update_server_status():
+    data = request.get_json(silent=True) or {}
+    status = load_server_status()
+    valid_statuses = ['ACTIVE', 'OFFLINE', 'MAINTENANCE', 'WHITELIST']
+    if 'cityStatus' in data and data['cityStatus'] in valid_statuses:
+        status['cityStatus'] = data['cityStatus']
+    if 'playerCount' in data:
+        try:
+            status['playerCount'] = max(0, int(data['playerCount']))
+        except (ValueError, TypeError):
+            pass
+    if 'maxPlayers' in data:
+        try:
+            status['maxPlayers'] = max(1, int(data['maxPlayers']))
+        except (ValueError, TypeError):
+            pass
+    if 'customMessage' in data:
+        status['customMessage'] = str(data['customMessage'])[:200]
+    save_server_status(status)
+    return jsonify({'success': True, 'status': status})
 
 
 @app.route('/', defaults={'path': ''})

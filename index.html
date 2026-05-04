@@ -39,13 +39,15 @@
             <a class="button button-secondary" href="police.html">Open Police CAD</a>
           </div>
         </div>
-        <div class="hero-panel card hero-card">
+        <div class="hero-panel card hero-card" id="status-card">
           <h2>City Status</h2>
-          <ul class="status-list">
-            <li><span class="badge badge-alert">ACTIVE</span> 24/7 dispatch channel live</li>
-            <li><span class="badge badge-primary">NEW</span> Civilian registry and plate lookup ready</li>
-            <li><span class="badge badge-secondary">SECURE</span> Roleplay rules enforced by staff</li>
+          <ul class="status-list" id="status-list">
+            <li><span class="badge badge-secondary">LOADING</span> Checking city status…</li>
           </ul>
+          <div id="status-players" style="margin-top:12px;font-size:0.85rem;color:var(--muted);display:none;">
+            <span id="status-player-count"></span>
+          </div>
+          <div id="status-updated" style="margin-top:6px;font-size:0.78rem;color:#444;display:none;"></div>
         </div>
       </div>
     </section>
@@ -135,5 +137,62 @@ CITY: Scene active. Stay in character and follow server procedure.
   </footer>
 
   <script src="assets/js/main.js"></script>
+  <script>
+    (function () {
+      const statusColors = {
+        ACTIVE: 'badge-alert',
+        OFFLINE: 'badge-secondary',
+        MAINTENANCE: 'badge-primary',
+        WHITELIST: 'badge-primary'
+      };
+      const statusMessages = {
+        ACTIVE: 'City is live — join now',
+        OFFLINE: 'Server is currently offline',
+        MAINTENANCE: 'Server undergoing maintenance',
+        WHITELIST: 'Whitelist-only access active'
+      };
+
+      async function fetchStatus() {
+        try {
+          const res = await fetch('/api/server-status');
+          const s = await res.json();
+          const list = document.getElementById('status-list');
+          const badge = statusColors[s.cityStatus] || 'badge-secondary';
+          const msg = statusMessages[s.cityStatus] || s.cityStatus;
+
+          list.innerHTML = `
+            <li><span class="badge ${badge}">${s.cityStatus}</span> ${msg}</li>
+            ${s.customMessage ? `<li><span class="badge badge-secondary">INFO</span> ${s.customMessage}</li>` : ''}
+            <li><span class="badge badge-secondary">SECURE</span> Roleplay rules enforced by staff</li>
+          `;
+
+          const playerEl = document.getElementById('status-players');
+          const playerCount = document.getElementById('status-player-count');
+          if (s.playerCount !== undefined) {
+            playerEl.style.display = 'block';
+            const pct = Math.round((s.playerCount / s.maxPlayers) * 100);
+            playerCount.innerHTML = `
+              <span style="color:var(--text);font-weight:600;">${s.playerCount} / ${s.maxPlayers}</span> players online
+              <div style="margin-top:6px;background:#1a1a1a;border-radius:4px;height:4px;overflow:hidden;">
+                <div style="width:${pct}%;height:100%;background:${s.cityStatus === 'ACTIVE' ? 'var(--accent)' : '#555'};border-radius:4px;transition:width 0.4s;"></div>
+              </div>`;
+          }
+
+          if (s.lastUpdated) {
+            const updated = document.getElementById('status-updated');
+            updated.style.display = 'block';
+            const diff = Math.floor((Date.now() - new Date(s.lastUpdated)) / 60000);
+            updated.textContent = diff < 1 ? 'Updated just now' : `Updated ${diff}m ago`;
+          }
+        } catch {
+          document.getElementById('status-list').innerHTML =
+            '<li><span class="badge badge-secondary">UNKNOWN</span> Status unavailable</li>';
+        }
+      }
+
+      fetchStatus();
+      setInterval(fetchStatus, 30000);
+    })();
+  </script>
 </body>
 </html>
