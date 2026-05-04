@@ -33,9 +33,12 @@ def save_complaint(data):
 
 
 def send_email_notification(complaint):
+    smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(os.environ.get('SMTP_PORT', '465'))
     smtp_email = os.environ.get('SMTP_EMAIL')
     smtp_password = os.environ.get('SMTP_PASSWORD')
     notify_email = os.environ.get('NOTIFY_EMAIL', smtp_email)
+    from_name = os.environ.get('SMTP_FROM_NAME', 'NThaCityRP')
 
     if not smtp_email or not smtp_password:
         logger.warning('Email credentials not configured. Complaint saved but no email sent.')
@@ -44,7 +47,7 @@ def send_email_notification(complaint):
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = f"[NThaCityRP] New Complaint — {complaint['complaintType']} — {complaint['id']}"
-        msg['From'] = smtp_email
+        msg['From'] = f"{from_name} <{smtp_email}>"
         msg['To'] = notify_email
 
         html = f"""
@@ -95,9 +98,16 @@ Desired Resolution:
         msg.attach(MIMEText(plain, 'plain'))
         msg.attach(MIMEText(html, 'html'))
 
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(smtp_email, smtp_password)
-            server.sendmail(smtp_email, notify_email, msg.as_string())
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+                server.login(smtp_email, smtp_password)
+                server.sendmail(smtp_email, notify_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(smtp_email, smtp_password)
+                server.sendmail(smtp_email, notify_email, msg.as_string())
 
         logger.info(f"Email notification sent for complaint {complaint['id']}")
         return True
