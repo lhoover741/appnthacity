@@ -678,6 +678,10 @@ button:focus-visible,
   color: #ff6b6b;
 }
 
+.form-status.success {
+  color: #4caf82;
+}
+
 /* Record preview cards */
 .record-preview {
   background: rgba(17,17,17,0.98);

@@ -87,5 +87,48 @@
   </footer>
 
   <script src="assets/js/main.js"></script>
+  <script>
+    (function () {
+      const form = document.getElementById('complaint-form');
+      const status = document.getElementById('complaint-status');
+      if (!form) return;
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.textContent = 'Submitting…';
+        status.className = 'form-status';
+        status.textContent = '';
+
+        const data = {};
+        new FormData(form).forEach((v, k) => { data[k] = v; });
+
+        try {
+          const res = await fetch('/api/complaint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          const json = await res.json();
+
+          if (json.success) {
+            status.className = 'form-status success';
+            status.textContent = `Complaint ${json.id} submitted successfully. Staff will review it shortly.`;
+            form.reset();
+          } else {
+            status.className = 'form-status error';
+            status.textContent = json.error || 'Submission failed. Please try again.';
+          }
+        } catch (err) {
+          status.className = 'form-status error';
+          status.textContent = 'Network error. Please check your connection and try again.';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Submit Complaint';
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
