@@ -615,6 +615,66 @@ def update_server_status():
     return jsonify({'success': True, 'status': status})
 
 
+@app.route('/api/ai/police-report', methods=['POST'])
+@admin_required
+def ai_police_report():
+    api_key = os.environ.get('OPENAI_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured. Add it in your environment secrets.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    suspect = data.get('suspectName', 'Unknown')
+    charges = data.get('charges', 'Unknown')
+    officer = data.get('arrestingOfficer', 'Unknown')
+    location = data.get('arrestLocation', 'Unknown')
+    evidence = data.get('evidenceAttached', 'None')
+    penalty = data.get('penalty', 'Unknown')
+    notes = data.get('reportNotes', '')
+
+    prompt = f"""You are a police report writer for the NThaCityRP Discord roleplay community set in Los Santos.
+Write a formal, professional police arrest report narrative based on the following details.
+Use third-person past tense, law enforcement language, and keep it immersive but concise (150-220 words).
+
+Suspect: {suspect}
+Charges: {charges}
+Arresting Officer: {officer}
+Arrest Location: {location}
+Evidence: {evidence}
+Penalty: {penalty}
+Officer Notes: {notes if notes else 'None provided'}
+
+Write only the narrative body of the report. Do not include headers, labels, or bullet points."""
+
+    try:
+        payload = json.dumps({
+            'model': 'gpt-4o-mini',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 400,
+            'temperature': 0.7
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            narrative = result['choices'][0]['message']['content'].strip()
+            return jsonify({'success': True, 'narrative': narrative})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenAI API error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenAI error {e.code}: check your API key and billing.'}), 502
+    except Exception as e:
+        logger.error(f'AI report generation failed: {e}')
+        return jsonify({'success': False, 'error': 'Report generation failed. Try again.'}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):

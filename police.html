@@ -375,7 +375,16 @@
             <label><span>Location</span><input name="arrestLocation" type="text" required /></label>
             <label><span>Evidence attached</span><input name="evidenceAttached" type="text" placeholder="Photos / case file" required /></label>
             <label><span>Jail time / fine</span><input name="penalty" type="text" required /></label>
-            <label class="full-width"><span>Report notes</span><textarea name="reportNotes" rows="3"></textarea></label>
+            <label class="full-width">
+              <span style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                Report notes
+                <button type="button" id="ai-report-btn" style="font-size:0.75rem;padding:4px 12px;background:rgba(255,45,45,0.12);color:var(--accent);border:1px solid rgba(255,45,45,0.3);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background 0.2s;" title="Auto-generate a formal report narrative using AI">
+                  <span id="ai-btn-icon">✦</span> AI Generate
+                </button>
+              </span>
+              <textarea name="reportNotes" id="reportNotes" rows="5" placeholder="Describe the incident, circumstances of arrest, and any relevant observations…"></textarea>
+            </label>
+            <div id="ai-report-status" style="font-size:0.82rem;margin-top:-8px;margin-bottom:4px;display:none;"></div>
             <button class="button button-primary" type="submit">Submit Arrest</button>
             <div class="form-status" id="arrest-status"></div>
           </form>
