@@ -681,6 +681,70 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Report generation failed. Try again.'}), 500
 
 
+@app.route('/api/ai/dispatch', methods=['POST'])
+@admin_required
+def ai_dispatch():
+    api_key = os.environ.get('OPENAI_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    caller = data.get('callerName', 'Unknown')
+    location = data.get('location', 'Unknown')
+    description = data.get('description', '')
+
+    prompt = f"""You are an LAPD-style 911 dispatch triage AI for the NThaCityRP Discord roleplay community set in Los Santos.
+Based on the caller info and description, respond with ONLY a valid JSON object with these exact keys:
+- "incidentType": one of exactly ["Robbery", "Assault", "Suspicious activity", "Traffic accident", "Shots fired", "Domestic disturbance", "Drug activity", "Pursuit", "Hostage situation", "Noise complaint"]
+- "priority": one of exactly ["Critical", "High", "Medium", "Low"] — Critical=active threat/shots/hostage, High=robbery/assault in progress, Medium=suspicious/drugs, Low=noise/minor
+- "assignedUnit": a short realistic unit designation string (e.g. "Unit 4", "Unit 12", "K9-02", "Air-1") based on the incident type
+- "status": always return "New"
+- "triage": one sentence (max 20 words) summarising the call for the dispatcher log
+
+Caller: {caller}
+Location: {location}
+Description: {description if description else 'No description provided'}
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'gpt-4o-mini',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 200,
+            'temperature': 0.4,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({
+                'success': True,
+                'incidentType': ai_json.get('incidentType', ''),
+                'priority': ai_json.get('priority', ''),
+                'assignedUnit': ai_json.get('assignedUnit', ''),
+                'status': ai_json.get('status', 'New'),
+                'triage': ai_json.get('triage', '')
+            })
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenAI dispatch error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenAI error {e.code}: check your API key.'}), 502
+    except Exception as e:
+        logger.error(f'AI dispatch triage failed: {e}')
+        return jsonify({'success': False, 'error': 'Triage failed. Try again.'}), 500
+
+
 @app.route('/api/ai/warrant', methods=['POST'])
 @admin_required
 def ai_warrant():

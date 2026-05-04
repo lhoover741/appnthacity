@@ -337,13 +337,53 @@
         <article class="card form-card">
           <h3>Create 911 Call</h3>
           <form id="dispatch-form" class="system-form">
-            <label><span>Caller name</span><input name="callerName" type="text" required /></label>
-            <label><span>Location</span><input name="location" type="text" placeholder="Legion Square" required /></label>
-            <label><span>Incident type</span><select name="incidentType" required><option value="">Select</option><option>Robbery</option><option>Assault</option><option>Suspicious activity</option></select></label>
-            <label><span>Description</span><textarea name="description" rows="3" required></textarea></label>
-            <label><span>Priority level</span><select name="priority" required><option value="">Select</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
-            <label><span>Assigned unit</span><input name="assignedUnit" type="text" placeholder="Unit 12" required /></label>
-            <label><span>Status</span><select name="status" required><option value="">Select</option><option>New</option><option>Assigned</option><option>En Route</option><option>On Scene</option><option>Closed</option></select></label>
+            <label><span>Caller name</span><input name="callerName" id="callerName" type="text" required /></label>
+            <label><span>Location</span><input name="location" id="dispatchLocation" type="text" placeholder="Legion Square" required /></label>
+            <label>
+              <span style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                Description
+                <button type="button" id="ai-dispatch-btn" style="font-size:0.75rem;padding:4px 12px;background:rgba(255,45,45,0.12);color:var(--accent);border:1px solid rgba(255,45,45,0.3);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;" title="AI triage: auto-fill incident type, priority, unit, and status">
+                  <span id="ai-dispatch-icon">✦</span> AI Triage
+                </button>
+              </span>
+              <textarea name="description" id="dispatchDescription" rows="3" required placeholder="Describe the incident — AI will classify type, priority, and suggest a unit…"></textarea>
+            </label>
+            <div id="ai-dispatch-status" style="font-size:0.82rem;margin-top:-8px;margin-bottom:4px;display:none;"></div>
+            <label><span>Incident type</span>
+              <select name="incidentType" id="dispatchIncidentType" required>
+                <option value="">Select</option>
+                <option>Robbery</option>
+                <option>Assault</option>
+                <option>Suspicious activity</option>
+                <option>Traffic accident</option>
+                <option>Shots fired</option>
+                <option>Domestic disturbance</option>
+                <option>Drug activity</option>
+                <option>Pursuit</option>
+                <option>Hostage situation</option>
+                <option>Noise complaint</option>
+              </select>
+            </label>
+            <label><span>Priority level</span>
+              <select name="priority" id="dispatchPriority" required>
+                <option value="">Select</option>
+                <option>Critical</option>
+                <option>High</option>
+                <option>Medium</option>
+                <option>Low</option>
+              </select>
+            </label>
+            <label><span>Assigned unit</span><input name="assignedUnit" id="dispatchUnit" type="text" placeholder="Unit 12" required /></label>
+            <label><span>Status</span>
+              <select name="status" id="dispatchStatus" required>
+                <option value="">Select</option>
+                <option>New</option>
+                <option>Assigned</option>
+                <option>En Route</option>
+                <option>On Scene</option>
+                <option>Closed</option>
+              </select>
+            </label>
             <button class="button button-primary" type="submit">Submit Call</button>
             <div class="form-status" id="dispatch-status"></div>
           </form>
@@ -505,6 +545,76 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── AI DISPATCH TRIAGE ── */
+    document.getElementById('ai-dispatch-btn').addEventListener('click', async function () {
+      const statusEl = document.getElementById('ai-dispatch-status');
+      const btnIcon = document.getElementById('ai-dispatch-icon');
+
+      const callerName = document.getElementById('callerName').value.trim();
+      const location = document.getElementById('dispatchLocation').value.trim();
+      const description = document.getElementById('dispatchDescription').value.trim();
+
+      if (!description) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Enter a call description first so AI can triage it.';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      statusEl.style.display = 'block';
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'Triaging call…';
+
+      try {
+        const res = await fetch('/api/ai/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callerName, location, description })
+        });
+        const json = await res.json();
+
+        if (json.success) {
+          const filled = [];
+
+          const typeEl = document.getElementById('dispatchIncidentType');
+          for (let opt of typeEl.options) {
+            if (opt.value === json.incidentType) { typeEl.value = json.incidentType; filled.push('incident type'); break; }
+          }
+
+          const priEl = document.getElementById('dispatchPriority');
+          for (let opt of priEl.options) {
+            if (opt.value === json.priority) { priEl.value = json.priority; filled.push('priority'); break; }
+          }
+
+          const unitEl = document.getElementById('dispatchUnit');
+          if (json.assignedUnit && !unitEl.value) {
+            unitEl.value = json.assignedUnit;
+            filled.push('assigned unit');
+          }
+
+          const statEl = document.getElementById('dispatchStatus');
+          for (let opt of statEl.options) {
+            if (opt.value === json.status) { statEl.value = json.status; filled.push('status'); break; }
+          }
+
+          const triageNote = json.triage ? ` — "${json.triage}"` : '';
+          statusEl.style.color = '#4caf82';
+          statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')}${triageNote}`;
+        } else {
+          statusEl.style.color = 'var(--accent)';
+          statusEl.textContent = json.error || 'Triage failed. Try again.';
+        }
+      } catch {
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Network error. Check connection and try again.';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
     /* ── AI ARREST REPORT ── */
     document.getElementById('ai-report-btn').addEventListener('click', async function () {
       const form = document.getElementById('arrest-form');
