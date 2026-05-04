@@ -3,6 +3,7 @@ import json
 import smtplib
 import logging
 import secrets
+import urllib.request
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -125,6 +126,66 @@ Desired Resolution:
         return False
 
 
+def send_discord_notification(complaint):
+    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+    if not webhook_url or 'placeholder' in webhook_url:
+        logger.warning('Discord webhook not configured. Skipping Discord notification.')
+        return False
+
+    try:
+        type_colors = {
+            'Player report': 15158332,
+            'Staff complaint': 15105570,
+            'Officer complaint': 15548997,
+            'Rule break': 16711680,
+            'Fail RP': 16744272,
+            'RDM / VDM': 16711680,
+            'Harassment': 15158332,
+            'Evidence submission': 3447003,
+        }
+        color = type_colors.get(complaint.get('complaintType', ''), 15158332)
+
+        fields = [
+            {"name": "Complaint ID", "value": f"`{complaint['id']}`", "inline": True},
+            {"name": "Type", "value": complaint.get('complaintType', 'N/A'), "inline": True},
+            {"name": "Reported Person", "value": complaint.get('reportedName', 'N/A'), "inline": True},
+            {"name": "Discord", "value": complaint.get('complaintDiscord', 'N/A'), "inline": True},
+            {"name": "Location", "value": complaint.get('incidentLocation', 'N/A'), "inline": True},
+            {"name": "Incident Date", "value": complaint.get('incidentDate', 'N/A'), "inline": True},
+        ]
+        if complaint.get('witnesses'):
+            fields.append({"name": "Witnesses", "value": complaint['witnesses'], "inline": False})
+        if complaint.get('evidenceLink'):
+            fields.append({"name": "Evidence", "value": complaint['evidenceLink'], "inline": False})
+
+        payload = {
+            "username": "NThaCityRP Complaints",
+            "avatar_url": "https://cdn.discordapp.com/embed/avatars/0.png",
+            "embeds": [{
+                "title": f"🚨 New Complaint Filed — {complaint.get('complaintType', 'Unknown')}",
+                "description": f"**Description:**\n{complaint.get('description', 'N/A')}\n\n**Desired Resolution:**\n{complaint.get('resolution', 'N/A')}",
+                "color": color,
+                "fields": fields,
+                "footer": {"text": f"NThaCityRP Complaint System • {complaint['submittedAt'][:10]}"},
+            }]
+        }
+
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            webhook_url,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status in (200, 204):
+                logger.info(f"Discord notification sent for {complaint['id']}")
+                return True
+    except Exception as e:
+        logger.error(f"Discord webhook failed: {e}")
+    return False
+
+
 def admin_required(f):
     from functools import wraps
     @wraps(f)
@@ -167,6 +228,7 @@ def submit_complaint():
 
     complaint = save_complaint(data)
     email_sent = send_email_notification(complaint)
+    send_discord_notification(complaint)
 
     return jsonify({
         'success': True,
