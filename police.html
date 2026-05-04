@@ -495,5 +495,56 @@
   <div id="toast-container" class="toast-container"></div>
 
   <script src="assets/js/main.js"></script>
+  <script>
+    document.getElementById('ai-report-btn').addEventListener('click', async function () {
+      const form = document.getElementById('arrest-form');
+      const statusEl = document.getElementById('ai-report-status');
+      const textarea = document.getElementById('reportNotes');
+      const btnIcon = document.getElementById('ai-btn-icon');
+
+      const suspectName = form.querySelector('[name="suspectName"]').value.trim();
+      const charges = form.querySelector('[name="charges"]').value.trim();
+      const arrestingOfficer = form.querySelector('[name="arrestingOfficer"]').value.trim();
+      const arrestLocation = form.querySelector('[name="arrestLocation"]').value.trim();
+      const evidenceAttached = form.querySelector('[name="evidenceAttached"]').value.trim();
+      const penalty = form.querySelector('[name="penalty"]').value.trim();
+
+      if (!suspectName || !charges || !arrestingOfficer) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Fill in suspect name, charges, and arresting officer first.';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      statusEl.style.display = 'block';
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'Generating report narrative…';
+
+      try {
+        const res = await fetch('/api/ai/police-report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ suspectName, charges, arrestingOfficer, arrestLocation, evidenceAttached, penalty, reportNotes: textarea.value.trim() })
+        });
+        const json = await res.json();
+        if (json.success) {
+          textarea.value = json.narrative;
+          statusEl.style.color = '#4caf82';
+          statusEl.textContent = '✓ Report generated — review and edit before submitting.';
+        } else {
+          statusEl.style.color = 'var(--accent)';
+          statusEl.textContent = json.error || 'Generation failed. Try again.';
+        }
+      } catch {
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Network error. Check connection and try again.';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+  </script>
 </body>
 </html>
