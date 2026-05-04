@@ -528,11 +528,73 @@ def get_server_status():
     return jsonify(load_server_status())
 
 
+def send_status_discord_notification(old_status, new_status):
+    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+    if not webhook_url or 'placeholder' in webhook_url:
+        logger.warning('Discord webhook not configured. Skipping status notification.')
+        return False
+
+    status_colors = {
+        'ACTIVE':      0x4caf50,
+        'OFFLINE':     0x555555,
+        'MAINTENANCE': 0x4a9eff,
+        'WHITELIST':   0xf5a623,
+    }
+    status_emojis = {
+        'ACTIVE':      '🟢',
+        'OFFLINE':     '🔴',
+        'MAINTENANCE': '🔵',
+        'WHITELIST':   '🟡',
+    }
+
+    city = new_status.get('cityStatus', 'ACTIVE')
+    color = status_colors.get(city, 0x555555)
+    emoji = status_emojis.get(city, '⚪')
+
+    old_city = old_status.get('cityStatus', 'ACTIVE')
+    changed = old_city != city
+    title = f"{emoji} City Status Changed: {old_city} → {city}" if changed else f"{emoji} City Status Updated: {city}"
+
+    fields = [
+        {"name": "City Status", "value": city, "inline": True},
+        {"name": "Players Online", "value": f"{new_status.get('playerCount', 0)} / {new_status.get('maxPlayers', 32)}", "inline": True},
+    ]
+    if new_status.get('customMessage'):
+        fields.append({"name": "Message", "value": new_status['customMessage'], "inline": False})
+
+    payload = {
+        "username": "NThaCityRP Status",
+        "avatar_url": "https://cdn.discordapp.com/embed/avatars/0.png",
+        "embeds": [{
+            "title": title,
+            "color": color,
+            "fields": fields,
+            "footer": {"text": f"NThaCityRP • {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}"},
+        }]
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            webhook_url,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        urllib.request.urlopen(req, timeout=5)
+        logger.info('Status Discord notification sent.')
+        return True
+    except Exception as e:
+        logger.error(f'Failed to send status Discord notification: {e}')
+        return False
+
+
 @app.route('/api/server-status', methods=['POST'])
 @admin_required
 def update_server_status():
     data = request.get_json(silent=True) or {}
-    status = load_server_status()
+    old_status = load_server_status()
+    status = dict(old_status)
     valid_statuses = ['ACTIVE', 'OFFLINE', 'MAINTENANCE', 'WHITELIST']
     if 'cityStatus' in data and data['cityStatus'] in valid_statuses:
         status['cityStatus'] = data['cityStatus']
@@ -549,6 +611,7 @@ def update_server_status():
     if 'customMessage' in data:
         status['customMessage'] = str(data['customMessage'])[:200]
     save_server_status(status)
+    send_status_discord_notification(old_status, status)
     return jsonify({'success': True, 'status': status})
 
 
