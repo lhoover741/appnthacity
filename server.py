@@ -632,25 +632,27 @@ def ai_police_report():
     notes = data.get('reportNotes', '')
 
     prompt = f"""You are a police report writer for the NThaCityRP Discord roleplay community set in Los Santos.
-Write a formal, professional police arrest report narrative based on the following details.
-Use third-person past tense, law enforcement language, and keep it immersive but concise (150-220 words).
+Based on the arrest details below, respond with ONLY a valid JSON object containing exactly two keys:
+- "narrative": a formal, professional arrest report narrative (150-220 words, third-person past tense, law enforcement language)
+- "suggestedPenalty": a short realistic penalty string (e.g. "3 years / $25,000 fine" or "18 months + community service") based on the charges — if a penalty was already provided, refine and return it as-is
 
 Suspect: {suspect}
 Charges: {charges}
 Arresting Officer: {officer}
 Arrest Location: {location}
 Evidence: {evidence}
-Penalty: {penalty}
+Current Penalty: {penalty if penalty else 'Not specified'}
 Officer Notes: {notes if notes else 'None provided'}
 
-Write only the narrative body of the report. Do not include headers, labels, or bullet points."""
+Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
             'model': 'gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
-            'max_tokens': 400,
-            'temperature': 0.7
+            'max_tokens': 500,
+            'temperature': 0.7,
+            'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
         req = urllib.request.Request(
@@ -664,8 +666,12 @@ Write only the narrative body of the report. Do not include headers, labels, or 
         )
         with urllib.request.urlopen(req, timeout=20) as resp:
             result = json.loads(resp.read().decode('utf-8'))
-            narrative = result['choices'][0]['message']['content'].strip()
-            return jsonify({'success': True, 'narrative': narrative})
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({
+                'success': True,
+                'narrative': ai_json.get('narrative', ''),
+                'suggestedPenalty': ai_json.get('suggestedPenalty', '')
+            })
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
         logger.error(f'OpenAI API error: {e.code} {body}')
@@ -673,6 +679,70 @@ Write only the narrative body of the report. Do not include headers, labels, or 
     except Exception as e:
         logger.error(f'AI report generation failed: {e}')
         return jsonify({'success': False, 'error': 'Report generation failed. Try again.'}), 500
+
+
+@app.route('/api/ai/warrant', methods=['POST'])
+@admin_required
+def ai_warrant():
+    api_key = os.environ.get('OPENAI_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    suspect = data.get('warrantName', 'Unknown')
+    charges = data.get('warrantCharges', 'Unknown')
+    issuer = data.get('warrantIssuer', 'Unknown')
+    existing_notes = data.get('warrantNotes', '')
+
+    prompt = f"""You are a warrant writer for the NThaCityRP Discord roleplay community set in Los Santos.
+Based on the details below, respond with ONLY a valid JSON object with exactly two keys:
+- "justification": a formal warrant justification paragraph (80-130 words) explaining the legal basis and probable cause for issuing this warrant, written in official law enforcement language
+- "suggestedStatus": always return "Active"
+
+Suspect: {suspect}
+Charges: {charges}
+Issued By: {issuer}
+Additional Notes: {existing_notes if existing_notes else 'None'}
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    from datetime import timedelta
+    expiration_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+
+    try:
+        payload = json.dumps({
+            'model': 'gpt-4o-mini',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 300,
+            'temperature': 0.7,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({
+                'success': True,
+                'justification': ai_json.get('justification', ''),
+                'suggestedStatus': ai_json.get('suggestedStatus', 'Active'),
+                'suggestedExpiration': expiration_date
+            })
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenAI warrant error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenAI error {e.code}: check your API key.'}), 502
+    except Exception as e:
+        logger.error(f'AI warrant generation failed: {e}')
+        return jsonify({'success': False, 'error': 'Warrant generation failed. Try again.'}), 500
 
 
 @app.route('/', defaults={'path': ''})

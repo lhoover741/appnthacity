@@ -412,9 +412,18 @@
             <label><span>Suspect name</span><input name="warrantName" type="text" required /></label>
             <label><span>Charges</span><input name="warrantCharges" type="text" required /></label>
             <label><span>Issued by</span><input name="warrantIssuer" type="text" required /></label>
-            <label><span>Expiration</span><input name="warrantExpiration" type="date" required /></label>
-            <label><span>Status</span><select name="warrantStatus" required><option value="">Select</option><option>Active</option><option>Suspended</option><option>Cleared</option></select></label>
-            <label class="full-width"><span>Notes</span><textarea name="warrantNotes" rows="3"></textarea></label>
+            <label><span>Expiration</span><input name="warrantExpiration" id="warrantExpiration" type="date" required /></label>
+            <label><span>Status</span><select name="warrantStatus" id="warrantStatus" required><option value="">Select</option><option>Active</option><option>Suspended</option><option>Cleared</option></select></label>
+            <label class="full-width">
+              <span style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                Warrant Justification / Notes
+                <button type="button" id="ai-warrant-btn" style="font-size:0.75rem;padding:4px 12px;background:rgba(255,45,45,0.12);color:var(--accent);border:1px solid rgba(255,45,45,0.3);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background 0.2s;" title="Auto-generate warrant justification and fill form fields">
+                  <span id="ai-warrant-icon">✦</span> AI Generate
+                </button>
+              </span>
+              <textarea name="warrantNotes" id="warrantNotes" rows="4" placeholder="Probable cause, circumstances, and supporting evidence for this warrant…"></textarea>
+            </label>
+            <div id="ai-warrant-status" style="font-size:0.82rem;margin-top:-8px;margin-bottom:4px;display:none;"></div>
             <button class="button button-primary" type="submit">Create Warrant</button>
             <div class="form-status" id="warrant-status"></div>
           </form>
@@ -496,10 +505,12 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── AI ARREST REPORT ── */
     document.getElementById('ai-report-btn').addEventListener('click', async function () {
       const form = document.getElementById('arrest-form');
       const statusEl = document.getElementById('ai-report-status');
       const textarea = document.getElementById('reportNotes');
+      const penaltyInput = form.querySelector('[name="penalty"]');
       const btnIcon = document.getElementById('ai-btn-icon');
 
       const suspectName = form.querySelector('[name="suspectName"]').value.trim();
@@ -507,7 +518,7 @@
       const arrestingOfficer = form.querySelector('[name="arrestingOfficer"]').value.trim();
       const arrestLocation = form.querySelector('[name="arrestLocation"]').value.trim();
       const evidenceAttached = form.querySelector('[name="evidenceAttached"]').value.trim();
-      const penalty = form.querySelector('[name="penalty"]').value.trim();
+      const penalty = penaltyInput.value.trim();
 
       if (!suspectName || !charges || !arrestingOfficer) {
         statusEl.style.display = 'block';
@@ -531,8 +542,78 @@
         const json = await res.json();
         if (json.success) {
           textarea.value = json.narrative;
+          const filled = [];
+          filled.push('report notes');
+          if (json.suggestedPenalty && !penalty) {
+            penaltyInput.value = json.suggestedPenalty;
+            filled.push('jail time / fine');
+          }
           statusEl.style.color = '#4caf82';
-          statusEl.textContent = '✓ Report generated — review and edit before submitting.';
+          statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')} — review before submitting.`;
+        } else {
+          statusEl.style.color = 'var(--accent)';
+          statusEl.textContent = json.error || 'Generation failed. Try again.';
+        }
+      } catch {
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Network error. Check connection and try again.';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
+    /* ── AI WARRANT ── */
+    document.getElementById('ai-warrant-btn').addEventListener('click', async function () {
+      const form = document.getElementById('warrant-form');
+      const statusEl = document.getElementById('ai-warrant-status');
+      const notesEl = document.getElementById('warrantNotes');
+      const expirationEl = document.getElementById('warrantExpiration');
+      const statusSelect = document.getElementById('warrantStatus');
+      const btnIcon = document.getElementById('ai-warrant-icon');
+
+      const warrantName = form.querySelector('[name="warrantName"]').value.trim();
+      const warrantCharges = form.querySelector('[name="warrantCharges"]').value.trim();
+      const warrantIssuer = form.querySelector('[name="warrantIssuer"]').value.trim();
+
+      if (!warrantName || !warrantCharges) {
+        statusEl.style.display = 'block';
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Fill in suspect name and charges first.';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      statusEl.style.display = 'block';
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'Drafting warrant justification…';
+
+      try {
+        const res = await fetch('/api/ai/warrant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ warrantName, warrantCharges, warrantIssuer, warrantNotes: notesEl.value.trim() })
+        });
+        const json = await res.json();
+        if (json.success) {
+          const filled = [];
+          notesEl.value = json.justification;
+          filled.push('justification notes');
+
+          if (json.suggestedExpiration && !expirationEl.value) {
+            expirationEl.value = json.suggestedExpiration;
+            filled.push('expiration date (30 days)');
+          }
+          if (json.suggestedStatus) {
+            for (let opt of statusSelect.options) {
+              if (opt.value === json.suggestedStatus) { statusSelect.value = json.suggestedStatus; break; }
+            }
+            filled.push('status → Active');
+          }
+
+          statusEl.style.color = '#4caf82';
+          statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')} — review before submitting.`;
         } else {
           statusEl.style.color = 'var(--accent)';
           statusEl.textContent = json.error || 'Generation failed. Try again.';
