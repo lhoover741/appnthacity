@@ -168,6 +168,29 @@
 
     .loading { text-align: center; padding: 48px; color: var(--muted); }
 
+    /* TABS */
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 28px; border-bottom: 1px solid #222; }
+    .tab-btn {
+      padding: 10px 24px; background: transparent; border: none; color: var(--muted);
+      font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; transition: all 0.2s;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* APPLICATION-SPECIFIC STATUSES */
+    .status-badge.pending { background: rgba(74,158,255,0.15); color: var(--blue); }
+    .status-badge.accepted { background: rgba(76,175,130,0.15); color: var(--green); }
+    .status-badge.denied { background: rgba(85,85,85,0.15); color: #aaa; }
+    .complaint-card.pending { border-left: 3px solid var(--blue); }
+    .complaint-card.accepted { border-left: 3px solid var(--green); }
+    .complaint-card.denied { border-left: 3px solid var(--gray); }
+
+    .btn-accept { background: rgba(76,175,130,0.2); color: var(--green); border: 1px solid rgba(76,175,130,0.3); }
+    .btn-deny { background: rgba(85,85,85,0.2); color: #aaa; border: 1px solid rgba(85,85,85,0.3); }
+
     @media (max-width: 640px) {
       .admin-main { padding: 16px; }
       .card-id { display: none; }
@@ -195,50 +218,82 @@
     <header class="admin-header">
       <div class="brand">NThaCityRP — Admin</div>
       <div class="header-right">
-        <span>Complaint Manager</span>
+        <span>Staff Dashboard</span>
         <button class="logout-btn" onclick="doLogout()">Sign Out</button>
       </div>
     </header>
 
     <main class="admin-main">
-      <div class="stats-grid" id="stats-grid">
-        <div class="stat-card total"><div class="stat-label">Total</div><div class="stat-value" id="stat-total">—</div></div>
-        <div class="stat-card open"><div class="stat-label">Open</div><div class="stat-value" id="stat-open">—</div></div>
-        <div class="stat-card review"><div class="stat-label">Under Review</div><div class="stat-value" id="stat-review">—</div></div>
-        <div class="stat-card resolved"><div class="stat-label">Resolved</div><div class="stat-value" id="stat-resolved">—</div></div>
-        <div class="stat-card dismissed"><div class="stat-label">Dismissed</div><div class="stat-value" id="stat-dismissed">—</div></div>
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('complaints', this)">Complaints</button>
+        <button class="tab-btn" onclick="switchTab('applications', this)">Applications</button>
       </div>
 
-      <div class="toolbar">
-        <button class="filter-btn active" onclick="setFilter('All', this)">All</button>
-        <button class="filter-btn" onclick="setFilter('Open', this)">Open</button>
-        <button class="filter-btn" onclick="setFilter('Under Review', this)">Under Review</button>
-        <button class="filter-btn" onclick="setFilter('Resolved', this)">Resolved</button>
-        <button class="filter-btn" onclick="setFilter('Dismissed', this)">Dismissed</button>
-        <input class="search-box" type="text" placeholder="Search by name, ID, type…" oninput="renderComplaints()" id="search-input" />
+      <!-- COMPLAINTS TAB -->
+      <div class="tab-panel active" id="tab-complaints">
+        <div class="stats-grid">
+          <div class="stat-card total"><div class="stat-label">Total</div><div class="stat-value" id="stat-total">—</div></div>
+          <div class="stat-card open"><div class="stat-label">Open</div><div class="stat-value" id="stat-open">—</div></div>
+          <div class="stat-card review"><div class="stat-label">Under Review</div><div class="stat-value" id="stat-review">—</div></div>
+          <div class="stat-card resolved"><div class="stat-label">Resolved</div><div class="stat-value" id="stat-resolved">—</div></div>
+          <div class="stat-card dismissed"><div class="stat-label">Dismissed</div><div class="stat-value" id="stat-dismissed">—</div></div>
+        </div>
+        <div class="toolbar">
+          <button class="filter-btn active" onclick="setFilter('All', this, 'complaint')">All</button>
+          <button class="filter-btn" onclick="setFilter('Open', this, 'complaint')">Open</button>
+          <button class="filter-btn" onclick="setFilter('Under Review', this, 'complaint')">Under Review</button>
+          <button class="filter-btn" onclick="setFilter('Resolved', this, 'complaint')">Resolved</button>
+          <button class="filter-btn" onclick="setFilter('Dismissed', this, 'complaint')">Dismissed</button>
+          <input class="search-box" type="text" placeholder="Search complaints…" oninput="renderComplaints()" id="search-complaints" />
+        </div>
+        <div class="complaints-list" id="complaints-list"><div class="loading">Loading…</div></div>
       </div>
 
-      <div class="complaints-list" id="complaints-list">
-        <div class="loading">Loading complaints…</div>
+      <!-- APPLICATIONS TAB -->
+      <div class="tab-panel" id="tab-applications">
+        <div class="stats-grid">
+          <div class="stat-card total"><div class="stat-label">Total</div><div class="stat-value" id="app-stat-total">—</div></div>
+          <div class="stat-card open"><div class="stat-label">Pending</div><div class="stat-value" id="app-stat-pending">—</div></div>
+          <div class="stat-card review"><div class="stat-label">Under Review</div><div class="stat-value" id="app-stat-review">—</div></div>
+          <div class="stat-card resolved"><div class="stat-label">Accepted</div><div class="stat-value" id="app-stat-accepted">—</div></div>
+          <div class="stat-card dismissed"><div class="stat-label">Denied</div><div class="stat-value" id="app-stat-denied">—</div></div>
+        </div>
+        <div class="toolbar">
+          <button class="filter-btn active" onclick="setFilter('All', this, 'application')">All</button>
+          <button class="filter-btn" onclick="setFilter('Pending', this, 'application')">Pending</button>
+          <button class="filter-btn" onclick="setFilter('Under Review', this, 'application')">Under Review</button>
+          <button class="filter-btn" onclick="setFilter('Accepted', this, 'application')">Accepted</button>
+          <button class="filter-btn" onclick="setFilter('Denied', this, 'application')">Denied</button>
+          <input class="search-box" type="text" placeholder="Search applications…" oninput="renderApplications()" id="search-applications" />
+        </div>
+        <div class="complaints-list" id="applications-list"><div class="loading">Loading…</div></div>
       </div>
     </main>
   </div>
 
   <script>
     let allComplaints = [];
-    let currentFilter = 'All';
+    let allApplications = [];
+    let currentComplaintFilter = 'All';
+    let currentAppFilter = 'All';
 
     function statusClass(status) {
-      return (status || 'open').toLowerCase().replace(' ', '-');
+      return (status || 'open').toLowerCase().replace(/ /g, '-');
     }
-
     function badgeHtml(status) {
       return `<span class="status-badge ${statusClass(status)}">${status || 'Open'}</span>`;
     }
-
     function fmtDate(iso) {
       if (!iso) return 'N/A';
       return new Date(iso).toLocaleString();
+    }
+
+    function switchTab(tab, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + tab).classList.add('active');
+      if (tab === 'applications' && allApplications.length === 0) loadApplications();
     }
 
     async function doLogin() {
@@ -247,19 +302,13 @@
       err.textContent = '';
       try {
         const res = await fetch('/api/admin/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: pw })
         });
         const json = await res.json();
-        if (json.success) {
-          showPanel();
-        } else {
-          err.textContent = 'Incorrect password. Try again.';
-        }
-      } catch {
-        err.textContent = 'Connection error. Try again.';
-      }
+        if (json.success) showPanel();
+        else err.textContent = 'Incorrect password. Try again.';
+      } catch { err.textContent = 'Connection error. Try again.'; }
     }
 
     async function doLogout() {
@@ -275,64 +324,59 @@
       loadComplaints();
     }
 
+    /* ── COMPLAINTS ── */
     async function loadComplaints() {
       try {
         const res = await fetch('/api/complaints');
         if (res.status === 401) { doLogout(); return; }
         const json = await res.json();
         allComplaints = json.complaints || [];
-        updateStats();
+        updateComplaintStats();
         renderComplaints();
       } catch {
         document.getElementById('complaints-list').innerHTML = '<div class="empty-state"><h3>Failed to load complaints</h3></div>';
       }
     }
 
-    function updateStats() {
-      const counts = { total: allComplaints.length, open: 0, review: 0, resolved: 0, dismissed: 0 };
-      allComplaints.forEach(c => {
-        if (c.status === 'Open') counts.open++;
-        else if (c.status === 'Under Review') counts.review++;
-        else if (c.status === 'Resolved') counts.resolved++;
-        else if (c.status === 'Dismissed') counts.dismissed++;
+    function updateComplaintStats() {
+      const c = { total: allComplaints.length, open: 0, review: 0, resolved: 0, dismissed: 0 };
+      allComplaints.forEach(x => {
+        if (x.status === 'Open') c.open++;
+        else if (x.status === 'Under Review') c.review++;
+        else if (x.status === 'Resolved') c.resolved++;
+        else if (x.status === 'Dismissed') c.dismissed++;
       });
-      document.getElementById('stat-total').textContent = counts.total;
-      document.getElementById('stat-open').textContent = counts.open;
-      document.getElementById('stat-review').textContent = counts.review;
-      document.getElementById('stat-resolved').textContent = counts.resolved;
-      document.getElementById('stat-dismissed').textContent = counts.dismissed;
+      document.getElementById('stat-total').textContent = c.total;
+      document.getElementById('stat-open').textContent = c.open;
+      document.getElementById('stat-review').textContent = c.review;
+      document.getElementById('stat-resolved').textContent = c.resolved;
+      document.getElementById('stat-dismissed').textContent = c.dismissed;
     }
 
-    function setFilter(f, btn) {
-      currentFilter = f;
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    function setFilter(f, btn, type) {
+      const panelId = type === 'complaint' ? 'tab-complaints' : 'tab-applications';
+      document.querySelectorAll(`#${panelId} .filter-btn`).forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      renderComplaints();
+      if (type === 'complaint') { currentComplaintFilter = f; renderComplaints(); }
+      else { currentAppFilter = f; renderApplications(); }
     }
 
     function renderComplaints() {
-      const search = (document.getElementById('search-input').value || '').toLowerCase();
+      const search = (document.getElementById('search-complaints').value || '').toLowerCase();
       let list = allComplaints;
-      if (currentFilter !== 'All') list = list.filter(c => c.status === currentFilter);
+      if (currentComplaintFilter !== 'All') list = list.filter(c => c.status === currentComplaintFilter);
       if (search) list = list.filter(c =>
-        (c.id || '').toLowerCase().includes(search) ||
-        (c.complaintDiscord || '').toLowerCase().includes(search) ||
-        (c.reportedName || '').toLowerCase().includes(search) ||
-        (c.complaintType || '').toLowerCase().includes(search) ||
-        (c.incidentLocation || '').toLowerCase().includes(search)
+        (c.id||'').toLowerCase().includes(search) ||
+        (c.complaintDiscord||'').toLowerCase().includes(search) ||
+        (c.reportedName||'').toLowerCase().includes(search) ||
+        (c.complaintType||'').toLowerCase().includes(search) ||
+        (c.incidentLocation||'').toLowerCase().includes(search)
       );
-
       const container = document.getElementById('complaints-list');
-      if (list.length === 0) {
-        container.innerHTML = '<div class="empty-state"><h3>No complaints found</h3><p>Try adjusting your filter or search.</p></div>';
-        return;
-      }
-
+      if (!list.length) { container.innerHTML = '<div class="empty-state"><h3>No complaints found</h3><p>Try adjusting your filter or search.</p></div>'; return; }
       container.innerHTML = list.map(c => {
         const sc = statusClass(c.status);
-        const evidenceHtml = c.evidenceLink
-          ? `<a href="${c.evidenceLink}" target="_blank" rel="noopener">View Evidence</a>`
-          : 'None';
+        const ev = c.evidenceLink ? `<a href="${c.evidenceLink}" target="_blank" rel="noopener">View Evidence</a>` : 'None';
         return `
           <div class="complaint-card ${sc}" id="card-${c.id}">
             <div class="card-header" onclick="toggleCard('${c.id}')">
@@ -344,97 +388,182 @@
             </div>
             <div class="card-body" id="body-${c.id}">
               <div class="detail-grid">
-                <div class="detail-field"><div class="detail-label">Discord</div><div class="detail-value">${c.complaintDiscord || 'N/A'}</div></div>
-                <div class="detail-field"><div class="detail-label">Reported Person</div><div class="detail-value">${c.reportedName || 'N/A'}</div></div>
-                <div class="detail-field"><div class="detail-label">Complaint Type</div><div class="detail-value">${c.complaintType || 'N/A'}</div></div>
-                <div class="detail-field"><div class="detail-label">Incident Date</div><div class="detail-value">${c.incidentDate || 'N/A'}</div></div>
-                <div class="detail-field"><div class="detail-label">Location</div><div class="detail-value">${c.incidentLocation || 'N/A'}</div></div>
-                <div class="detail-field"><div class="detail-label">Witnesses</div><div class="detail-value">${c.witnesses || 'None'}</div></div>
-                <div class="detail-field"><div class="detail-label">Evidence</div><div class="detail-value">${evidenceHtml}</div></div>
+                <div class="detail-field"><div class="detail-label">Discord</div><div class="detail-value">${c.complaintDiscord||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Reported Person</div><div class="detail-value">${c.reportedName||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Type</div><div class="detail-value">${c.complaintType||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Incident Date</div><div class="detail-value">${c.incidentDate||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Location</div><div class="detail-value">${c.incidentLocation||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Witnesses</div><div class="detail-value">${c.witnesses||'None'}</div></div>
+                <div class="detail-field"><div class="detail-label">Evidence</div><div class="detail-value">${ev}</div></div>
                 <div class="detail-field"><div class="detail-label">Submitted</div><div class="detail-value">${fmtDate(c.submittedAt)}</div></div>
-                ${c.updatedAt ? `<div class="detail-field"><div class="detail-label">Last Updated</div><div class="detail-value">${fmtDate(c.updatedAt)}</div></div>` : ''}
+                ${c.updatedAt?`<div class="detail-field"><div class="detail-label">Last Updated</div><div class="detail-value">${fmtDate(c.updatedAt)}</div></div>`:''}
               </div>
-              <div class="detail-block">
-                <div class="detail-label">Description</div>
-                <div class="detail-text">${c.description || 'N/A'}</div>
-              </div>
-              <div class="detail-block">
-                <div class="detail-label">Desired Resolution</div>
-                <div class="detail-text">${c.resolution || 'N/A'}</div>
-              </div>
+              <div class="detail-block"><div class="detail-label">Description</div><div class="detail-text">${c.description||'N/A'}</div></div>
+              <div class="detail-block"><div class="detail-label">Desired Resolution</div><div class="detail-text">${c.resolution||'N/A'}</div></div>
               <div class="card-actions">
-                <textarea class="notes-input" id="notes-${c.id}" placeholder="Staff notes…">${c.staffNotes || ''}</textarea>
+                <textarea class="notes-input" id="notes-${c.id}" placeholder="Staff notes…">${c.staffNotes||''}</textarea>
                 <div class="action-buttons">
-                  <button class="action-btn btn-review" onclick="updateStatus('${c.id}', 'Under Review')">Mark Under Review</button>
-                  <button class="action-btn btn-resolve" onclick="updateStatus('${c.id}', 'Resolved')">Mark Resolved</button>
-                  <button class="action-btn btn-dismiss" onclick="updateStatus('${c.id}', 'Dismissed')">Dismiss</button>
-                  <button class="action-btn btn-reopen" onclick="updateStatus('${c.id}', 'Open')">Reopen</button>
-                  <button class="action-btn btn-save" onclick="saveNotes('${c.id}')">Save Notes</button>
+                  <button class="action-btn btn-review" onclick="updateComplaintStatus('${c.id}','Under Review')">Under Review</button>
+                  <button class="action-btn btn-resolve" onclick="updateComplaintStatus('${c.id}','Resolved')">Resolved</button>
+                  <button class="action-btn btn-dismiss" onclick="updateComplaintStatus('${c.id}','Dismissed')">Dismiss</button>
+                  <button class="action-btn btn-reopen" onclick="updateComplaintStatus('${c.id}','Open')">Reopen</button>
+                  <button class="action-btn btn-save" onclick="saveComplaintNotes('${c.id}',event)">Save Notes</button>
                   <button class="action-btn btn-delete" onclick="deleteComplaint('${c.id}')">Delete</button>
                 </div>
               </div>
             </div>
-          </div>
-        `;
+          </div>`;
       }).join('');
     }
 
     function toggleCard(id) {
-      const body = document.getElementById('body-' + id);
-      const chev = document.getElementById('chev-' + id);
-      body.classList.toggle('visible');
-      chev.classList.toggle('open');
+      document.getElementById('body-'+id).classList.toggle('visible');
+      document.getElementById('chev-'+id).classList.toggle('open');
     }
 
-    async function updateStatus(id, status) {
-      const notes = document.getElementById('notes-' + id)?.value;
-      const res = await fetch(`/api/complaint/${id}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, staffNotes: notes })
-      });
+    async function updateComplaintStatus(id, status) {
+      const notes = document.getElementById('notes-'+id)?.value;
+      const res = await fetch(`/api/complaint/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status, staffNotes: notes}) });
       const json = await res.json();
       if (json.success) {
         const idx = allComplaints.findIndex(c => c.id === id);
         if (idx !== -1) allComplaints[idx] = json.complaint;
-        updateStats();
-        renderComplaints();
-        document.getElementById('body-' + id)?.classList.add('visible');
-        document.getElementById('chev-' + id)?.classList.add('open');
+        updateComplaintStats(); renderComplaints();
+        document.getElementById('body-'+id)?.classList.add('visible');
+        document.getElementById('chev-'+id)?.classList.add('open');
       }
     }
 
-    async function saveNotes(id) {
-      const notes = document.getElementById('notes-' + id)?.value || '';
-      const res = await fetch(`/api/complaint/${id}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ staffNotes: notes })
-      });
+    async function saveComplaintNotes(id, e) {
+      const notes = document.getElementById('notes-'+id)?.value || '';
+      const res = await fetch(`/api/complaint/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({staffNotes: notes}) });
       const json = await res.json();
       if (json.success) {
         const idx = allComplaints.findIndex(c => c.id === id);
         if (idx !== -1) allComplaints[idx] = json.complaint;
-        const btn = event.target;
-        btn.textContent = 'Saved!';
+        const btn = e.target; btn.textContent = 'Saved!';
         setTimeout(() => { btn.textContent = 'Save Notes'; }, 1500);
       }
     }
 
     async function deleteComplaint(id) {
       if (!confirm(`Delete complaint ${id}? This cannot be undone.`)) return;
-      const res = await fetch(`/api/complaint/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/complaint/${id}`, { method:'DELETE' });
       const json = await res.json();
-      if (json.success) {
-        allComplaints = allComplaints.filter(c => c.id !== id);
-        updateStats();
-        renderComplaints();
+      if (json.success) { allComplaints = allComplaints.filter(c => c.id !== id); updateComplaintStats(); renderComplaints(); }
+    }
+
+    /* ── APPLICATIONS ── */
+    async function loadApplications() {
+      try {
+        const res = await fetch('/api/applications');
+        if (res.status === 401) { doLogout(); return; }
+        const json = await res.json();
+        allApplications = json.applications || [];
+        updateAppStats();
+        renderApplications();
+      } catch {
+        document.getElementById('applications-list').innerHTML = '<div class="empty-state"><h3>Failed to load applications</h3></div>';
       }
     }
 
-    document.getElementById('admin-password').addEventListener('keydown', e => {
-      if (e.key === 'Enter') doLogin();
-    });
+    function updateAppStats() {
+      const c = { total: allApplications.length, pending: 0, review: 0, accepted: 0, denied: 0 };
+      allApplications.forEach(a => {
+        if (a.status === 'Pending') c.pending++;
+        else if (a.status === 'Under Review') c.review++;
+        else if (a.status === 'Accepted') c.accepted++;
+        else if (a.status === 'Denied') c.denied++;
+      });
+      document.getElementById('app-stat-total').textContent = c.total;
+      document.getElementById('app-stat-pending').textContent = c.pending;
+      document.getElementById('app-stat-review').textContent = c.review;
+      document.getElementById('app-stat-accepted').textContent = c.accepted;
+      document.getElementById('app-stat-denied').textContent = c.denied;
+    }
+
+    function renderApplications() {
+      const search = (document.getElementById('search-applications').value || '').toLowerCase();
+      let list = allApplications;
+      if (currentAppFilter !== 'All') list = list.filter(a => a.status === currentAppFilter);
+      if (search) list = list.filter(a =>
+        (a.id||'').toLowerCase().includes(search) ||
+        (a.appDiscord||'').toLowerCase().includes(search) ||
+        (a.appCharacter||'').toLowerCase().includes(search) ||
+        (a.applicationType||'').toLowerCase().includes(search)
+      );
+      const container = document.getElementById('applications-list');
+      if (!list.length) { container.innerHTML = '<div class="empty-state"><h3>No applications found</h3><p>Try adjusting your filter or search.</p></div>'; return; }
+      container.innerHTML = list.map(a => {
+        const sc = statusClass(a.status);
+        return `
+          <div class="complaint-card ${sc}" id="card-${a.id}">
+            <div class="card-header" onclick="toggleCard('${a.id}')">
+              <span class="card-id">${a.id}</span>
+              <span class="card-title">${a.applicationType} — ${a.appCharacter}</span>
+              <span class="card-meta">${fmtDate(a.submittedAt)}</span>
+              ${badgeHtml(a.status)}
+              <span class="chevron" id="chev-${a.id}">▼</span>
+            </div>
+            <div class="card-body" id="body-${a.id}">
+              <div class="detail-grid">
+                <div class="detail-field"><div class="detail-label">Discord</div><div class="detail-value">${a.appDiscord||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Character</div><div class="detail-value">${a.appCharacter||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Role</div><div class="detail-value">${a.applicationType||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Age</div><div class="detail-value">${a.ageConfirmation||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Availability</div><div class="detail-value">${a.availability||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Submitted</div><div class="detail-value">${fmtDate(a.submittedAt)}</div></div>
+                ${a.updatedAt?`<div class="detail-field"><div class="detail-label">Last Updated</div><div class="detail-value">${fmtDate(a.updatedAt)}</div></div>`:''}
+              </div>
+              <div class="detail-block"><div class="detail-label">RP Experience</div><div class="detail-text">${a.experience||'N/A'}</div></div>
+              <div class="detail-block"><div class="detail-label">Why This Role</div><div class="detail-text">${a.roleReason||'N/A'}</div></div>
+              <div class="card-actions">
+                <textarea class="notes-input" id="notes-${a.id}" placeholder="Staff notes…">${a.staffNotes||''}</textarea>
+                <div class="action-buttons">
+                  <button class="action-btn btn-review" onclick="updateAppStatus('${a.id}','Under Review')">Under Review</button>
+                  <button class="action-btn btn-accept" onclick="updateAppStatus('${a.id}','Accepted')">Accept</button>
+                  <button class="action-btn btn-deny" onclick="updateAppStatus('${a.id}','Denied')">Deny</button>
+                  <button class="action-btn btn-reopen" onclick="updateAppStatus('${a.id}','Pending')">Reset to Pending</button>
+                  <button class="action-btn btn-save" onclick="saveAppNotes('${a.id}',event)">Save Notes</button>
+                  <button class="action-btn btn-delete" onclick="deleteApplication('${a.id}')">Delete</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    async function updateAppStatus(id, status) {
+      const notes = document.getElementById('notes-'+id)?.value;
+      const res = await fetch(`/api/application/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status, staffNotes: notes}) });
+      const json = await res.json();
+      if (json.success) {
+        const idx = allApplications.findIndex(a => a.id === id);
+        if (idx !== -1) allApplications[idx] = json.application;
+        updateAppStats(); renderApplications();
+        document.getElementById('body-'+id)?.classList.add('visible');
+        document.getElementById('chev-'+id)?.classList.add('open');
+      }
+    }
+
+    async function saveAppNotes(id, e) {
+      const notes = document.getElementById('notes-'+id)?.value || '';
+      const res = await fetch(`/api/application/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({staffNotes: notes}) });
+      const json = await res.json();
+      if (json.success) {
+        const idx = allApplications.findIndex(a => a.id === id);
+        if (idx !== -1) allApplications[idx] = json.application;
+        const btn = e.target; btn.textContent = 'Saved!';
+        setTimeout(() => { btn.textContent = 'Save Notes'; }, 1500);
+      }
+    }
+
+    async function deleteApplication(id) {
+      if (!confirm(`Delete application ${id}? This cannot be undone.`)) return;
+      const res = await fetch(`/api/application/${id}`, { method:'DELETE' });
+      const json = await res.json();
+      if (json.success) { allApplications = allApplications.filter(a => a.id !== id); updateAppStats(); renderApplications(); }
+    }
 
     (async () => {
       const res = await fetch('/api/admin/session');

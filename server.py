@@ -16,6 +16,161 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
 
 COMPLAINTS_FILE = 'complaints_data.json'
+APPLICATIONS_FILE = 'applications_data.json'
+
+
+def load_applications():
+    if os.path.exists(APPLICATIONS_FILE):
+        with open(APPLICATIONS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_applications(applications):
+    with open(APPLICATIONS_FILE, 'w') as f:
+        json.dump(applications, f, indent=2)
+
+
+def save_application(data):
+    applications = load_applications()
+    data['id'] = f"APP-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(applications)+1:04d}"
+    data['submittedAt'] = datetime.now().isoformat()
+    data['status'] = 'Pending'
+    data['staffNotes'] = ''
+    applications.append(data)
+    save_applications(applications)
+    return data
+
+
+def send_application_email(app):
+    smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(os.environ.get('SMTP_PORT', '465'))
+    smtp_email = os.environ.get('SMTP_EMAIL')
+    smtp_password = os.environ.get('SMTP_PASSWORD')
+    notify_email = os.environ.get('NOTIFY_EMAIL', smtp_email)
+    from_name = os.environ.get('SMTP_FROM_NAME', 'NThaCityRP')
+
+    if not smtp_email or not smtp_password:
+        logger.warning('Email credentials not configured. Application saved but no email sent.')
+        return False
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f"[NThaCityRP] New Application — {app['applicationType']} — {app['id']}"
+        msg['From'] = f"{from_name} <{smtp_email}>"
+        msg['To'] = notify_email
+
+        html = f"""
+        <html><body style="font-family:Arial,sans-serif;background:#111;color:#eee;padding:24px;">
+          <div style="max-width:600px;margin:0 auto;background:#1a1a1a;border-radius:12px;padding:24px;border:1px solid #333;">
+            <h2 style="color:#ff2d2d;margin-top:0;">NThaCityRP — New Application Submitted</h2>
+            <table style="width:100%;border-collapse:collapse;">
+              <tr><td style="padding:8px 0;color:#aaa;width:40%;">Application ID</td><td style="padding:8px 0;font-weight:bold;">{app['id']}</td></tr>
+              <tr><td style="padding:8px 0;color:#aaa;">Submitted At</td><td style="padding:8px 0;">{app['submittedAt']}</td></tr>
+              <tr><td style="padding:8px 0;color:#aaa;">Discord</td><td style="padding:8px 0;">{app.get('appDiscord','N/A')}</td></tr>
+              <tr><td style="padding:8px 0;color:#aaa;">Character Name</td><td style="padding:8px 0;">{app.get('appCharacter','N/A')}</td></tr>
+              <tr><td style="padding:8px 0;color:#aaa;">Role Applied For</td><td style="padding:8px 0;"><strong style="color:#ff2d2d;">{app.get('applicationType','N/A')}</strong></td></tr>
+              <tr><td style="padding:8px 0;color:#aaa;">Age</td><td style="padding:8px 0;">{app.get('ageConfirmation','N/A')}</td></tr>
+              <tr><td style="padding:8px 0;color:#aaa;">Availability</td><td style="padding:8px 0;">{app.get('availability','N/A')}</td></tr>
+            </table>
+            <hr style="border-color:#333;margin:16px 0;">
+            <p style="color:#aaa;margin:4px 0;">RP Experience</p>
+            <p style="background:#111;padding:12px;border-radius:8px;border-left:3px solid #ff2d2d;">{app.get('experience','N/A')}</p>
+            <p style="color:#aaa;margin:4px 0;">Why They Want This Role</p>
+            <p style="background:#111;padding:12px;border-radius:8px;border-left:3px solid #555;">{app.get('roleReason','N/A')}</p>
+            <p style="color:#555;font-size:12px;margin-top:24px;">NThaCityRP Application System — Automated Notification</p>
+          </div>
+        </body></html>
+        """
+
+        plain = f"""
+NThaCityRP — New Application Submitted
+=======================================
+Application ID: {app['id']}
+Submitted At:   {app['submittedAt']}
+Discord:        {app.get('appDiscord','N/A')}
+Character:      {app.get('appCharacter','N/A')}
+Role:           {app.get('applicationType','N/A')}
+Age:            {app.get('ageConfirmation','N/A')}
+Availability:   {app.get('availability','N/A')}
+
+RP Experience:
+{app.get('experience','N/A')}
+
+Why This Role:
+{app.get('roleReason','N/A')}
+        """
+
+        msg.attach(MIMEText(plain, 'plain'))
+        msg.attach(MIMEText(html, 'html'))
+
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host, smtp_port) as srv:
+                srv.login(smtp_email, smtp_password)
+                srv.sendmail(smtp_email, notify_email, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(smtp_email, smtp_password)
+                srv.sendmail(smtp_email, notify_email, msg.as_string())
+
+        logger.info(f"Application email sent for {app['id']}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send application email: {e}")
+        return False
+
+
+def send_application_discord(app):
+    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+    if not webhook_url or 'placeholder' in webhook_url:
+        logger.warning('Discord webhook not configured. Skipping Discord notification.')
+        return False
+
+    try:
+        type_colors = {
+            'Police Department': 3447003,
+            'EMS': 3066993,
+            'Staff': 10181046,
+            'Business Owner': 16744272,
+            'Gang / Faction': 15158332,
+            'Court / Judge / Lawyer': 16776960,
+            'DMV Worker': 9807270,
+        }
+        color = type_colors.get(app.get('applicationType', ''), 3447003)
+
+        payload = {
+            "username": "NThaCityRP Applications",
+            "avatar_url": "https://cdn.discordapp.com/embed/avatars/0.png",
+            "embeds": [{
+                "title": f"📋 New Application — {app.get('applicationType', 'Unknown')}",
+                "description": f"**RP Experience:**\n{app.get('experience', 'N/A')}\n\n**Why This Role:**\n{app.get('roleReason', 'N/A')}",
+                "color": color,
+                "fields": [
+                    {"name": "Application ID", "value": f"`{app['id']}`", "inline": True},
+                    {"name": "Role", "value": app.get('applicationType', 'N/A'), "inline": True},
+                    {"name": "Discord", "value": app.get('appDiscord', 'N/A'), "inline": True},
+                    {"name": "Character", "value": app.get('appCharacter', 'N/A'), "inline": True},
+                    {"name": "Age", "value": app.get('ageConfirmation', 'N/A'), "inline": True},
+                    {"name": "Availability", "value": app.get('availability', 'N/A'), "inline": True},
+                ],
+                "footer": {"text": f"NThaCityRP Application System • {app['submittedAt'][:10]}"},
+            }]
+        }
+
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            webhook_url, data=data,
+            headers={'Content-Type': 'application/json'}, method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status in (200, 204):
+                logger.info(f"Discord notification sent for {app['id']}")
+                return True
+    except Exception as e:
+        logger.error(f"Application Discord webhook failed: {e}")
+    return False
 
 
 def load_complaints():
@@ -279,6 +434,69 @@ def delete_complaint(complaint_id):
     if len(complaints) == original_len:
         return jsonify({'success': False, 'error': 'Complaint not found'}), 404
     save_complaints(complaints)
+    return jsonify({'success': True})
+
+
+@app.route('/api/application', methods=['POST'])
+def submit_application():
+    data = request.get_json(silent=True) or {}
+    required = ['appDiscord', 'appCharacter', 'applicationType', 'ageConfirmation', 'experience', 'roleReason', 'availability']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f"Missing required fields: {', '.join(missing)}"}), 400
+
+    application = save_application(data)
+    send_application_email(application)
+    send_application_discord(application)
+
+    return jsonify({
+        'success': True,
+        'id': application['id'],
+        'message': 'Application submitted successfully. Staff will review it and contact you via Discord.'
+    })
+
+
+@app.route('/api/applications', methods=['GET'])
+@admin_required
+def list_applications():
+    applications = load_applications()
+    applications.sort(key=lambda a: a.get('submittedAt', ''), reverse=True)
+    return jsonify({'applications': applications, 'total': len(applications)})
+
+
+@app.route('/api/application/<app_id>/status', methods=['POST'])
+@admin_required
+def update_application_status(app_id):
+    data = request.get_json(silent=True) or {}
+    new_status = data.get('status')
+    staff_notes = data.get('staffNotes')
+    valid_statuses = ['Pending', 'Under Review', 'Accepted', 'Denied']
+    if new_status and new_status not in valid_statuses:
+        return jsonify({'success': False, 'error': 'Invalid status'}), 400
+
+    applications = load_applications()
+    for a in applications:
+        if a['id'] == app_id:
+            if new_status:
+                a['status'] = new_status
+                a['updatedAt'] = datetime.now().isoformat()
+            if staff_notes is not None:
+                a['staffNotes'] = staff_notes
+            save_applications(applications)
+            return jsonify({'success': True, 'application': a})
+
+    return jsonify({'success': False, 'error': 'Application not found'}), 404
+
+
+@app.route('/api/application/<app_id>', methods=['DELETE'])
+@admin_required
+def delete_application(app_id):
+    applications = load_applications()
+    original_len = len(applications)
+    applications = [a for a in applications if a['id'] != app_id]
+    if len(applications) == original_len:
+        return jsonify({'success': False, 'error': 'Application not found'}), 404
+    save_applications(applications)
     return jsonify({'success': True})
 
 
