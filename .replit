@@ -37,3 +37,12 @@ externalPort = 80
 [deployment]
 deploymentTarget = "static"
 publicDir = "."
+
+[userenv]
+
+[userenv.shared]
+SMTP_HOST = "mail.nthatcityrp.com"
+SMTP_PORT = "465"
+SMTP_FROM_NAME = "NThaCityRP"
+SMTP_EMAIL = "noreply@nthatcityrp.com"
+NOTIFY_EMAIL = "admin@nthatcityrp.com"
