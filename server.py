@@ -2,15 +2,17 @@ import os
 import json
 import smtplib
 import logging
+import secrets
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, session
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='.', static_url_path='')
+app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
 
 COMPLAINTS_FILE = 'complaints_data.json'
 
@@ -22,13 +24,19 @@ def load_complaints():
     return []
 
 
+def save_complaints(complaints):
+    with open(COMPLAINTS_FILE, 'w') as f:
+        json.dump(complaints, f, indent=2)
+
+
 def save_complaint(data):
     complaints = load_complaints()
     data['id'] = f"CMP-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(complaints)+1:04d}"
     data['submittedAt'] = datetime.now().isoformat()
+    data['status'] = 'Open'
+    data['staffNotes'] = ''
     complaints.append(data)
-    with open(COMPLAINTS_FILE, 'w') as f:
-        json.dump(complaints, f, indent=2)
+    save_complaints(complaints)
     return data
 
 
@@ -99,15 +107,15 @@ Desired Resolution:
         msg.attach(MIMEText(html, 'html'))
 
         if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
-                server.login(smtp_email, smtp_password)
-                server.sendmail(smtp_email, notify_email, msg.as_string())
+            with smtplib.SMTP_SSL(smtp_host, smtp_port) as srv:
+                srv.login(smtp_email, smtp_password)
+                srv.sendmail(smtp_email, notify_email, msg.as_string())
         else:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(smtp_email, smtp_password)
-                server.sendmail(smtp_email, notify_email, msg.as_string())
+            with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                srv.ehlo()
+                srv.starttls()
+                srv.login(smtp_email, smtp_password)
+                srv.sendmail(smtp_email, notify_email, msg.as_string())
 
         logger.info(f"Email notification sent for complaint {complaint['id']}")
         return True
@@ -117,10 +125,41 @@ Desired Resolution:
         return False
 
 
+def admin_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('admin_logged_in'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    data = request.get_json(silent=True) or {}
+    password = data.get('password', '')
+    admin_password = os.environ.get('ADMIN_PASSWORD', 'nthatcityrp2024')
+    if password == admin_password:
+        session['admin_logged_in'] = True
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Invalid password'}), 401
+
+
+@app.route('/api/admin/logout', methods=['POST'])
+def admin_logout():
+    session.clear()
+    return jsonify({'success': True})
+
+
+@app.route('/api/admin/session', methods=['GET'])
+def admin_session():
+    return jsonify({'loggedIn': bool(session.get('admin_logged_in'))})
+
+
 @app.route('/api/complaint', methods=['POST'])
 def submit_complaint():
     data = request.get_json(silent=True) or {}
-
     required = ['complaintDiscord', 'reportedName', 'complaintType', 'incidentDate', 'incidentLocation', 'description', 'resolution']
     missing = [f for f in required if not data.get(f)]
     if missing:
@@ -138,9 +177,47 @@ def submit_complaint():
 
 
 @app.route('/api/complaints', methods=['GET'])
+@admin_required
 def list_complaints():
     complaints = load_complaints()
+    complaints.sort(key=lambda c: c.get('submittedAt', ''), reverse=True)
     return jsonify({'complaints': complaints, 'total': len(complaints)})
+
+
+@app.route('/api/complaint/<complaint_id>/status', methods=['POST'])
+@admin_required
+def update_complaint_status(complaint_id):
+    data = request.get_json(silent=True) or {}
+    new_status = data.get('status')
+    staff_notes = data.get('staffNotes')
+    valid_statuses = ['Open', 'Under Review', 'Resolved', 'Dismissed']
+    if new_status and new_status not in valid_statuses:
+        return jsonify({'success': False, 'error': 'Invalid status'}), 400
+
+    complaints = load_complaints()
+    for c in complaints:
+        if c['id'] == complaint_id:
+            if new_status:
+                c['status'] = new_status
+                c['updatedAt'] = datetime.now().isoformat()
+            if staff_notes is not None:
+                c['staffNotes'] = staff_notes
+            save_complaints(complaints)
+            return jsonify({'success': True, 'complaint': c})
+
+    return jsonify({'success': False, 'error': 'Complaint not found'}), 404
+
+
+@app.route('/api/complaint/<complaint_id>', methods=['DELETE'])
+@admin_required
+def delete_complaint(complaint_id):
+    complaints = load_complaints()
+    original_len = len(complaints)
+    complaints = [c for c in complaints if c['id'] != complaint_id]
+    if len(complaints) == original_len:
+        return jsonify({'success': False, 'error': 'Complaint not found'}), 404
+    save_complaints(complaints)
+    return jsonify({'success': True})
 
 
 @app.route('/', defaults={'path': ''})
