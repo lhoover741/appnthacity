@@ -483,6 +483,20 @@
 
       <div class="card-grid">
         <article class="card form-card">
+          <h3>AI Suspect Matcher</h3>
+          <div class="system-form">
+            <label>
+              <span>Physical description</span>
+              <textarea id="suspect-description" rows="4" placeholder="e.g. Male, early 30s, tall, heavy build, black hoodie, short dreadlocks, last seen near Legion Square…" style="width:100%;"></textarea>
+            </label>
+            <button class="button button-primary" type="button" id="ai-suspect-btn" style="display:flex;align-items:center;gap:8px;">
+              <span id="ai-suspect-icon">✦</span> Search Civilians
+            </button>
+            <div id="suspect-match-results" style="margin-top:16px;"></div>
+          </div>
+        </article>
+
+        <article class="card form-card">
           <h3>Lookup Vehicle Plate</h3>
           <form id="plate-lookup-form" class="system-form">
             <label><span>Plate number</span><input name="plateLookup" type="text" required /></label>
@@ -545,6 +559,63 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── AI SUSPECT MATCHER ── */
+    document.getElementById('ai-suspect-btn').addEventListener('click', async function () {
+      const description = document.getElementById('suspect-description').value.trim();
+      const resultsEl = document.getElementById('suspect-match-results');
+      const btnIcon = document.getElementById('ai-suspect-icon');
+
+      if (!description) {
+        resultsEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Enter a physical description first.</p>';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      resultsEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching civilian registry…</p>';
+
+      const stored = localStorage.getItem('NThaCityData');
+      const civilians = stored ? (JSON.parse(stored).civilians || []) : [];
+
+      try {
+        const res = await fetch('/api/ai/suspect-match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description, civilians })
+        });
+        const json = await res.json();
+
+        if (json.success) {
+          if (json.note) {
+            resultsEl.innerHTML = `<p style="color:var(--muted);font-size:0.85rem;">⚠️ ${json.note}</p>`;
+          } else if (!json.matches || json.matches.length === 0) {
+            resultsEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No civilian records matched this description.</p>';
+          } else {
+            const confColor = { High: '#4caf82', Medium: '#f5a623', Low: '#888' };
+            resultsEl.innerHTML = `
+              <p style="font-size:0.75rem;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.08em;">Top Matches</p>
+              ${json.matches.map(m => `
+                <div style="background:#111;border:1px solid #222;border-radius:10px;padding:12px 14px;margin-bottom:8px;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                    <strong style="font-size:0.95rem;">${m.name}</strong>
+                    <span style="font-size:0.72rem;padding:2px 8px;border-radius:20px;background:${confColor[m.confidence]}22;color:${confColor[m.confidence]};border:1px solid ${confColor[m.confidence]}44;">${m.confidence}</span>
+                  </div>
+                  <p style="margin:0;font-size:0.83rem;color:var(--muted);">${m.reason}</p>
+                </div>
+              `).join('')}
+            `;
+          }
+        } else {
+          resultsEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Search failed.'}</p>`;
+        }
+      } catch {
+        resultsEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
     /* ── AI DISPATCH TRIAGE ── */
     document.getElementById('ai-dispatch-btn').addEventListener('click', async function () {
       const statusEl = document.getElementById('ai-dispatch-status');

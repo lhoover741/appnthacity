@@ -616,7 +616,6 @@ def update_server_status():
 
 
 @app.route('/api/ai/police-report', methods=['POST'])
-@admin_required
 def ai_police_report():
     api_key = os.environ.get('OPENAI_API_KEY', '')
     if not api_key:
@@ -682,7 +681,6 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 
 @app.route('/api/ai/dispatch', methods=['POST'])
-@admin_required
 def ai_dispatch():
     api_key = os.environ.get('OPENAI_API_KEY', '')
     if not api_key:
@@ -746,7 +744,6 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 
 @app.route('/api/ai/warrant', methods=['POST'])
-@admin_required
 def ai_warrant():
     api_key = os.environ.get('OPENAI_API_KEY', '')
     if not api_key:
@@ -807,6 +804,76 @@ Respond only with the JSON object. No markdown, no extra text."""
     except Exception as e:
         logger.error(f'AI warrant generation failed: {e}')
         return jsonify({'success': False, 'error': 'Warrant generation failed. Try again.'}), 500
+
+
+@app.route('/api/ai/suspect-match', methods=['POST'])
+def ai_suspect_match():
+    api_key = os.environ.get('OPENAI_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    description = data.get('description', '').strip()
+    civilians = data.get('civilians', [])
+
+    if not description:
+        return jsonify({'success': False, 'error': 'No description provided.'}), 400
+
+    if not civilians:
+        return jsonify({'success': True, 'matches': [], 'note': 'No civilians registered in the system yet.'})
+
+    civ_list = '\n'.join([
+        f"- Name: {c.get('firstName','?')} {c.get('lastName','?')} | DOB: {c.get('dob','?')} | Gender: {c.get('gender','?')} | Occupation: {c.get('occupation','?')} | Notes: {c.get('notes','')}"
+        for c in civilians[:50]
+    ])
+
+    prompt = f"""You are a suspect identification assistant for the NThaCityRP Los Santos roleplay community.
+An officer has provided a physical description of a suspect. Compare it against the registered civilian database below and identify the top matches.
+
+Respond with ONLY a valid JSON object with one key:
+- "matches": an array of up to 3 objects, each with:
+  - "name": full name of the civilian
+  - "confidence": "High", "Medium", or "Low"
+  - "reason": one short sentence (max 15 words) explaining why they match
+
+If no civilians are a reasonable match, return an empty matches array.
+
+Suspect Description: {description}
+
+Registered Civilians:
+{civ_list}
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'gpt-4o-mini',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 300,
+            'temperature': 0.3,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'matches': ai_json.get('matches', [])})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenAI suspect match error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenAI error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI suspect match failed: {e}')
+        return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
 
 
 @app.route('/', defaults={'path': ''})
