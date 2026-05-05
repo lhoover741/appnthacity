@@ -511,6 +511,37 @@
         </article>
       </div>
 
+      <!-- RADIO LOG -->
+      <section style="margin-top:32px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+          <h2 style="margin:0;font-size:1.4rem;">Radio Log</h2>
+          <span style="font-size:0.75rem;color:var(--muted);">Live officer transmissions</span>
+        </div>
+        <article class="card form-card" style="margin-bottom:16px;">
+          <div class="system-form">
+            <div style="display:grid;grid-template-columns:1fr 1fr 3fr auto;gap:10px;align-items:end;">
+              <label style="margin:0;"><span style="font-size:0.75rem;">Unit</span><input id="radio-unit" type="text" placeholder="LSPD-1A23" /></label>
+              <label style="margin:0;"><span style="font-size:0.75rem;">Channel</span>
+                <select id="radio-channel">
+                  <option>Primary</option>
+                  <option>Secondary</option>
+                  <option>Tac-1</option>
+                  <option>Tac-2</option>
+                  <option>BCSO</option>
+                  <option>Air</option>
+                </select>
+              </label>
+              <label style="margin:0;"><span style="font-size:0.75rem;">Transmission</span><input id="radio-message" type="text" placeholder="10-4, en route to Legion Square, shots fired call…" /></label>
+              <button class="button button-primary" type="button" id="radio-post-btn" style="height:42px;white-space:nowrap;">Transmit</button>
+            </div>
+            <div id="radio-status" style="font-size:0.8rem;margin-top:4px;"></div>
+          </div>
+        </article>
+        <div id="radio-feed" style="display:grid;gap:6px;">
+          <p style="color:var(--muted);font-size:0.88rem;">No transmissions logged yet.</p>
+        </div>
+      </section>
+
       <!-- BOLO BOARD -->
       <section style="margin-top:32px;">
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
@@ -648,6 +679,71 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── RADIO LOG ── */
+    const channelColor = { Primary: '#4c9af5', Secondary: '#9b59b6', 'Tac-1': '#e05252', 'Tac-2': '#e08252', BCSO: '#4caf82', Air: '#52c8e0' };
+
+    async function loadRadioFeed() {
+      try {
+        const res = await fetch('/api/radio-log');
+        const entries = await res.json();
+        const feedEl = document.getElementById('radio-feed');
+        if (!entries.length) {
+          feedEl.innerHTML = '<p style="color:var(--muted);font-size:0.88rem;">No transmissions logged yet.</p>';
+          return;
+        }
+        feedEl.innerHTML = entries.map(e => {
+          const cc = channelColor[e.channel] || '#888';
+          const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
+          return `<div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:10px 14px;display:flex;align-items:flex-start;gap:12px;">
+            <span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;background:${cc}22;color:${cc};border:1px solid ${cc}44;white-space:nowrap;margin-top:2px;">${e.channel}</span>
+            <div style="flex:1;">
+              <span style="font-size:0.8rem;font-weight:700;color:#ddd;">${e.unit}</span>
+              <span style="font-size:0.82rem;color:#bbb;margin-left:10px;">${e.message}</span>
+            </div>
+            <span style="font-size:0.72rem;color:#555;white-space:nowrap;">${ts}</span>
+          </div>`;
+        }).join('');
+      } catch { /* silent */ }
+    }
+
+    document.getElementById('radio-post-btn').addEventListener('click', async function () {
+      const unit = document.getElementById('radio-unit').value.trim();
+      const channel = document.getElementById('radio-channel').value;
+      const message = document.getElementById('radio-message').value.trim();
+      const statusEl = document.getElementById('radio-status');
+      if (!unit || !message) {
+        statusEl.innerHTML = '<span style="color:var(--accent);">Unit and message are required.</span>';
+        return;
+      }
+      this.disabled = true;
+      try {
+        const res = await fetch('/api/radio-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unit, channel, message })
+        });
+        const json = await res.json();
+        if (json.success) {
+          document.getElementById('radio-message').value = '';
+          statusEl.innerHTML = '';
+          loadRadioFeed();
+        } else {
+          statusEl.innerHTML = `<span style="color:var(--accent);">${json.error}</span>`;
+        }
+      } catch {
+        statusEl.innerHTML = '<span style="color:var(--accent);">Network error.</span>';
+      } finally {
+        this.disabled = false;
+      }
+    });
+
+    document.getElementById('radio-message').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') document.getElementById('radio-post-btn').click();
+    });
+
+    loadRadioFeed();
+    setInterval(loadRadioFeed, 15000);
+
     /* ── BOLO BOARD ── */
     const threatColor = { High: '#e05252', Medium: '#f5a623', Low: '#4caf82' };
 
@@ -1055,6 +1151,11 @@
           }
           statusEl.style.color = '#4caf82';
           statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')} — review before submitting.`;
+          if (json.suspectFled && json.autoBolo) {
+            const b = json.autoBolo;
+            statusEl.innerHTML += `<br><span style="color:#f5a623;">⚠️ Suspect fled — Auto-BOLO issued: <strong>${b.suspectName}</strong> · Last seen: ${b.lastLocation} · ID: ${b.id}</span>`;
+            loadBolos();
+          }
         } else {
           statusEl.style.color = 'var(--accent)';
           statusEl.textContent = json.error || 'Generation failed. Try again.';
