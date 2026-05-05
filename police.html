@@ -497,6 +497,20 @@
         </article>
 
         <article class="card form-card">
+          <h3>AI Incident Summariser</h3>
+          <div class="system-form">
+            <label>
+              <span>Raw CAD notes</span>
+              <textarea id="incident-notes" rows="6" placeholder="Paste raw notes here… e.g. unit 4 responded to shots fired legion square, suspect male black hoodie fled on foot, arrested corner of forum dr, charged with agg assault + illegal firearm, booked 22:14…" style="width:100%;"></textarea>
+            </label>
+            <button class="button button-primary" type="button" id="ai-summary-btn" style="display:flex;align-items:center;gap:8px;">
+              <span id="ai-summary-icon">✦</span> Generate Summary
+            </button>
+            <div id="incident-summary-output" style="margin-top:16px;"></div>
+          </div>
+        </article>
+
+        <article class="card form-card">
           <h3>Lookup Vehicle Plate</h3>
           <form id="plate-lookup-form" class="system-form">
             <label><span>Plate number</span><input name="plateLookup" type="text" required /></label>
@@ -559,6 +573,52 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── AI INCIDENT SUMMARISER ── */
+    document.getElementById('ai-summary-btn').addEventListener('click', async function () {
+      const notes = document.getElementById('incident-notes').value.trim();
+      const outputEl = document.getElementById('incident-summary-output');
+      const btnIcon = document.getElementById('ai-summary-icon');
+
+      if (!notes) {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Paste your CAD notes first.</p>';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      outputEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Generating summary…</p>';
+
+      try {
+        const res = await fetch('/api/ai/incident-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes })
+        });
+        const json = await res.json();
+
+        if (json.success && json.summary) {
+          outputEl.innerHTML = `
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:10px;padding:14px 16px;position:relative;">
+              <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Discord-ready summary</p>
+              <pre id="summary-text" style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:0.88rem;line-height:1.6;margin:0;color:#e8e8e8;">${json.summary.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+              <button onclick="
+                navigator.clipboard.writeText(document.getElementById('summary-text').innerText);
+                this.textContent='Copied!';
+                setTimeout(()=>this.textContent='Copy',2000);
+              " style="margin-top:12px;background:#1e1e1e;border:1px solid #333;color:#ccc;padding:6px 14px;border-radius:6px;font-size:0.8rem;cursor:pointer;">Copy</button>
+            </div>
+          `;
+        } else {
+          outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Failed to generate summary.'}</p>`;
+        }
+      } catch {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
     /* ── AI SUSPECT MATCHER ── */
     document.getElementById('ai-suspect-btn').addEventListener('click', async function () {
       const description = document.getElementById('suspect-description').value.trim();

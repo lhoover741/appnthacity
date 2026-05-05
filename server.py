@@ -806,6 +806,66 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Warrant generation failed. Try again.'}), 500
 
 
+@app.route('/api/ai/incident-summary', methods=['POST'])
+def ai_incident_summary():
+    api_key = os.environ.get('OPENAI_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    notes = data.get('notes', '').strip()
+
+    if not notes:
+        return jsonify({'success': False, 'error': 'No CAD notes provided.'}), 400
+
+    prompt = f"""You are a law enforcement report writer for the NThaCityRP Los Santos roleplay community.
+An officer has provided raw CAD notes from an incident. Generate a clean, professional incident summary formatted for posting in a Discord channel using Discord markdown.
+
+Rules:
+- Use **bold** for section labels
+- Use a code block only for case number if present
+- Keep it concise — max 200 words
+- Include these sections if data is available: Incident Type, Location, Time, Officers Involved, Suspect(s), Charges, Outcome, Notes
+- End with a horizontal rule line (—————————————)
+- Do NOT include ```discord``` wrapper — just the raw Discord-formatted text
+
+Raw CAD Notes:
+{notes}
+
+Respond with ONLY a valid JSON object with one key:
+- "summary": the full Discord-formatted incident summary string"""
+
+    try:
+        payload = json.dumps({
+            'model': 'gpt-4o-mini',
+            'messages': [{'role': 'user', 'content': prompt}],
+            'max_tokens': 500,
+            'temperature': 0.4,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'summary': ai_json.get('summary', '')})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenAI incident summary error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenAI error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI incident summary failed: {e}')
+        return jsonify({'success': False, 'error': 'Summary failed. Try again.'}), 500
+
+
 @app.route('/api/ai/suspect-match', methods=['POST'])
 def ai_suspect_match():
     api_key = os.environ.get('OPENAI_API_KEY', '')
