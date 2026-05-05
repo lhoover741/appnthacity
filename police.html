@@ -481,6 +481,36 @@
         </article>
       </div>
 
+      <div class="card-grid" style="grid-column:1/-1;">
+        <article class="card form-card" style="grid-column:1/-1;">
+          <h3>🚨 CAD Call Generator</h3>
+          <div class="system-form">
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+              <label style="flex:1;min-width:200px;">
+                <span>Call type <span style="color:var(--muted);font-weight:400;">(optional — leave blank for random)</span></span>
+                <select id="gen-call-type">
+                  <option value="">— Random —</option>
+                  <option>Shots Fired</option>
+                  <option>Armed Robbery</option>
+                  <option>Traffic Accident</option>
+                  <option>Pursuit</option>
+                  <option>Assault in Progress</option>
+                  <option>Domestic Disturbance</option>
+                  <option>Drug Activity</option>
+                  <option>Suspicious Person</option>
+                  <option>Hostage Situation</option>
+                  <option>Noise Complaint</option>
+                </select>
+              </label>
+              <button class="button button-primary" type="button" id="ai-gen-call-btn" style="display:flex;align-items:center;gap:8px;height:42px;">
+                <span id="ai-gen-call-icon">✦</span> Generate Call
+              </button>
+            </div>
+            <div id="gen-call-output" style="margin-top:18px;"></div>
+          </div>
+        </article>
+      </div>
+
       <div class="card-grid">
         <article class="card form-card">
           <h3>AI Suspect Matcher</h3>
@@ -573,6 +603,71 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── CAD CALL GENERATOR ── */
+    document.getElementById('ai-gen-call-btn').addEventListener('click', async function () {
+      const callType = document.getElementById('gen-call-type').value;
+      const outputEl = document.getElementById('gen-call-output');
+      const btnIcon = document.getElementById('ai-gen-call-icon');
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      outputEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Generating call…</p>';
+
+      try {
+        const res = await fetch('/api/ai/generate-call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callType })
+        });
+        const json = await res.json();
+
+        if (json.success && json.call) {
+          const c = json.call;
+          const prioColor = { Critical: '#e05252', High: '#f5a623', Medium: '#4c9af5', Low: '#888' };
+          const pColor = prioColor[c.priority] || '#888';
+
+          const transcriptHtml = (c.transcript || []).map(t => `
+            <div style="display:flex;gap:10px;margin-bottom:6px;align-items:flex-start;">
+              <span style="min-width:72px;font-size:0.75rem;font-weight:700;padding:2px 7px;border-radius:4px;text-align:center;background:${t.speaker==='Dispatch'?'#1a2a1a':'#1a1a2a'};color:${t.speaker==='Dispatch'?'#4caf82':'#6fa3f5'};flex-shrink:0;">${t.speaker}</span>
+              <span style="font-size:0.85rem;line-height:1.5;color:#d8d8d8;">${t.line}</span>
+            </div>
+          `).join('');
+
+          outputEl.innerHTML = `
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;">
+              <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;display:flex;flex-wrap:wrap;gap:14px;align-items:center;">
+                <span style="font-size:1rem;font-weight:700;color:#fff;">${c.callType || 'Unknown'}</span>
+                <span style="font-size:0.75rem;padding:3px 10px;border-radius:20px;background:${pColor}22;color:${pColor};border:1px solid ${pColor}44;font-weight:600;">${c.priority}</span>
+                <span style="font-size:0.8rem;color:var(--muted);">📍 ${c.location || '—'}</span>
+                <span style="font-size:0.8rem;color:var(--muted);">👤 ${c.caller || '—'}</span>
+                <span style="font-size:0.8rem;color:#6fa3f5;">🚔 ${c.assignedUnit || '—'}</span>
+              </div>
+              <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;">
+                <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Caller Description</p>
+                <p style="font-size:0.88rem;line-height:1.6;margin:0;color:#d0d0d0;">${c.description || '—'}</p>
+              </div>
+              <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;">
+                <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Dispatch Notes</p>
+                <p style="font-size:0.85rem;line-height:1.5;margin:0;color:#aaa;">${c.dispatchNotes || '—'}</p>
+              </div>
+              <div style="padding:14px 18px;">
+                <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Call Transcript</p>
+                ${transcriptHtml}
+              </div>
+            </div>
+            <button onclick="document.getElementById('ai-gen-call-btn').click()" style="margin-top:10px;background:#1e1e1e;border:1px solid #333;color:#ccc;padding:6px 16px;border-radius:6px;font-size:0.8rem;cursor:pointer;">↺ Generate Another</button>
+          `;
+        } else {
+          outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Generation failed.'}</p>`;
+        }
+      } catch {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
     /* ── AI INCIDENT SUMMARISER ── */
     document.getElementById('ai-summary-btn').addEventListener('click', async function () {
       const notes = document.getElementById('incident-notes').value.trim();

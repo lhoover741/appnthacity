@@ -828,6 +828,73 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Warrant generation failed. Try again.'}), 500
 
 
+@app.route('/api/ai/generate-call', methods=['POST'])
+def ai_generate_call():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    call_type = data.get('callType', '').strip()
+
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system for NThaCityRP, a GTA V roleplay server set in Los Santos.
+CALL GENERATION MODE: Generate fully realistic GTA V emergency calls.
+LOCATION RULES (CRITICAL): ALL locations must be real GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Rockford Hills, Sandy Shores, Paleto Bay, Route 68, Senora Freeway, Great Ocean Highway, Legion Square, Pillbox Hill Medical Center, Maze Bank Arena, LSIA, La Mesa, Cypress Flats, etc.
+DISPATCH LOGIC: Assign LSPD units (LSPD-1A23, LSPD-2B04) for city calls, BCSO (BCSO-3C11) for county/highway, K9-01/K9-02, AIR-1 for helicopter. Escalate priority based on severity.
+Generate realistic caller names (first + last). The transcript must feel like a real 911 call — dispatcher asks clarifying questions, caller may be panicked or calm depending on incident. No real-world references."""
+
+    type_hint = f" The call type should be: {call_type}." if call_type else " Pick a random realistic incident type."
+
+    user_msg = f"""Generate a complete GTA V 911 emergency call for an LSPD dispatch session.{type_hint}
+
+Respond with ONLY a valid JSON object with these exact keys:
+- "callType": the incident type (e.g. "Shots Fired", "Traffic Accident", "Armed Robbery", "Domestic Disturbance", "Pursuit", "Suspicious Person", "Drug Activity", "Assault in Progress")
+- "caller": realistic full name of the caller
+- "location": specific GTA V street, area, or landmark (e.g. "Forum Drive & Covenant Ave, Davis" or "Route 68 near Harmony")
+- "description": 2-3 sentences of what the caller describes to dispatch
+- "dispatchNotes": 1-2 sentences of internal dispatcher notes (unit recommendation, hazards, backup needed)
+- "priority": one of "Critical", "High", "Medium", "Low"
+- "assignedUnit": LSPD/BCSO unit designation (e.g. "LSPD-1A23", "BCSO-2B11", "AIR-1", "K9-02")
+- "transcript": an array of 6-10 objects, each with "speaker" ("Dispatch" or "Caller") and "line" (the spoken dialogue). Make it realistic — dispatcher confirms location, caller may be scared or urgent, dispatcher gives instructions and confirms unit en route.
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 800,
+            'temperature': 0.9,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'call': ai_json})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter generate-call error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI call generation failed: {e}')
+        return jsonify({'success': False, 'error': 'Call generation failed. Try again.'}), 500
+
+
 @app.route('/api/ai/incident-summary', methods=['POST'])
 def ai_incident_summary():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
