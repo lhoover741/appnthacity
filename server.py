@@ -905,7 +905,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 500,
             'temperature': 0.7,
@@ -913,7 +913,7 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://api.openrouter.io/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -1013,7 +1013,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 200,
             'temperature': 0.4,
@@ -1021,7 +1021,7 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://api.openrouter.io/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -1091,7 +1091,7 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://api.openrouter.io/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -1244,8 +1244,8 @@ Respond with ONLY a valid JSON object with one key:
             return jsonify({'success': True, 'summary': ai_json.get('summary', '')})
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
-        logger.error(f'OpenAI incident summary error: {e.code} {body}')
-        return jsonify({'success': False, 'error': f'OpenAI error {e.code}.'}), 502
+        logger.error(f'OpenRouter incident summary error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
     except Exception as e:
         logger.error(f'AI incident summary failed: {e}')
         return jsonify({'success': False, 'error': 'Summary failed. Try again.'}), 500
@@ -1302,7 +1302,7 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://api.openrouter.io/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
