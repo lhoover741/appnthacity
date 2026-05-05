@@ -511,6 +511,51 @@
         </article>
       </div>
 
+      <!-- BOLO BOARD -->
+      <section style="margin-top:32px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+          <h2 style="margin:0;font-size:1.4rem;">Active BOLOs</h2>
+          <span id="bolo-count-badge" style="background:#e0525222;color:#e05252;border:1px solid #e0525244;font-size:0.75rem;font-weight:700;padding:3px 10px;border-radius:20px;">0 Active</span>
+          <button class="button button-ghost" type="button" id="toggle-bolo-form-btn" style="margin-left:auto;font-size:0.82rem;">+ Post BOLO</button>
+        </div>
+
+        <!-- Post BOLO form (hidden by default) -->
+        <div id="bolo-form-wrap" style="display:none;margin-bottom:22px;">
+          <article class="card form-card">
+            <h3>Post BOLO</h3>
+            <div class="system-form">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <label><span>Suspect name</span><input id="bolo-name" type="text" placeholder="John Doe / Unknown" /></label>
+                <label><span>Threat level</span>
+                  <select id="bolo-threat">
+                    <option value="High">High</option>
+                    <option value="Medium" selected>Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
+                </label>
+                <label style="grid-column:1/-1;"><span>Physical description</span><textarea id="bolo-desc" rows="2" placeholder="e.g. Male, early 30s, stocky build, red hoodie, neck tattoo"></textarea></label>
+                <label><span>Last known location</span><input id="bolo-location" type="text" placeholder="e.g. Forum Drive, Davis" /></label>
+                <label><span>Vehicle</span><input id="bolo-vehicle" type="text" placeholder="e.g. Black Baller, partial plate 8XK" /></label>
+                <label style="grid-column:1/-1;"><span>Charges / reason</span><input id="bolo-charges" type="text" placeholder="e.g. Armed Robbery, Evading" /></label>
+                <label><span>Issued by</span><input id="bolo-issuer" type="text" placeholder="Officer name" /></label>
+              </div>
+              <div style="display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;">
+                <button class="button button-primary" type="button" id="ai-gen-bolo-btn" style="display:flex;align-items:center;gap:8px;">
+                  <span id="ai-gen-bolo-icon">✦</span> AI Generate BOLO
+                </button>
+                <button class="button button-ghost" type="button" id="submit-bolo-btn">Post BOLO</button>
+              </div>
+              <div id="bolo-form-status" style="margin-top:8px;font-size:0.85rem;"></div>
+            </div>
+          </article>
+        </div>
+
+        <!-- BOLO list -->
+        <div id="bolo-list">
+          <p style="color:var(--muted);font-size:0.88rem;">No active BOLOs on file.</p>
+        </div>
+      </section>
+
       <div class="card-grid">
         <article class="card form-card">
           <h3>AI Suspect Matcher</h3>
@@ -603,6 +648,130 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── BOLO BOARD ── */
+    const threatColor = { High: '#e05252', Medium: '#f5a623', Low: '#4caf82' };
+
+    async function loadBolos() {
+      try {
+        const res = await fetch('/api/bolos');
+        const bolos = await res.json();
+        const active = bolos.filter(b => b.status === 'Active');
+        document.getElementById('bolo-count-badge').textContent = `${active.length} Active`;
+        const listEl = document.getElementById('bolo-list');
+        if (!active.length) {
+          listEl.innerHTML = '<p style="color:var(--muted);font-size:0.88rem;">No active BOLOs on file.</p>';
+          return;
+        }
+        listEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;">
+          ${active.map(b => {
+            const tc = threatColor[b.threatLevel] || '#888';
+            const dt = b.issuedAt ? new Date(b.issuedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+            return `<div style="background:#0d0d0d;border:1px solid ${tc}44;border-left:3px solid ${tc};border-radius:10px;padding:14px 16px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <strong style="font-size:0.95rem;flex:1;">${b.suspectName}</strong>
+                <span style="font-size:0.7rem;padding:2px 8px;border-radius:20px;background:${tc}22;color:${tc};border:1px solid ${tc}44;font-weight:700;">${b.threatLevel}</span>
+              </div>
+              <p style="font-size:0.82rem;color:#ccc;margin:0 0 6px;">${b.description}</p>
+              <div style="font-size:0.78rem;color:var(--muted);display:grid;gap:3px;">
+                <span>📍 <strong style="color:#aaa;">Last seen:</strong> ${b.lastLocation}</span>
+                ${b.vehicle ? `<span>🚗 <strong style="color:#aaa;">Vehicle:</strong> ${b.vehicle}</span>` : ''}
+                ${b.charges ? `<span>⚖️ <strong style="color:#aaa;">Charges:</strong> ${b.charges}</span>` : ''}
+                <span>👮 <strong style="color:#aaa;">Issued by:</strong> ${b.issuedBy} · ${dt}</span>
+                <span style="font-size:0.7rem;color:#555;">${b.id}</span>
+              </div>
+              <button onclick="clearBolo('${b.id}')" style="margin-top:10px;background:transparent;border:1px solid #333;color:#888;padding:4px 12px;border-radius:6px;font-size:0.75rem;cursor:pointer;">✓ Clear BOLO</button>
+            </div>`;
+          }).join('')}
+        </div>`;
+      } catch { /* silent */ }
+    }
+
+    async function clearBolo(id) {
+      await fetch(`/api/bolo/${id}/clear`, { method: 'POST' });
+      loadBolos();
+    }
+
+    document.getElementById('toggle-bolo-form-btn').addEventListener('click', function () {
+      const wrap = document.getElementById('bolo-form-wrap');
+      const visible = wrap.style.display !== 'none';
+      wrap.style.display = visible ? 'none' : 'block';
+      this.textContent = visible ? '+ Post BOLO' : '✕ Cancel';
+    });
+
+    document.getElementById('ai-gen-bolo-btn').addEventListener('click', async function () {
+      const charges = document.getElementById('bolo-charges').value.trim();
+      const icon = document.getElementById('ai-gen-bolo-icon');
+      icon.textContent = '⏳';
+      this.disabled = true;
+      document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--muted);">Generating BOLO…</span>';
+      try {
+        const res = await fetch('/api/ai/generate-bolo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ charges })
+        });
+        const json = await res.json();
+        if (json.success && json.bolo) {
+          const b = json.bolo;
+          document.getElementById('bolo-name').value = b.suspectName || '';
+          document.getElementById('bolo-desc').value = b.description || '';
+          document.getElementById('bolo-location').value = b.lastLocation || '';
+          document.getElementById('bolo-vehicle').value = b.vehicle || '';
+          document.getElementById('bolo-charges').value = b.charges || '';
+          document.getElementById('bolo-threat').value = b.threatLevel || 'Medium';
+          document.getElementById('bolo-form-status').innerHTML = '<span style="color:#4caf82;">✓ Fields filled — review and post.</span>';
+        } else {
+          document.getElementById('bolo-form-status').innerHTML = `<span style="color:var(--accent);">${json.error || 'Generation failed.'}</span>`;
+        }
+      } catch {
+        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Network error.</span>';
+      } finally {
+        icon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
+    document.getElementById('submit-bolo-btn').addEventListener('click', async function () {
+      const payload = {
+        suspectName: document.getElementById('bolo-name').value.trim() || 'Unknown',
+        description: document.getElementById('bolo-desc').value.trim(),
+        lastLocation: document.getElementById('bolo-location').value.trim(),
+        vehicle: document.getElementById('bolo-vehicle').value.trim(),
+        charges: document.getElementById('bolo-charges').value.trim(),
+        threatLevel: document.getElementById('bolo-threat').value,
+        issuedBy: document.getElementById('bolo-issuer').value.trim()
+      };
+      if (!payload.description || !payload.lastLocation || !payload.issuedBy) {
+        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Description, location, and issuing officer are required.</span>';
+        return;
+      }
+      this.disabled = true;
+      try {
+        const res = await fetch('/api/bolo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (json.success) {
+          ['bolo-name','bolo-desc','bolo-location','bolo-vehicle','bolo-charges','bolo-issuer'].forEach(id => document.getElementById(id).value = '');
+          document.getElementById('bolo-threat').value = 'Medium';
+          document.getElementById('bolo-form-status').innerHTML = '<span style="color:#4caf82;">✓ BOLO posted.</span>';
+          document.getElementById('bolo-form-wrap').style.display = 'none';
+          document.getElementById('toggle-bolo-form-btn').textContent = '+ Post BOLO';
+          loadBolos();
+        } else {
+          document.getElementById('bolo-form-status').innerHTML = `<span style="color:var(--accent);">${json.error}</span>`;
+        }
+      } catch {
+        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Network error.</span>';
+      } finally {
+        this.disabled = false;
+      }
+    });
+
+    loadBolos();
+
     /* ── CAD CALL GENERATOR ── */
     document.getElementById('ai-gen-call-btn').addEventListener('click', async function () {
       const callType = document.getElementById('gen-call-type').value;

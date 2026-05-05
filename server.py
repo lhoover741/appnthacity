@@ -18,6 +18,7 @@ app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
 COMPLAINTS_FILE = 'complaints_data.json'
 APPLICATIONS_FILE = 'applications_data.json'
 SERVER_STATUS_FILE = 'server_status.json'
+BOLOS_FILE = 'bolos_data.json'
 
 DEFAULT_STATUS = {
     'cityStatus': 'ACTIVE',
@@ -26,6 +27,18 @@ DEFAULT_STATUS = {
     'customMessage': '24/7 dispatch channel live',
     'lastUpdated': None
 }
+
+
+def load_bolos():
+    if os.path.exists(BOLOS_FILE):
+        with open(BOLOS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_bolos(bolos):
+    with open(BOLOS_FILE, 'w') as f:
+        json.dump(bolos, f, indent=2)
 
 
 def load_server_status():
@@ -613,6 +626,110 @@ def update_server_status():
     save_server_status(status)
     send_status_discord_notification(old_status, status)
     return jsonify({'success': True, 'status': status})
+
+
+@app.route('/api/bolos', methods=['GET'])
+def get_bolos():
+    return jsonify(load_bolos())
+
+
+@app.route('/api/bolo', methods=['POST'])
+def post_bolo():
+    data = request.get_json(silent=True) or {}
+    required = ['suspectName', 'description', 'lastLocation', 'threatLevel', 'issuedBy']
+    if not all(data.get(f) for f in required):
+        return jsonify({'success': False, 'error': 'Missing required fields.'}), 400
+    bolos = load_bolos()
+    bolo = {
+        'id': f"BOLO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(bolos)+1:04d}",
+        'suspectName': data.get('suspectName', 'Unknown'),
+        'description': data.get('description', ''),
+        'lastLocation': data.get('lastLocation', ''),
+        'vehicle': data.get('vehicle', ''),
+        'charges': data.get('charges', ''),
+        'threatLevel': data.get('threatLevel', 'Medium'),
+        'issuedBy': data.get('issuedBy', ''),
+        'issuedAt': datetime.now().isoformat(),
+        'status': 'Active'
+    }
+    bolos.insert(0, bolo)
+    save_bolos(bolos)
+    return jsonify({'success': True, 'bolo': bolo})
+
+
+@app.route('/api/bolo/<bolo_id>/clear', methods=['POST'])
+def clear_bolo(bolo_id):
+    bolos = load_bolos()
+    for b in bolos:
+        if b['id'] == bolo_id:
+            b['status'] = 'Cleared'
+            save_bolos(bolos)
+            return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'BOLO not found.'}), 404
+
+
+@app.route('/api/ai/generate-bolo', methods=['POST'])
+def ai_generate_bolo():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    charges = data.get('charges', '').strip()
+
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system for NThaCityRP, a GTA V roleplay server set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must be real GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Rockford Hills, Sandy Shores, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, LSIA, La Mesa, Cypress Flats, etc.
+VEHICLES: Use GTA V vehicle names — Baller, Dominator, Sultan, Kuruma, Sentinel, Schafter, Issi, Elegy, Banshee, Sandking, Granger, etc.
+Generate realistic RP suspect profiles. No real-world references."""
+
+    charge_hint = f" The suspect is wanted for: {charges}." if charges else " Pick a realistic crime scenario."
+
+    user_msg = f"""Generate a realistic BOLO (Be On the Lookout) notice for an LSPD officer.{charge_hint}
+
+Respond with ONLY a valid JSON object with these exact keys:
+- "suspectName": realistic full name OR "Unknown Male" / "Unknown Female" if identity unconfirmed
+- "description": 2-sentence physical description (gender, approx age, build, hair, clothing, distinguishing features like tattoos/scars)
+- "lastLocation": specific GTA V street + area (e.g. "Covenant Ave & Forum Dr, Davis")
+- "vehicle": GTA V vehicle name + color + partial plate (e.g. "Navy Blue Baller, partial plate 4KX") or "On foot" if no vehicle
+- "charges": 1-3 charge strings (e.g. "Armed Robbery, Possession of Illegal Firearm")
+- "threatLevel": "High", "Medium", or "Low" — based on severity of charges
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 350,
+            'temperature': 0.85,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'bolo': ai_json})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter generate-bolo error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI BOLO generation failed: {e}')
+        return jsonify({'success': False, 'error': 'BOLO generation failed. Try again.'}), 500
 
 
 @app.route('/api/ai/police-report', methods=['POST'])
