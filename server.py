@@ -630,10 +630,13 @@ def ai_police_report():
     penalty = data.get('penalty', 'Unknown')
     notes = data.get('reportNotes', '')
 
-    prompt = f"""You are a police report writer for the NThaCityRP Discord roleplay community set in Los Santos.
-Based on the arrest details below, respond with ONLY a valid JSON object containing exactly two keys:
-- "narrative": a formal, professional arrest report narrative (150-220 words, third-person past tense, law enforcement language)
-- "suggestedPenalty": a short realistic penalty string (e.g. "3 years / $25,000 fine" or "18 months + community service") based on the charges — if a penalty was already provided, refine and return it as-is
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system and report-writing assistant for a GTA V roleplay server called NThaCityRP set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas, streets, or landmarks such as Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Great Ocean Highway, Senora Freeway, Legion Square, Pillbox Hill Medical Center, Maze Bank Arena. If a vague location is given, convert it to the closest GTA V equivalent.
+Maintain a professional law enforcement tone. No breaking RP immersion. No real-world cities."""
+
+    user_msg = f"""Generate an INCIDENT REPORT for the following arrest. Respond with ONLY a valid JSON object with exactly two keys:
+- "narrative": a formal, professional arrest narrative (150-220 words, third-person past tense). Use INCIDENT REPORT MODE structure: include Date/Time, Location (GTA V formatted), Reporting Officer, Involved Parties, Incident Type, Narrative, Actions Taken, Evidence, Disposition.
+- "suggestedPenalty": a short realistic penalty string (e.g. "3 years / $25,000 fine") based on the charges — if already provided, refine and return it.
 
 Suspect: {suspect}
 Charges: {charges}
@@ -648,7 +651,10 @@ Respond only with the JSON object. No markdown, no extra text."""
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
             'max_tokens': 500,
             'temperature': 0.7,
             'response_format': {'type': 'json_object'}
@@ -693,13 +699,17 @@ def ai_dispatch():
     location = data.get('location', 'Unknown')
     description = data.get('description', '')
 
-    prompt = f"""You are an LAPD-style 911 dispatch triage AI for the NThaCityRP Discord roleplay community set in Los Santos.
-Based on the caller info and description, respond with ONLY a valid JSON object with these exact keys:
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system for NThaCityRP, a GTA V roleplay server set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, etc. Convert vague locations to nearest GTA V equivalent.
+DISPATCH LOGIC: Assign units using LSPD format (e.g. LSPD-1A23, LSPD-2B04) for city calls, BCSO format (e.g. BCSO-3C11) for county/highway calls, K9-01/K9-02 for dog units, AIR-1 for helicopter. Escalate priority for weapons, violence, or pursuit. Suggest backup when warranted.
+Maintain professional law enforcement tone. No real-world city references."""
+
+    user_msg = f"""Triage this 911 call using DISPATCH LOGIC. Respond with ONLY a valid JSON object with these exact keys:
 - "incidentType": one of exactly ["Robbery", "Assault", "Suspicious activity", "Traffic accident", "Shots fired", "Domestic disturbance", "Drug activity", "Pursuit", "Hostage situation", "Noise complaint"]
 - "priority": one of exactly ["Critical", "High", "Medium", "Low"] — Critical=active threat/shots/hostage, High=robbery/assault in progress, Medium=suspicious/drugs, Low=noise/minor
-- "assignedUnit": a short realistic unit designation string (e.g. "Unit 4", "Unit 12", "K9-02", "Air-1") based on the incident type
-- "status": always return "New"
-- "triage": one sentence (max 20 words) summarising the call for the dispatcher log
+- "assignedUnit": realistic LSPD/BCSO unit designation based on location and incident type (e.g. "LSPD-1A23", "BCSO-2B11", "K9-02", "AIR-1")
+- "status": always "New"
+- "triage": one dispatcher-style sentence (max 20 words) summarising the call with GTA V location reference
 
 Caller: {caller}
 Location: {location}
@@ -710,7 +720,10 @@ Respond only with the JSON object. No markdown, no extra text."""
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
             'max_tokens': 200,
             'temperature': 0.4,
             'response_format': {'type': 'json_object'}
@@ -759,9 +772,12 @@ def ai_warrant():
     issuer = data.get('warrantIssuer', 'Unknown')
     existing_notes = data.get('warrantNotes', '')
 
-    prompt = f"""You are a warrant writer for the NThaCityRP Discord roleplay community set in Los Santos.
-Based on the details below, respond with ONLY a valid JSON object with exactly two keys:
-- "justification": a formal warrant justification paragraph (80-130 words) explaining the legal basis and probable cause for issuing this warrant, written in official law enforcement language
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system and report-writing assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, etc.
+Write in professional law enforcement language. Ground all references in Los Santos / San Andreas. No real-world city names."""
+
+    user_msg = f"""Generate an arrest warrant justification. Respond with ONLY a valid JSON object with exactly two keys:
+- "justification": a formal probable-cause warrant justification (80-130 words) written in official LSPD legal language. Reference GTA V locations where relevant. Include probable cause, evidence basis, and the threat to public safety in Los Santos.
 - "suggestedStatus": always return "Active"
 
 Suspect: {suspect}
@@ -824,16 +840,19 @@ def ai_incident_summary():
     if not notes:
         return jsonify({'success': False, 'error': 'No CAD notes provided.'}), 400
 
-    prompt = f"""You are a law enforcement report writer for the NThaCityRP Los Santos roleplay community.
-An officer has provided raw CAD notes from an incident. Generate a clean, professional incident summary formatted for posting in a Discord channel using Discord markdown.
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system and report-writing assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, etc. Convert any vague or real-world locations to the closest GTA V equivalent.
+OUTPUT: Generate Discord-formatted (#criminal-files channel) summaries. Use INCIDENT REPORT MODE structure. Professional law enforcement tone only."""
+
+    user_msg = f"""An officer has provided raw CAD notes. Generate a clean Discord-formatted incident summary for the #criminal-files channel.
 
 Rules:
-- Use **bold** for section labels
-- Use a code block only for case number if present
-- Keep it concise — max 200 words
-- Include these sections if data is available: Incident Type, Location, Time, Officers Involved, Suspect(s), Charges, Outcome, Notes
-- End with a horizontal rule line (—————————————)
-- Do NOT include ```discord``` wrapper — just the raw Discord-formatted text
+- Use **bold** for all section labels
+- Use a `code block` only for case/report numbers if present
+- Max 200 words
+- Sections (include if data available): **Incident Type**, **Location** (GTA V formatted), **Date/Time**, **Officers Involved**, **Unit(s)**, **Suspect(s)**, **Charges**, **Outcome**, **Notes**
+- End with: ―――――――――――――――――――――
+- Raw Discord markdown only — no wrapper blocks
 
 Raw CAD Notes:
 {notes}
@@ -895,16 +914,18 @@ def ai_suspect_match():
         for c in civilians[:50]
     ])
 
-    prompt = f"""You are a suspect identification assistant for the NThaCityRP Los Santos roleplay community.
-An officer has provided a physical description of a suspect. Compare it against the registered civilian database below and identify the top matches.
+    system_msg = """You are an AI-powered suspect identification assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
+You help LSPD officers cross-reference physical suspect descriptions against the civilian registry. Be precise and analytical. Only match civilians where there is genuine physical basis. Maintain professional law enforcement tone."""
+
+    user_msg = f"""An LSPD officer has provided a physical description of a suspect spotted in Los Santos. Cross-reference the registered civilian database and return the top matches.
 
 Respond with ONLY a valid JSON object with one key:
-- "matches": an array of up to 3 objects, each with:
-  - "name": full name of the civilian
+- "matches": array of up to 3 objects, each with:
+  - "name": full civilian name
   - "confidence": "High", "Medium", or "Low"
-  - "reason": one short sentence (max 15 words) explaining why they match
+  - "reason": one short sentence (max 15 words) citing specific matching physical traits
 
-If no civilians are a reasonable match, return an empty matches array.
+If no civilians reasonably match, return an empty matches array.
 
 Suspect Description: {description}
 
