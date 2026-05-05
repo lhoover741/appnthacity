@@ -481,7 +481,159 @@
         </article>
       </div>
 
+      <div class="card-grid" style="grid-column:1/-1;">
+        <article class="card form-card" style="grid-column:1/-1;">
+          <h3>🚨 CAD Call Generator</h3>
+          <div class="system-form">
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+              <label style="flex:1;min-width:200px;">
+                <span>Call type <span style="color:var(--muted);font-weight:400;">(optional — leave blank for random)</span></span>
+                <select id="gen-call-type">
+                  <option value="">— Random —</option>
+                  <option>Shots Fired</option>
+                  <option>Armed Robbery</option>
+                  <option>Traffic Accident</option>
+                  <option>Pursuit</option>
+                  <option>Assault in Progress</option>
+                  <option>Domestic Disturbance</option>
+                  <option>Drug Activity</option>
+                  <option>Suspicious Person</option>
+                  <option>Hostage Situation</option>
+                  <option>Noise Complaint</option>
+                </select>
+              </label>
+              <button class="button button-primary" type="button" id="ai-gen-call-btn" style="display:flex;align-items:center;gap:8px;height:42px;">
+                <span id="ai-gen-call-icon">✦</span> Generate Call
+              </button>
+            </div>
+            <div id="gen-call-output" style="margin-top:18px;"></div>
+          </div>
+        </article>
+      </div>
+
+      <!-- RADIO LOG -->
+      <section style="margin-top:32px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+          <h2 style="margin:0;font-size:1.4rem;">Radio Log</h2>
+          <span style="font-size:0.75rem;color:var(--muted);">Live officer transmissions</span>
+        </div>
+        <article class="card form-card" style="margin-bottom:16px;">
+          <div class="system-form">
+            <div style="display:grid;grid-template-columns:1fr 1fr 3fr auto;gap:10px;align-items:end;">
+              <label style="margin:0;"><span style="font-size:0.75rem;">Unit</span><input id="radio-unit" type="text" placeholder="LSPD-1A23" /></label>
+              <label style="margin:0;"><span style="font-size:0.75rem;">Channel</span>
+                <select id="radio-channel">
+                  <option>Primary</option>
+                  <option>Secondary</option>
+                  <option>Tac-1</option>
+                  <option>Tac-2</option>
+                  <option>BCSO</option>
+                  <option>Air</option>
+                </select>
+              </label>
+              <label style="margin:0;"><span style="font-size:0.75rem;">Transmission</span><input id="radio-message" type="text" placeholder="10-4, en route to Legion Square, shots fired call…" /></label>
+              <button class="button button-primary" type="button" id="radio-post-btn" style="height:42px;white-space:nowrap;">Transmit</button>
+            </div>
+            <div id="radio-status" style="font-size:0.8rem;margin-top:4px;"></div>
+          </div>
+        </article>
+        <div id="radio-feed" style="display:grid;gap:6px;">
+          <p style="color:var(--muted);font-size:0.88rem;">No transmissions logged yet.</p>
+        </div>
+      </section>
+
+      <!-- BOLO BOARD -->
+      <section style="margin-top:32px;">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+          <h2 style="margin:0;font-size:1.4rem;">Active BOLOs</h2>
+          <span id="bolo-count-badge" style="background:#e0525222;color:#e05252;border:1px solid #e0525244;font-size:0.75rem;font-weight:700;padding:3px 10px;border-radius:20px;">0 Active</span>
+          <button class="button button-ghost" type="button" id="toggle-bolo-form-btn" style="margin-left:auto;font-size:0.82rem;">+ Post BOLO</button>
+        </div>
+
+        <!-- Post BOLO form (hidden by default) -->
+        <div id="bolo-form-wrap" style="display:none;margin-bottom:22px;">
+          <article class="card form-card">
+            <h3>Post BOLO</h3>
+            <div class="system-form">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <label><span>Suspect name</span><input id="bolo-name" type="text" placeholder="John Doe / Unknown" /></label>
+                <label><span>Threat level</span>
+                  <select id="bolo-threat">
+                    <option value="High">High</option>
+                    <option value="Medium" selected>Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
+                </label>
+                <label style="grid-column:1/-1;"><span>Physical description</span><textarea id="bolo-desc" rows="2" placeholder="e.g. Male, early 30s, stocky build, red hoodie, neck tattoo"></textarea></label>
+                <label><span>Last known location</span><input id="bolo-location" type="text" placeholder="e.g. Forum Drive, Davis" /></label>
+                <label><span>Vehicle</span><input id="bolo-vehicle" type="text" placeholder="e.g. Black Baller, partial plate 8XK" /></label>
+                <label style="grid-column:1/-1;"><span>Charges / reason</span><input id="bolo-charges" type="text" placeholder="e.g. Armed Robbery, Evading" /></label>
+                <label><span>Issued by</span><input id="bolo-issuer" type="text" placeholder="Officer name" /></label>
+              </div>
+              <div style="display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;">
+                <button class="button button-primary" type="button" id="ai-gen-bolo-btn" style="display:flex;align-items:center;gap:8px;">
+                  <span id="ai-gen-bolo-icon">✦</span> AI Generate BOLO
+                </button>
+                <button class="button button-ghost" type="button" id="submit-bolo-btn">Post BOLO</button>
+              </div>
+              <div id="bolo-form-status" style="margin-top:8px;font-size:0.85rem;"></div>
+            </div>
+          </article>
+        </div>
+
+        <!-- BOLO list -->
+        <div id="bolo-list">
+          <p style="color:var(--muted);font-size:0.88rem;">No active BOLOs on file.</p>
+        </div>
+      </section>
+
       <div class="card-grid">
+        <article class="card form-card" style="grid-column:1/-1;">
+          <h3>Use of Force Report <span style="font-size:0.75rem;color:var(--muted);font-weight:400;margin-left:8px;">AI-generated · court-defensible</span></h3>
+          <div class="system-form">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <label><span>Officer name / badge</span><input id="uof-officer" type="text" placeholder="Officer J. Smith / B-2241" /></label>
+              <label><span>Subject name</span><input id="uof-subject" type="text" placeholder="John Doe / Unknown" /></label>
+              <label><span>Location</span><input id="uof-location" type="text" placeholder="e.g. Forum Drive, Davis" /></label>
+              <label><span>Charges</span><input id="uof-charges" type="text" placeholder="e.g. Assault on Officer, Evading" /></label>
+              <label><span>Force type used</span>
+                <select id="uof-force-type">
+                  <option value="">— Select —</option>
+                  <option>Presence</option>
+                  <option>Verbal Commands</option>
+                  <option>Physical Control</option>
+                  <option>Less Lethal (Taser/Baton)</option>
+                  <option>Lethal Force (Firearm)</option>
+                </select>
+              </label>
+              <label><span>Subject resistance level</span>
+                <select id="uof-resistance">
+                  <option value="">— Select —</option>
+                  <option>Compliant</option>
+                  <option>Passive Resistance</option>
+                  <option>Active Resistance</option>
+                  <option>Assaultive</option>
+                  <option>Life-Threatening</option>
+                </select>
+              </label>
+              <label><span>Weapons observed?</span>
+                <select id="uof-weapons"><option value="No">No</option><option value="Yes">Yes</option></select>
+              </label>
+              <label><span>Bodycam active?</span>
+                <select id="uof-bodycam"><option value="Yes">Yes</option><option value="No">No</option></select>
+              </label>
+              <label><span>Injuries observed</span><input id="uof-injuries" type="text" placeholder="e.g. laceration to left arm / none" /></label>
+              <label style="grid-column:1/-1;"><span>Incident description <span style="color:var(--muted);font-weight:400;">(raw notes — AI will structure this)</span></span>
+                <textarea id="uof-desc" rows="3" placeholder="e.g. Subject ran from traffic stop on Forum Dr, pulled firearm when cornered at alley, officer deployed taser after verbal commands ignored, subject fell and was cuffed…"></textarea>
+              </label>
+            </div>
+            <button class="button button-primary" type="button" id="ai-uof-btn" style="display:flex;align-items:center;gap:8px;">
+              <span id="ai-uof-icon">✦</span> Generate UOF Report
+            </button>
+            <div id="uof-output" style="margin-top:18px;"></div>
+          </div>
+        </article>
+
         <article class="card form-card">
           <h3>AI Suspect Matcher</h3>
           <div class="system-form">
@@ -493,6 +645,20 @@
               <span id="ai-suspect-icon">✦</span> Search Civilians
             </button>
             <div id="suspect-match-results" style="margin-top:16px;"></div>
+          </div>
+        </article>
+
+        <article class="card form-card">
+          <h3>AI Incident Summariser</h3>
+          <div class="system-form">
+            <label>
+              <span>Raw CAD notes</span>
+              <textarea id="incident-notes" rows="6" placeholder="Paste raw notes here… e.g. unit 4 responded to shots fired legion square, suspect male black hoodie fled on foot, arrested corner of forum dr, charged with agg assault + illegal firearm, booked 22:14…" style="width:100%;"></textarea>
+            </label>
+            <button class="button button-primary" type="button" id="ai-summary-btn" style="display:flex;align-items:center;gap:8px;">
+              <span id="ai-summary-icon">✦</span> Generate Summary
+            </button>
+            <div id="incident-summary-output" style="margin-top:16px;"></div>
           </div>
         </article>
 
@@ -559,6 +725,457 @@
 
   <script src="assets/js/main.js"></script>
   <script>
+    /* ── RADIO LOG ── */
+    const channelColor = { Primary: '#4c9af5', Secondary: '#9b59b6', 'Tac-1': '#e05252', 'Tac-2': '#e08252', BCSO: '#4caf82', Air: '#52c8e0' };
+
+    async function loadRadioFeed() {
+      try {
+        const res = await fetch('/api/radio-log');
+        const entries = await res.json();
+        const feedEl = document.getElementById('radio-feed');
+        if (!entries.length) {
+          feedEl.innerHTML = '<p style="color:var(--muted);font-size:0.88rem;">No transmissions logged yet.</p>';
+          return;
+        }
+        feedEl.innerHTML = entries.map(e => {
+          const cc = channelColor[e.channel] || '#888';
+          const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
+          return `<div style="background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:10px 14px;display:flex;align-items:flex-start;gap:12px;">
+            <span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;background:${cc}22;color:${cc};border:1px solid ${cc}44;white-space:nowrap;margin-top:2px;">${e.channel}</span>
+            <div style="flex:1;">
+              <span style="font-size:0.8rem;font-weight:700;color:#ddd;">${e.unit}</span>
+              <span style="font-size:0.82rem;color:#bbb;margin-left:10px;">${e.message}</span>
+            </div>
+            <span style="font-size:0.72rem;color:#555;white-space:nowrap;">${ts}</span>
+          </div>`;
+        }).join('');
+      } catch { /* silent */ }
+    }
+
+    document.getElementById('radio-post-btn').addEventListener('click', async function () {
+      const unit = document.getElementById('radio-unit').value.trim();
+      const channel = document.getElementById('radio-channel').value;
+      const message = document.getElementById('radio-message').value.trim();
+      const statusEl = document.getElementById('radio-status');
+      if (!unit || !message) {
+        statusEl.innerHTML = '<span style="color:var(--accent);">Unit and message are required.</span>';
+        return;
+      }
+      this.disabled = true;
+      try {
+        const res = await fetch('/api/radio-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unit, channel, message })
+        });
+        const json = await res.json();
+        if (json.success) {
+          document.getElementById('radio-message').value = '';
+          statusEl.innerHTML = '';
+          loadRadioFeed();
+        } else {
+          statusEl.innerHTML = `<span style="color:var(--accent);">${json.error}</span>`;
+        }
+      } catch {
+        statusEl.innerHTML = '<span style="color:var(--accent);">Network error.</span>';
+      } finally {
+        this.disabled = false;
+      }
+    });
+
+    document.getElementById('radio-message').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') document.getElementById('radio-post-btn').click();
+    });
+
+    loadRadioFeed();
+    setInterval(loadRadioFeed, 15000);
+
+    /* ── BOLO BOARD ── */
+    const threatColor = { High: '#e05252', Medium: '#f5a623', Low: '#4caf82' };
+
+    async function loadBolos() {
+      try {
+        const res = await fetch('/api/bolos');
+        const bolos = await res.json();
+        const active = bolos.filter(b => b.status === 'Active');
+        document.getElementById('bolo-count-badge').textContent = `${active.length} Active`;
+        const listEl = document.getElementById('bolo-list');
+        if (!active.length) {
+          listEl.innerHTML = '<p style="color:var(--muted);font-size:0.88rem;">No active BOLOs on file.</p>';
+          return;
+        }
+        listEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;">
+          ${active.map(b => {
+            const tc = threatColor[b.threatLevel] || '#888';
+            const dt = b.issuedAt ? new Date(b.issuedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+            return `<div style="background:#0d0d0d;border:1px solid ${tc}44;border-left:3px solid ${tc};border-radius:10px;padding:14px 16px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <strong style="font-size:0.95rem;flex:1;">${b.suspectName}</strong>
+                <span style="font-size:0.7rem;padding:2px 8px;border-radius:20px;background:${tc}22;color:${tc};border:1px solid ${tc}44;font-weight:700;">${b.threatLevel}</span>
+              </div>
+              <p style="font-size:0.82rem;color:#ccc;margin:0 0 6px;">${b.description}</p>
+              <div style="font-size:0.78rem;color:var(--muted);display:grid;gap:3px;">
+                <span>📍 <strong style="color:#aaa;">Last seen:</strong> ${b.lastLocation}</span>
+                ${b.vehicle ? `<span>🚗 <strong style="color:#aaa;">Vehicle:</strong> ${b.vehicle}</span>` : ''}
+                ${b.charges ? `<span>⚖️ <strong style="color:#aaa;">Charges:</strong> ${b.charges}</span>` : ''}
+                <span>👮 <strong style="color:#aaa;">Issued by:</strong> ${b.issuedBy} · ${dt}</span>
+                <span style="font-size:0.7rem;color:#555;">${b.id}</span>
+              </div>
+              <button onclick="clearBolo('${b.id}')" style="margin-top:10px;background:transparent;border:1px solid #333;color:#888;padding:4px 12px;border-radius:6px;font-size:0.75rem;cursor:pointer;">✓ Clear BOLO</button>
+            </div>`;
+          }).join('')}
+        </div>`;
+      } catch { /* silent */ }
+    }
+
+    async function clearBolo(id) {
+      await fetch(`/api/bolo/${id}/clear`, { method: 'POST' });
+      loadBolos();
+    }
+
+    document.getElementById('toggle-bolo-form-btn').addEventListener('click', function () {
+      const wrap = document.getElementById('bolo-form-wrap');
+      const visible = wrap.style.display !== 'none';
+      wrap.style.display = visible ? 'none' : 'block';
+      this.textContent = visible ? '+ Post BOLO' : '✕ Cancel';
+    });
+
+    document.getElementById('ai-gen-bolo-btn').addEventListener('click', async function () {
+      const charges = document.getElementById('bolo-charges').value.trim();
+      const icon = document.getElementById('ai-gen-bolo-icon');
+      icon.textContent = '⏳';
+      this.disabled = true;
+      document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--muted);">Generating BOLO…</span>';
+      try {
+        const res = await fetch('/api/ai/generate-bolo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ charges })
+        });
+        const json = await res.json();
+        if (json.success && json.bolo) {
+          const b = json.bolo;
+          document.getElementById('bolo-name').value = b.suspectName || '';
+          document.getElementById('bolo-desc').value = b.description || '';
+          document.getElementById('bolo-location').value = b.lastLocation || '';
+          document.getElementById('bolo-vehicle').value = b.vehicle || '';
+          document.getElementById('bolo-charges').value = b.charges || '';
+          document.getElementById('bolo-threat').value = b.threatLevel || 'Medium';
+          document.getElementById('bolo-form-status').innerHTML = '<span style="color:#4caf82;">✓ Fields filled — review and post.</span>';
+        } else {
+          document.getElementById('bolo-form-status').innerHTML = `<span style="color:var(--accent);">${json.error || 'Generation failed.'}</span>`;
+        }
+      } catch {
+        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Network error.</span>';
+      } finally {
+        icon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
+    document.getElementById('submit-bolo-btn').addEventListener('click', async function () {
+      const payload = {
+        suspectName: document.getElementById('bolo-name').value.trim() || 'Unknown',
+        description: document.getElementById('bolo-desc').value.trim(),
+        lastLocation: document.getElementById('bolo-location').value.trim(),
+        vehicle: document.getElementById('bolo-vehicle').value.trim(),
+        charges: document.getElementById('bolo-charges').value.trim(),
+        threatLevel: document.getElementById('bolo-threat').value,
+        issuedBy: document.getElementById('bolo-issuer').value.trim()
+      };
+      if (!payload.description || !payload.lastLocation || !payload.issuedBy) {
+        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Description, location, and issuing officer are required.</span>';
+        return;
+      }
+      this.disabled = true;
+      try {
+        const res = await fetch('/api/bolo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (json.success) {
+          ['bolo-name','bolo-desc','bolo-location','bolo-vehicle','bolo-charges','bolo-issuer'].forEach(id => document.getElementById(id).value = '');
+          document.getElementById('bolo-threat').value = 'Medium';
+          document.getElementById('bolo-form-status').innerHTML = '<span style="color:#4caf82;">✓ BOLO posted.</span>';
+          document.getElementById('bolo-form-wrap').style.display = 'none';
+          document.getElementById('toggle-bolo-form-btn').textContent = '+ Post BOLO';
+          loadBolos();
+        } else {
+          document.getElementById('bolo-form-status').innerHTML = `<span style="color:var(--accent);">${json.error}</span>`;
+        }
+      } catch {
+        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Network error.</span>';
+      } finally {
+        this.disabled = false;
+      }
+    });
+
+    loadBolos();
+
+    /* ── CAD CALL GENERATOR ── */
+    document.getElementById('ai-gen-call-btn').addEventListener('click', async function () {
+      const callType = document.getElementById('gen-call-type').value;
+      const outputEl = document.getElementById('gen-call-output');
+      const btnIcon = document.getElementById('ai-gen-call-icon');
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      outputEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Generating call…</p>';
+
+      try {
+        const res = await fetch('/api/ai/generate-call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callType })
+        });
+        const json = await res.json();
+
+        if (json.success && json.call) {
+          const c = json.call;
+          const prioColor = { Critical: '#e05252', High: '#f5a623', Medium: '#4c9af5', Low: '#888' };
+          const pColor = prioColor[c.priority] || '#888';
+
+          const transcriptHtml = (c.transcript || []).map(t => `
+            <div style="display:flex;gap:10px;margin-bottom:6px;align-items:flex-start;">
+              <span style="min-width:72px;font-size:0.75rem;font-weight:700;padding:2px 7px;border-radius:4px;text-align:center;background:${t.speaker==='Dispatch'?'#1a2a1a':'#1a1a2a'};color:${t.speaker==='Dispatch'?'#4caf82':'#6fa3f5'};flex-shrink:0;">${t.speaker}</span>
+              <span style="font-size:0.85rem;line-height:1.5;color:#d8d8d8;">${t.line}</span>
+            </div>
+          `).join('');
+
+          outputEl.innerHTML = `
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;">
+              <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;display:flex;flex-wrap:wrap;gap:14px;align-items:center;">
+                <span style="font-size:1rem;font-weight:700;color:#fff;">${c.callType || 'Unknown'}</span>
+                <span style="font-size:0.75rem;padding:3px 10px;border-radius:20px;background:${pColor}22;color:${pColor};border:1px solid ${pColor}44;font-weight:600;">${c.priority}</span>
+                <span style="font-size:0.8rem;color:var(--muted);">📍 ${c.location || '—'}</span>
+                <span style="font-size:0.8rem;color:var(--muted);">👤 ${c.caller || '—'}</span>
+                <span style="font-size:0.8rem;color:#6fa3f5;">🚔 ${c.assignedUnit || '—'}</span>
+              </div>
+              <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;">
+                <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Caller Description</p>
+                <p style="font-size:0.88rem;line-height:1.6;margin:0;color:#d0d0d0;">${c.description || '—'}</p>
+              </div>
+              <div style="padding:14px 18px;border-bottom:1px solid #1e1e1e;">
+                <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Dispatch Notes</p>
+                <p style="font-size:0.85rem;line-height:1.5;margin:0;color:#aaa;">${c.dispatchNotes || '—'}</p>
+              </div>
+              <div style="padding:14px 18px;">
+                <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Call Transcript</p>
+                ${transcriptHtml}
+              </div>
+            </div>
+            <button onclick="document.getElementById('ai-gen-call-btn').click()" style="margin-top:10px;background:#1e1e1e;border:1px solid #333;color:#ccc;padding:6px 16px;border-radius:6px;font-size:0.8rem;cursor:pointer;">↺ Generate Another</button>
+          `;
+        } else {
+          outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Generation failed.'}</p>`;
+        }
+      } catch {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
+    /* ── USE OF FORCE REPORT ── */
+    document.getElementById('ai-uof-btn').addEventListener('click', async function () {
+      const outputEl = document.getElementById('uof-output');
+      const btnIcon  = document.getElementById('ai-uof-icon');
+
+      const officer      = document.getElementById('uof-officer').value.trim();
+      const subject      = document.getElementById('uof-subject').value.trim();
+      const location     = document.getElementById('uof-location').value.trim();
+      const charges      = document.getElementById('uof-charges').value.trim();
+      const forceType    = document.getElementById('uof-force-type').value;
+      const resistance   = document.getElementById('uof-resistance').value;
+      const weapons      = document.getElementById('uof-weapons').value;
+      const bodycam      = document.getElementById('uof-bodycam').value;
+      const injuries     = document.getElementById('uof-injuries').value.trim();
+      const incidentDesc = document.getElementById('uof-desc').value.trim();
+
+      if (!officer || !subject || !location) {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Officer, subject, and location are required.</p>';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      outputEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Generating Use of Force Report…</p>';
+
+      try {
+        const res = await fetch('/api/ai/use-of-force', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ officer, subject, location, charges, forceType, resistance, weaponsObserved: weapons, bodycam, injuries, incidentDesc })
+        });
+        const json = await res.json();
+
+        if (json.success && json.report) {
+          const r = json.report;
+
+          const boolIcon = v => v ? '<span style="color:#4caf82;">✔ Yes</span>' : '<span style="color:#e05252;">✘ No</span>';
+          const tlHtml   = (r.forceTimeline || []).map((s,i) => `<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:5px;"><span style="min-width:20px;text-align:right;color:#555;font-size:0.75rem;">${i+1}.</span><span style="font-size:0.85rem;color:#ccc;">${s}</span></div>`).join('');
+
+          const warningHtml = r.liabilityWarning
+            ? `<div style="background:#f5a62315;border:1px solid #f5a62344;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:0.85rem;color:#f5a623;">${r.liabilityWarning}</div>`
+            : '';
+
+          const autBoloHtml = json.autoBolo
+            ? `<div style="background:#e0525215;border:1px solid #e0525244;border-radius:8px;padding:10px 14px;margin-top:14px;font-size:0.83rem;color:#e05252;">⚠️ <strong>Auto-BOLO Issued</strong> — ${json.autoBolo.suspectName} · Last seen: ${json.autoBolo.lastLocation} · <span style="opacity:.7;">${json.autoBolo.id}</span></div>`
+            : '';
+
+          outputEl.innerHTML = `
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;">
+              <!-- Header -->
+              <div style="background:#111;padding:14px 18px;border-bottom:1px solid #1e1e1e;display:flex;flex-wrap:wrap;gap:14px;align-items:center;">
+                <div>
+                  <p style="margin:0;font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Use of Force Report</p>
+                  <p style="margin:2px 0 0;font-size:1rem;font-weight:700;color:#fff;">${r.reportId || '—'}</p>
+                </div>
+                <span style="margin-left:auto;font-size:0.75rem;color:#888;">${r.dateTime || '—'}</span>
+              </div>
+
+              <div style="padding:16px 18px;display:grid;gap:16px;">
+                ${warningHtml}
+
+                <!-- Core details -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.83rem;">
+                  <div><span style="color:var(--muted);">📍 Location</span><br><strong>${r.location || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">👮 Officer</span><br><strong>${r.officerInvolved || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">🧑 Subject</span><br><strong>${r.subjectInvolved || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">⚖️ Disposition</span><br><strong>${r.disposition || '—'}</strong></div>
+                </div>
+
+                <!-- Summary -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Incident Summary</p>
+                  <p style="font-size:0.85rem;line-height:1.6;color:#ccc;margin:0;">${r.incidentSummary || '—'}</p>
+                </div>
+
+                <!-- Force details -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.83rem;">
+                  <div><span style="color:var(--muted);">Force Type</span><br><strong>${r.forceType || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">Resistance</span><br><strong>${r.resistanceLevel || '—'}</strong></div>
+                </div>
+
+                <!-- Reason for force -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Reason for Force</p>
+                  <p style="font-size:0.85rem;line-height:1.6;color:#ccc;margin:0;">${r.reasonForForce || '—'}</p>
+                </div>
+
+                <!-- Threat assessment -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Threat Assessment</p>
+                  <div style="display:grid;gap:5px;font-size:0.82rem;">
+                    <div>${boolIcon(r.threatAssessment?.weaponsObserved)} <span style="color:#aaa;margin-left:6px;">${r.threatAssessment?.weaponsObservedNote || 'Weapons observed'}</span></div>
+                    <div>${boolIcon(r.threatAssessment?.threatToOfficer)} <span style="color:#aaa;margin-left:6px;">${r.threatAssessment?.threatToOfficerNote || 'Threat to officer'}</span></div>
+                    <div>${boolIcon(r.threatAssessment?.threatToPublic)} <span style="color:#aaa;margin-left:6px;">${r.threatAssessment?.threatToPublicNote || 'Threat to public'}</span></div>
+                  </div>
+                </div>
+
+                <!-- Legal justification -->
+                <div style="background:#0a1a0a;border:1px solid #1a3a1a;border-radius:8px;padding:12px 14px;">
+                  <p style="font-size:0.7rem;color:#4caf82;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">⚖️ Legal Justification</p>
+                  <p style="font-size:0.85rem;line-height:1.6;color:#c8e6c9;margin:0;">${r.legalJustification || '—'}</p>
+                </div>
+
+                <!-- Timeline -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Force Timeline</p>
+                  ${tlHtml}
+                </div>
+
+                <!-- Medical + Evidence -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.82rem;">
+                  <div>
+                    <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Medical / Aftercare</p>
+                    <div style="display:grid;gap:4px;color:#aaa;">
+                      <span>EMS: ${boolIcon(r.medicalAftercare?.emsRequested)}</span>
+                      <span>Injuries: ${r.medicalAftercare?.injuriesObserved || 'None'}</span>
+                      <span>Treatment: ${r.medicalAftercare?.treatmentProvided || 'None'}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Evidence</p>
+                    <div style="display:grid;gap:4px;color:#aaa;">
+                      <span>Bodycam: ${boolIcon(r.evidence?.bodycam)}</span>
+                      <span>Witnesses: ${r.evidence?.witnesses || 'None'}</span>
+                      <span>Scene: ${r.evidence?.sceneEvidence || 'None'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Charges -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Charges Recommended</p>
+                  <p style="font-size:0.88rem;color:#e0a052;margin:0;">${r.chargesRecommended || 'None'}</p>
+                </div>
+
+                ${autBoloHtml}
+              </div>
+            </div>
+          `;
+          if (json.autoBolo) loadBolos();
+        } else {
+          outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Generation failed.'}</p>`;
+        }
+      } catch {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
+    /* ── AI INCIDENT SUMMARISER ── */
+    document.getElementById('ai-summary-btn').addEventListener('click', async function () {
+      const notes = document.getElementById('incident-notes').value.trim();
+      const outputEl = document.getElementById('incident-summary-output');
+      const btnIcon = document.getElementById('ai-summary-icon');
+
+      if (!notes) {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Paste your CAD notes first.</p>';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      outputEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Generating summary…</p>';
+
+      try {
+        const res = await fetch('/api/ai/incident-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes })
+        });
+        const json = await res.json();
+
+        if (json.success && json.summary) {
+          outputEl.innerHTML = `
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:10px;padding:14px 16px;position:relative;">
+              <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Discord-ready summary</p>
+              <pre id="summary-text" style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:0.88rem;line-height:1.6;margin:0;color:#e8e8e8;">${json.summary.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+              <button onclick="
+                navigator.clipboard.writeText(document.getElementById('summary-text').innerText);
+                this.textContent='Copied!';
+                setTimeout(()=>this.textContent='Copy',2000);
+              " style="margin-top:12px;background:#1e1e1e;border:1px solid #333;color:#ccc;padding:6px 14px;border-radius:6px;font-size:0.8rem;cursor:pointer;">Copy</button>
+            </div>
+          `;
+        } else {
+          outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Failed to generate summary.'}</p>`;
+        }
+      } catch {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
     /* ── AI SUSPECT MATCHER ── */
     document.getElementById('ai-suspect-btn').addEventListener('click', async function () {
       const description = document.getElementById('suspect-description').value.trim();
@@ -731,6 +1348,11 @@
           }
           statusEl.style.color = '#4caf82';
           statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')} — review before submitting.`;
+          if (json.suspectFled && json.autoBolo) {
+            const b = json.autoBolo;
+            statusEl.innerHTML += `<br><span style="color:#f5a623;">⚠️ Suspect fled — Auto-BOLO issued: <strong>${b.suspectName}</strong> · Last seen: ${b.lastLocation} · ID: ${b.id}</span>`;
+            loadBolos();
+          }
         } else {
           statusEl.style.color = 'var(--accent)';
           statusEl.textContent = json.error || 'Generation failed. Try again.';
