@@ -701,6 +701,109 @@ def clear_bolo(bolo_id):
     return jsonify({'success': False, 'error': 'BOLO not found.'}), 404
 
 
+@app.route('/api/ai/use-of-force', methods=['POST'])
+def ai_use_of_force():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    officer       = data.get('officer', 'Unknown').strip()
+    subject       = data.get('subject', 'Unknown').strip()
+    location      = data.get('location', 'Unknown').strip()
+    force_type    = data.get('forceType', '').strip()
+    resistance    = data.get('resistance', '').strip()
+    incident_desc = data.get('incidentDesc', '').strip()
+    charges       = data.get('charges', '').strip()
+    injuries      = data.get('injuries', '').strip()
+    weapons       = data.get('weaponsObserved', 'No').strip()
+    bodycam       = data.get('bodycam', 'Yes').strip()
+
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) and legal report-writing system for NThaCityRP, a GTA V roleplay server set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must reference real GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill Medical Center, Maze Bank Arena, etc.
+USE OF FORCE REPORTS must be court-defensible: internally consistent, no contradictions, avoid vague phrases like 'acted suspicious', use only observable behaviour (e.g. 'subject repeatedly reached into waistband and ignored verbal commands'). Every escalation step must be justified. Force must match threat level. Flag any missing critical data as UNKNOWN – REQUIRES OFFICER INPUT."""
+
+    user_msg = f"""Generate a complete Use of Force Report for NThaCityRP LSPD. Respond with ONLY a valid JSON object with these exact keys:
+
+- "reportId": a realistic LSPD case number string (e.g. "UOF-2026-0047")
+- "dateTime": today's date + a realistic time string (e.g. "May 05, 2026 — 22:14 hrs")
+- "location": GTA V formatted location — convert any vague input to nearest GTA V equivalent
+- "officerInvolved": officer name / badge
+- "subjectInvolved": subject name
+- "incidentSummary": 2-3 sentence objective overview of the incident
+- "forceType": one of ["Presence", "Verbal Commands", "Physical Control", "Less Lethal (Taser/Baton)", "Lethal Force (Firearm)"]
+- "reasonForForce": 2-3 sentences explaining exactly what the subject did to necessitate force, using observable behaviour only
+- "resistanceLevel": one of ["Compliant", "Passive Resistance", "Active Resistance", "Assaultive", "Life-Threatening"]
+- "threatAssessment": object with "weaponsObserved" (bool), "threatToOfficer" (bool), "threatToPublic" (bool), each with a one-sentence explanation
+- "legalJustification": 3-4 sentence court-defensible paragraph tying officer actions to subject behaviour, emphasising proportional response under LSPD use-of-force policy
+- "forceTimeline": array of 4-6 short step strings (e.g. ["Officer arrived at scene", "Initial verbal commands given", ...])
+- "medicalAftercare": object with "emsRequested" (bool), "injuriesObserved" (string), "treatmentProvided" (string)
+- "evidence": object with "bodycam" (bool), "witnesses" (string), "sceneEvidence" (string)
+- "disposition": one of ["Arrested", "Hospitalized", "Arrested + Hospitalized", "Released — No Charges", "Deceased"]
+- "chargesRecommended": comma-separated string of recommended charges (e.g. "Assault on Officer, Resisting Arrest")
+- "liabilityWarning": string — if any critical justification data is missing or force seems disproportionate, return a warning starting with "⚠️ REPORT MAY BE LEGALLY WEAK –". Otherwise return empty string.
+- "suspectFled": boolean — true if subject evaded or escaped, false otherwise
+- "lastKnownLocation": if suspectFled true, specific GTA V street/area; otherwise empty string
+
+Officer: {officer}
+Subject: {subject}
+Location: {location}
+Force Type Used: {force_type if force_type else 'Not specified'}
+Resistance Level: {resistance if resistance else 'Not specified'}
+Weapons Observed: {weapons}
+Bodycam: {bodycam}
+Injuries: {injuries if injuries else 'None reported'}
+Charges: {charges if charges else 'Not specified'}
+Incident Description: {incident_desc if incident_desc else 'Not provided'}
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 900,
+            'temperature': 0.5,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            auto_bolo = None
+            if ai_json.get('suspectFled'):
+                auto_bolo = create_bolo(
+                    suspect_name=subject,
+                    description=f'Subject fled after use-of-force incident. {incident_desc[:120] if incident_desc else ""}',
+                    last_location=ai_json.get('lastKnownLocation', '') or location,
+                    charges=charges or ai_json.get('chargesRecommended', ''),
+                    officer=officer,
+                    threat_level='High'
+                )
+            return jsonify({'success': True, 'report': ai_json, 'autoBolo': auto_bolo})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter UOF error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI UOF generation failed: {e}')
+        return jsonify({'success': False, 'error': 'Report generation failed. Try again.'}), 500
+
+
 @app.route('/api/ai/generate-bolo', methods=['POST'])
 def ai_generate_bolo():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')

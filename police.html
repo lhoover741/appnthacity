@@ -588,6 +588,52 @@
       </section>
 
       <div class="card-grid">
+        <article class="card form-card" style="grid-column:1/-1;">
+          <h3>Use of Force Report <span style="font-size:0.75rem;color:var(--muted);font-weight:400;margin-left:8px;">AI-generated · court-defensible</span></h3>
+          <div class="system-form">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <label><span>Officer name / badge</span><input id="uof-officer" type="text" placeholder="Officer J. Smith / B-2241" /></label>
+              <label><span>Subject name</span><input id="uof-subject" type="text" placeholder="John Doe / Unknown" /></label>
+              <label><span>Location</span><input id="uof-location" type="text" placeholder="e.g. Forum Drive, Davis" /></label>
+              <label><span>Charges</span><input id="uof-charges" type="text" placeholder="e.g. Assault on Officer, Evading" /></label>
+              <label><span>Force type used</span>
+                <select id="uof-force-type">
+                  <option value="">— Select —</option>
+                  <option>Presence</option>
+                  <option>Verbal Commands</option>
+                  <option>Physical Control</option>
+                  <option>Less Lethal (Taser/Baton)</option>
+                  <option>Lethal Force (Firearm)</option>
+                </select>
+              </label>
+              <label><span>Subject resistance level</span>
+                <select id="uof-resistance">
+                  <option value="">— Select —</option>
+                  <option>Compliant</option>
+                  <option>Passive Resistance</option>
+                  <option>Active Resistance</option>
+                  <option>Assaultive</option>
+                  <option>Life-Threatening</option>
+                </select>
+              </label>
+              <label><span>Weapons observed?</span>
+                <select id="uof-weapons"><option value="No">No</option><option value="Yes">Yes</option></select>
+              </label>
+              <label><span>Bodycam active?</span>
+                <select id="uof-bodycam"><option value="Yes">Yes</option><option value="No">No</option></select>
+              </label>
+              <label><span>Injuries observed</span><input id="uof-injuries" type="text" placeholder="e.g. laceration to left arm / none" /></label>
+              <label style="grid-column:1/-1;"><span>Incident description <span style="color:var(--muted);font-weight:400;">(raw notes — AI will structure this)</span></span>
+                <textarea id="uof-desc" rows="3" placeholder="e.g. Subject ran from traffic stop on Forum Dr, pulled firearm when cornered at alley, officer deployed taser after verbal commands ignored, subject fell and was cuffed…"></textarea>
+              </label>
+            </div>
+            <button class="button button-primary" type="button" id="ai-uof-btn" style="display:flex;align-items:center;gap:8px;">
+              <span id="ai-uof-icon">✦</span> Generate UOF Report
+            </button>
+            <div id="uof-output" style="margin-top:18px;"></div>
+          </div>
+        </article>
+
         <article class="card form-card">
           <h3>AI Suspect Matcher</h3>
           <div class="system-form">
@@ -922,6 +968,157 @@
             </div>
             <button onclick="document.getElementById('ai-gen-call-btn').click()" style="margin-top:10px;background:#1e1e1e;border:1px solid #333;color:#ccc;padding:6px 16px;border-radius:6px;font-size:0.8rem;cursor:pointer;">↺ Generate Another</button>
           `;
+        } else {
+          outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Generation failed.'}</p>`;
+        }
+      } catch {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Network error. Try again.</p>';
+      } finally {
+        btnIcon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
+
+    /* ── USE OF FORCE REPORT ── */
+    document.getElementById('ai-uof-btn').addEventListener('click', async function () {
+      const outputEl = document.getElementById('uof-output');
+      const btnIcon  = document.getElementById('ai-uof-icon');
+
+      const officer      = document.getElementById('uof-officer').value.trim();
+      const subject      = document.getElementById('uof-subject').value.trim();
+      const location     = document.getElementById('uof-location').value.trim();
+      const charges      = document.getElementById('uof-charges').value.trim();
+      const forceType    = document.getElementById('uof-force-type').value;
+      const resistance   = document.getElementById('uof-resistance').value;
+      const weapons      = document.getElementById('uof-weapons').value;
+      const bodycam      = document.getElementById('uof-bodycam').value;
+      const injuries     = document.getElementById('uof-injuries').value.trim();
+      const incidentDesc = document.getElementById('uof-desc').value.trim();
+
+      if (!officer || !subject || !location) {
+        outputEl.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Officer, subject, and location are required.</p>';
+        return;
+      }
+
+      btnIcon.textContent = '⏳';
+      this.disabled = true;
+      outputEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Generating Use of Force Report…</p>';
+
+      try {
+        const res = await fetch('/api/ai/use-of-force', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ officer, subject, location, charges, forceType, resistance, weaponsObserved: weapons, bodycam, injuries, incidentDesc })
+        });
+        const json = await res.json();
+
+        if (json.success && json.report) {
+          const r = json.report;
+
+          const boolIcon = v => v ? '<span style="color:#4caf82;">✔ Yes</span>' : '<span style="color:#e05252;">✘ No</span>';
+          const tlHtml   = (r.forceTimeline || []).map((s,i) => `<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:5px;"><span style="min-width:20px;text-align:right;color:#555;font-size:0.75rem;">${i+1}.</span><span style="font-size:0.85rem;color:#ccc;">${s}</span></div>`).join('');
+
+          const warningHtml = r.liabilityWarning
+            ? `<div style="background:#f5a62315;border:1px solid #f5a62344;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:0.85rem;color:#f5a623;">${r.liabilityWarning}</div>`
+            : '';
+
+          const autBoloHtml = json.autoBolo
+            ? `<div style="background:#e0525215;border:1px solid #e0525244;border-radius:8px;padding:10px 14px;margin-top:14px;font-size:0.83rem;color:#e05252;">⚠️ <strong>Auto-BOLO Issued</strong> — ${json.autoBolo.suspectName} · Last seen: ${json.autoBolo.lastLocation} · <span style="opacity:.7;">${json.autoBolo.id}</span></div>`
+            : '';
+
+          outputEl.innerHTML = `
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;">
+              <!-- Header -->
+              <div style="background:#111;padding:14px 18px;border-bottom:1px solid #1e1e1e;display:flex;flex-wrap:wrap;gap:14px;align-items:center;">
+                <div>
+                  <p style="margin:0;font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Use of Force Report</p>
+                  <p style="margin:2px 0 0;font-size:1rem;font-weight:700;color:#fff;">${r.reportId || '—'}</p>
+                </div>
+                <span style="margin-left:auto;font-size:0.75rem;color:#888;">${r.dateTime || '—'}</span>
+              </div>
+
+              <div style="padding:16px 18px;display:grid;gap:16px;">
+                ${warningHtml}
+
+                <!-- Core details -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.83rem;">
+                  <div><span style="color:var(--muted);">📍 Location</span><br><strong>${r.location || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">👮 Officer</span><br><strong>${r.officerInvolved || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">🧑 Subject</span><br><strong>${r.subjectInvolved || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">⚖️ Disposition</span><br><strong>${r.disposition || '—'}</strong></div>
+                </div>
+
+                <!-- Summary -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Incident Summary</p>
+                  <p style="font-size:0.85rem;line-height:1.6;color:#ccc;margin:0;">${r.incidentSummary || '—'}</p>
+                </div>
+
+                <!-- Force details -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.83rem;">
+                  <div><span style="color:var(--muted);">Force Type</span><br><strong>${r.forceType || '—'}</strong></div>
+                  <div><span style="color:var(--muted);">Resistance</span><br><strong>${r.resistanceLevel || '—'}</strong></div>
+                </div>
+
+                <!-- Reason for force -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Reason for Force</p>
+                  <p style="font-size:0.85rem;line-height:1.6;color:#ccc;margin:0;">${r.reasonForForce || '—'}</p>
+                </div>
+
+                <!-- Threat assessment -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Threat Assessment</p>
+                  <div style="display:grid;gap:5px;font-size:0.82rem;">
+                    <div>${boolIcon(r.threatAssessment?.weaponsObserved)} <span style="color:#aaa;margin-left:6px;">${r.threatAssessment?.weaponsObservedNote || 'Weapons observed'}</span></div>
+                    <div>${boolIcon(r.threatAssessment?.threatToOfficer)} <span style="color:#aaa;margin-left:6px;">${r.threatAssessment?.threatToOfficerNote || 'Threat to officer'}</span></div>
+                    <div>${boolIcon(r.threatAssessment?.threatToPublic)} <span style="color:#aaa;margin-left:6px;">${r.threatAssessment?.threatToPublicNote || 'Threat to public'}</span></div>
+                  </div>
+                </div>
+
+                <!-- Legal justification -->
+                <div style="background:#0a1a0a;border:1px solid #1a3a1a;border-radius:8px;padding:12px 14px;">
+                  <p style="font-size:0.7rem;color:#4caf82;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">⚖️ Legal Justification</p>
+                  <p style="font-size:0.85rem;line-height:1.6;color:#c8e6c9;margin:0;">${r.legalJustification || '—'}</p>
+                </div>
+
+                <!-- Timeline -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Force Timeline</p>
+                  ${tlHtml}
+                </div>
+
+                <!-- Medical + Evidence -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.82rem;">
+                  <div>
+                    <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Medical / Aftercare</p>
+                    <div style="display:grid;gap:4px;color:#aaa;">
+                      <span>EMS: ${boolIcon(r.medicalAftercare?.emsRequested)}</span>
+                      <span>Injuries: ${r.medicalAftercare?.injuriesObserved || 'None'}</span>
+                      <span>Treatment: ${r.medicalAftercare?.treatmentProvided || 'None'}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Evidence</p>
+                    <div style="display:grid;gap:4px;color:#aaa;">
+                      <span>Bodycam: ${boolIcon(r.evidence?.bodycam)}</span>
+                      <span>Witnesses: ${r.evidence?.witnesses || 'None'}</span>
+                      <span>Scene: ${r.evidence?.sceneEvidence || 'None'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Charges -->
+                <div>
+                  <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Charges Recommended</p>
+                  <p style="font-size:0.88rem;color:#e0a052;margin:0;">${r.chargesRecommended || 'None'}</p>
+                </div>
+
+                ${autBoloHtml}
+              </div>
+            </div>
+          `;
+          if (json.autoBolo) loadBolos();
         } else {
           outputEl.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">${json.error || 'Generation failed.'}</p>`;
         }
