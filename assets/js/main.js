@@ -109,6 +109,22 @@ function addEvidence(record) {
   return record;
 }
 
+function addWarrant(record) {
+  record.id = generateId('wrn');
+  record.createdAt = new Date().toISOString();
+  NThaCityData.warrants.push(record);
+  saveData();
+  return record;
+}
+
+function addIncident(record) {
+  record.id = generateId('inc');
+  record.createdAt = new Date().toISOString();
+  NThaCityData.incidents.push(record);
+  saveData();
+  return record;
+}
+
 function addActivity(type, message) {
   const activity = {
     id: generateId('act'),

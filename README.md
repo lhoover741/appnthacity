@@ -39,4 +39,4 @@ This project is the official frontend portal for the NThaCityRP roleplay system.
 
 ## Live URL
 
-https://lhoover741.github.io/nextgen/
+https://e1077d01.appnthacity.pages.dev/police#cad-dashboard
