@@ -617,9 +617,9 @@ def update_server_status():
 
 @app.route('/api/ai/police-report', methods=['POST'])
 def ai_police_report():
-    api_key = os.environ.get('OPENAI_API_KEY', '')
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
-        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured. Add it in your environment secrets.'}), 503
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured. Add it in your environment secrets.'}), 503
 
     data = request.get_json(silent=True) or {}
     suspect = data.get('suspectName', 'Unknown')
@@ -647,7 +647,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 500,
             'temperature': 0.7,
@@ -655,11 +655,13 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
             },
             method='POST'
         )
@@ -682,9 +684,9 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/ai/dispatch', methods=['POST'])
 def ai_dispatch():
-    api_key = os.environ.get('OPENAI_API_KEY', '')
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
-        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
 
     data = request.get_json(silent=True) or {}
     caller = data.get('callerName', 'Unknown')
@@ -707,7 +709,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 200,
             'temperature': 0.4,
@@ -715,11 +717,13 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
             },
             method='POST'
         )
@@ -745,9 +749,9 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/ai/warrant', methods=['POST'])
 def ai_warrant():
-    api_key = os.environ.get('OPENAI_API_KEY', '')
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
-        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
 
     data = request.get_json(silent=True) or {}
     suspect = data.get('warrantName', 'Unknown')
@@ -772,7 +776,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 300,
             'temperature': 0.7,
@@ -780,11 +784,13 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
             },
             method='POST'
         )
@@ -808,9 +814,9 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/ai/incident-summary', methods=['POST'])
 def ai_incident_summary():
-    api_key = os.environ.get('OPENAI_API_KEY', '')
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
-        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
 
     data = request.get_json(silent=True) or {}
     notes = data.get('notes', '').strip()
@@ -837,7 +843,7 @@ Respond with ONLY a valid JSON object with one key:
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 500,
             'temperature': 0.4,
@@ -845,11 +851,13 @@ Respond with ONLY a valid JSON object with one key:
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
             },
             method='POST'
         )
@@ -868,9 +876,9 @@ Respond with ONLY a valid JSON object with one key:
 
 @app.route('/api/ai/suspect-match', methods=['POST'])
 def ai_suspect_match():
-    api_key = os.environ.get('OPENAI_API_KEY', '')
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
-        return jsonify({'success': False, 'error': 'OPENAI_API_KEY not configured.'}), 503
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
 
     data = request.get_json(silent=True) or {}
     description = data.get('description', '').strip()
@@ -907,7 +915,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'gpt-4o-mini',
+            'model': 'openai/gpt-4o-mini',
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 300,
             'temperature': 0.3,
@@ -915,11 +923,13 @@ Respond only with the JSON object. No markdown, no extra text."""
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openai.com/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
             },
             method='POST'
         )
