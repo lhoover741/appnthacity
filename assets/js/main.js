@@ -586,29 +586,65 @@ function renderEvidenceTable() {
 }
 
 // Render officers board
+const _statusColors = {
+  'Available':  '#4caf82',
+  'Assigned':   '#4c9af5',
+  'En Route':   '#f5c04c',
+  'On Scene':   '#e08252',
+  'Busy':       '#e05252',
+  'Off Duty':   '#555',
+  'Active':     '#4caf82',
+};
+
+function _statusDot(status) {
+  const color = _statusColors[status] || '#555';
+  return `<span class="officer-status-dot" style="background:${color};"></span>`;
+}
+
+function _statusBadge(status) {
+  const color = _statusColors[status] || '#555';
+  return `<span class="officer-status-badge" style="background:${color}22;color:${color};border-color:${color}55;">${status}</span>`;
+}
+
 function renderOfficersBoard() {
   const container = document.getElementById('officers-board');
   if (!container) return;
 
-  const html = NThaCityData.officers.map(officer => `
-    <div class="officer-card">
-      <div class="officer-header">
-        <span class="officer-callsign">${officer.id}</span>
-        <select class="officer-status-select" onchange="updateOfficerStatus('${officer.id}', this.value)">
-          <option value="Available" ${officer.status === 'Available' ? 'selected' : ''}>Available</option>
-          <option value="Assigned" ${officer.status === 'Assigned' ? 'selected' : ''}>Assigned</option>
-          <option value="En Route" ${officer.status === 'En Route' ? 'selected' : ''}>En Route</option>
-          <option value="On Scene" ${officer.status === 'On Scene' ? 'selected' : ''}>On Scene</option>
-          <option value="Busy" ${officer.status === 'Busy' ? 'selected' : ''}>Busy</option>
-          <option value="Off Duty" ${officer.status === 'Off Duty' ? 'selected' : ''}>Off Duty</option>
-        </select>
-      </div>
-      <div class="officer-role">${officer.name}</div>
-      <div class="officer-last-update">Updated: ${formatTime(officer.lastUpdate)}</div>
-    </div>
-  `).join('');
+  const session = getOfficerSession ? getOfficerSession() : null;
+  const myCallsign = session ? session.callsign : null;
+  const statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty'];
 
-  container.innerHTML = html;
+  const html = NThaCityData.officers.map(officer => {
+    const isMe = myCallsign && officer.id === myCallsign;
+    const dept = officer.department ? `<span class="officer-dept">${officer.department}</span>` : '';
+
+    const statusArea = isMe
+      ? `<div class="officer-status-row">
+           ${_statusDot(officer.status)}
+           <select class="officer-status-select" onchange="updateOfficerStatus('${officer.id}', this.value)">
+             ${statuses.map(s => `<option value="${s}" ${officer.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+           </select>
+         </div>`
+      : `<div class="officer-status-row">
+           ${_statusDot(officer.status)}
+           ${_statusBadge(officer.status)}
+         </div>`;
+
+    return `
+      <div class="officer-card${isMe ? ' my-unit' : ''}">
+        <div class="officer-card-header">
+          <span class="officer-callsign">${officer.id}</span>
+          ${isMe ? '<span class="my-unit-pill">MY UNIT</span>' : ''}
+        </div>
+        <div class="officer-name-row">
+          ${officer.name}${dept}
+        </div>
+        ${statusArea}
+        <div class="officer-last-update">Updated: ${formatTime(officer.lastUpdate)}</div>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = html || '<p style="color:var(--muted);font-size:0.85rem;padding:8px 0;">No units on the board.</p>';
 }
 
 // Helper functions
@@ -652,18 +688,43 @@ function updateWarrantStatus(warrantId, newStatus) {
   }
 }
 
-// Update officer status
+// Update officer status — writes locally, then broadcasts to server immediately
 function updateOfficerStatus(officerId, newStatus) {
-  const officer = NThaCityData.officers.find(o => o.id === officerId);
-  if (officer) {
+  let officer = NThaCityData.officers.find(o => o.id === officerId);
+  if (!officer) {
+    // Custom unit not yet in list — add it
+    const session = getOfficerSession ? getOfficerSession() : null;
+    officer = {
+      id: officerId,
+      name: session ? session.name : officerId,
+      department: session ? session.department : '',
+      status: newStatus,
+      lastUpdate: new Date().toISOString(),
+    };
+    NThaCityData.officers.push(officer);
+  } else {
     officer.status = newStatus;
     officer.lastUpdate = new Date().toISOString();
-    saveData();
-    updateDashboard();
-    renderOfficersBoard();
-    addActivity('Officer Status', `${officerId} status changed to ${newStatus}`);
-    showToast(`${officerId} status updated to ${newStatus}`, 'info');
   }
+
+  // Immediately broadcast to server so other sessions pick it up on their next refresh
+  const session = getOfficerSession ? getOfficerSession() : null;
+  fetch('/api/officer-status', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: officerId,
+      status: newStatus,
+      name: session ? session.name : officerId,
+      department: session ? session.department : '',
+    })
+  }).catch(() => {});
+
+  saveData();
+  updateDashboard();
+  renderOfficersBoard();
+  addActivity('Officer Status', `${officerId} status → ${newStatus}`);
+  showToast(`${officerId} status set to ${newStatus}`, 'info');
 }
 
 // Toast notification system
@@ -1071,11 +1132,33 @@ function clearOfficerSession() {
 function officerLogin(callsign, name, department) {
   const officer = { callsign, name, department, loggedInAt: new Date().toISOString() };
   setOfficerSession(officer);
+
+  // Register server-side session
   fetch('/api/officer-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(officer)
   }).catch(() => {});
+
+  // Ensure the officer exists on the CAD officers board
+  const existing = NThaCityData.officers.find(o => o.id === callsign);
+  if (!existing) {
+    NThaCityData.officers.push({
+      id: callsign,
+      name,
+      department,
+      status: 'Available',
+      lastUpdate: new Date().toISOString(),
+    });
+    // Broadcast to server so all sessions see the new unit
+    fetch('/api/officer-status', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: callsign, name, department, status: 'Available' })
+    }).catch(() => {});
+    saveData();
+  }
+
   const overlay = document.getElementById('officer-login-overlay');
   if (overlay) overlay.style.display = 'none';
   _applyOfficerSession(officer);

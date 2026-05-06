@@ -1478,6 +1478,116 @@ button:focus-visible,
   margin: 0 auto;
 }
 
+/* ── Officers board cards ────────────────────────────────────────────────── */
+.officers-board {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.officer-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 12px 14px;
+  transition: border-color 0.2s;
+}
+
+.officer-card.my-unit {
+  border-color: rgba(255, 45, 45, 0.45);
+  background: rgba(255, 45, 45, 0.04);
+}
+
+.officer-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.officer-callsign {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #fff;
+  letter-spacing: 0.05em;
+}
+
+.my-unit-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  background: rgba(255, 45, 45, 0.12);
+  border: 1px solid rgba(255, 45, 45, 0.3);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.officer-name-row {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.officer-dept {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.officer-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.officer-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.officer-status-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.officer-status-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.officer-status-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.officer-last-update {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.3);
+}
+
 /* ── Officer header chip ─────────────────────────────────────────────────── */
 #officer-header-chip {
   display: none;
