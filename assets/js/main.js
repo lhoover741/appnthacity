@@ -1049,7 +1049,81 @@ function getLocationData(location) {
   return locations[location];
 }
 
-// Active nav highlight
+// ── Live CAD auto-refresh ──────────────────────────────────────────────────
+// Only activates on pages that have the CAD dashboard (police.html).
+
+let _cadRefreshInterval = null;
+let _cadRefreshing = false;
+
+function _setCadSyncStatus(state) {
+  const dot = document.getElementById('cad-sync-dot');
+  const label = document.getElementById('cad-sync-label');
+  if (!dot || !label) return;
+
+  if (state === 'live') {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    dot.style.background = '#22c55e';
+    dot.style.boxShadow = '0 0 6px rgba(34,197,94,0.6)';
+    label.textContent = `Live · synced ${hh}:${mm}:${ss}`;
+  } else if (state === 'syncing') {
+    dot.style.background = '#fbbf24';
+    dot.style.boxShadow = '0 0 6px rgba(251,191,36,0.5)';
+    label.textContent = 'Syncing…';
+  } else {
+    dot.style.background = '#ef4444';
+    dot.style.boxShadow = 'none';
+    label.textContent = 'Offline — retrying…';
+  }
+}
+
+async function refreshCADData() {
+  if (_cadRefreshing) return;
+  _cadRefreshing = true;
+  _setCadSyncStatus('syncing');
+
+  try {
+    const res = await fetch('/api/cad/data');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const serverData = await res.json();
+    Object.assign(NThaCityData, serverData);
+    localStorage.setItem('NThaCityData', JSON.stringify(NThaCityData));
+
+    updateDashboard();
+    renderCallQueue();
+    renderActivityFeed();
+    renderWarrantsTable();
+    renderArrestsTable();
+    renderTrafficTable();
+    renderEvidenceTable();
+    renderOfficersBoard();
+
+    _setCadSyncStatus('live');
+  } catch (err) {
+    console.warn('CAD auto-refresh failed:', err);
+    _setCadSyncStatus('error');
+  } finally {
+    _cadRefreshing = false;
+  }
+}
+
+function startCADAutoRefresh(intervalMs = 30000) {
+  const hasDashboard = document.getElementById('active-units');
+  if (!hasDashboard) return;
+
+  _setCadSyncStatus('live');
+  _cadRefreshInterval = setInterval(refreshCADData, intervalMs);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshCADData();
+    }
+  });
+}
+
+// ── Active nav highlight ───────────────────────────────────────────────────
 const setActiveNav = () => {
   const links = document.querySelectorAll('.global-nav a');
   const path = window.location.pathname.split('/').pop();
@@ -1086,4 +1160,6 @@ setActiveNav();
   renderTrafficTable();
   renderEvidenceTable();
   renderOfficersBoard();
+
+  startCADAutoRefresh(30000);
 })();
