@@ -39,12 +39,28 @@ const NThaCityData = {
 // Data persistence functions
 function saveData() {
   localStorage.setItem('NThaCityData', JSON.stringify(NThaCityData));
+  fetch('/api/cad/data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(NThaCityData)
+  }).catch(err => console.warn('CAD server sync failed:', err));
 }
 
-function loadData() {
-  const data = localStorage.getItem('NThaCityData');
-  if (data) {
-    Object.assign(NThaCityData, JSON.parse(data));
+async function loadData() {
+  try {
+    const res = await fetch('/api/cad/data');
+    if (res.ok) {
+      const serverData = await res.json();
+      Object.assign(NThaCityData, serverData);
+      localStorage.setItem('NThaCityData', JSON.stringify(NThaCityData));
+      return;
+    }
+  } catch (err) {
+    console.warn('Could not load CAD data from server, falling back to localStorage:', err);
+  }
+  const cached = localStorage.getItem('NThaCityData');
+  if (cached) {
+    try { Object.assign(NThaCityData, JSON.parse(cached)); } catch (_) {}
   }
 }
 
@@ -1033,30 +1049,7 @@ function getLocationData(location) {
   return locations[location];
 }
 
-// Initialize
-loadData();
-handleCivilianForm();
-handle911Form();
-handleTrafficForm();
-handleArrestForm();
-handleEvidenceForm();
-handleWarrantForm();
-handleCivilianLookupForm();
-handlePlateLookupForm();
-handleLicenseForm();
-handleVehicleForm();
-handleDMVPlateForm();
-
-// Initialize new components
-updateDashboard();
-renderCallQueue();
-renderActivityFeed();
-renderWarrantsTable();
-renderArrestsTable();
-renderTrafficTable();
-renderEvidenceTable();
-renderOfficersBoard();
-
+// Active nav highlight
 const setActiveNav = () => {
   const links = document.querySelectorAll('.global-nav a');
   const path = window.location.pathname.split('/').pop();
@@ -1068,3 +1061,29 @@ const setActiveNav = () => {
 };
 
 setActiveNav();
+
+// Initialize — load server data first, then wire up all forms and render
+(async () => {
+  await loadData();
+
+  handleCivilianForm();
+  handle911Form();
+  handleTrafficForm();
+  handleArrestForm();
+  handleEvidenceForm();
+  handleWarrantForm();
+  handleCivilianLookupForm();
+  handlePlateLookupForm();
+  handleLicenseForm();
+  handleVehicleForm();
+  handleDMVPlateForm();
+
+  updateDashboard();
+  renderCallQueue();
+  renderActivityFeed();
+  renderWarrantsTable();
+  renderArrestsTable();
+  renderTrafficTable();
+  renderEvidenceTable();
+  renderOfficersBoard();
+})();
