@@ -25,6 +25,7 @@ SERVER_STATUS_FILE = 'server_status.json'
 BOLOS_FILE = 'bolos_data.json'
 RADIO_LOG_FILE = 'radio_log.json'
 CAD_DATA_FILE = 'cad_data.json'
+ALERTS_FILE = 'alerts_data.json'
 
 DEFAULT_OFFICERS = [
     {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available'},
@@ -47,6 +48,18 @@ DEFAULT_CAD_DATA = {
     'officers': DEFAULT_OFFICERS,
     'activityLog': [],
 }
+
+
+def load_alerts():
+    if os.path.exists(ALERTS_FILE):
+        with open(ALERTS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_alerts(alerts):
+    with open(ALERTS_FILE, 'w') as f:
+        json.dump(alerts[-100:], f, indent=2)
 
 
 def load_cad_data():
@@ -1377,6 +1390,40 @@ Respond only with the JSON object. No markdown, no extra text."""
     except Exception as e:
         logger.error(f'AI suspect match failed: {e}')
         return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
+
+
+@app.route('/api/alerts', methods=['GET'])
+def get_alerts():
+    since = request.args.get('since', '')
+    alerts = load_alerts()
+    if since:
+        alerts = [a for a in alerts if a.get('issuedAt', '') > since]
+    return jsonify({'alerts': alerts[-20:]})
+
+
+@app.route('/api/alert', methods=['POST'])
+def post_alert():
+    data = request.get_json(silent=True) or {}
+    alert_type = data.get('type', '').strip()
+    message = data.get('message', '').strip()
+    issued_by = data.get('issuedBy', 'Dispatch').strip()
+    valid_types = ['PANIC', 'BOLO', 'ALL UNITS', 'CODE RED']
+    if not alert_type or not message:
+        return jsonify({'success': False, 'error': 'type and message are required'}), 400
+    if alert_type not in valid_types:
+        return jsonify({'success': False, 'error': f'Invalid type. Must be one of: {", ".join(valid_types)}'}), 400
+    alerts = load_alerts()
+    alert = {
+        'id': f"ALERT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(alerts)+1:04d}",
+        'type': alert_type,
+        'message': message,
+        'issuedBy': issued_by,
+        'issuedAt': datetime.now().isoformat(),
+    }
+    alerts.append(alert)
+    save_alerts(alerts)
+    logger.info(f"Alert broadcast: {alert['id']} — {alert_type} by {issued_by}")
+    return jsonify({'success': True, 'alert': alert})
 
 
 @app.route('/api/cad/data', methods=['GET'])
