@@ -2,24 +2,47 @@
   "civilians": [],
   "vehicles": [],
   "licenses": [],
-  "warrants": [],
+  "warrants": [
+    {
+      "warrantName": "Terry crews",
+      "warrantCharges": "Murder",
+      "warrantIssuer": "Dispatch (D-04)",
+      "warrantExpiration": "2026-06-05",
+      "warrantStatus": "Active",
+      "warrantNotes": "On the date of the incident, suspect Terry Crews was identified at the scene of a homicide that occurred in the vicinity of Davis. Witness statements corroborate that Crews was seen fleeing the area shortly after the gunshots were heard. Additionally, surveillance footage from local businesses in Strawberry captured Crews' vehicle leaving the scene. Forensic evidence collected indicates that the firearm used in the murder was registered to Crews. Given the violent nature of the crime and the suspect's previous offenses, there is an immediate threat to public safety in Los Santos, warranting the issuance of this arrest warrant.",
+      "id": "wrn-1778055429862-ub52zshzz",
+      "createdAt": "2026-05-06T08:17:09.862Z"
+    }
+  ],
   "arrests": [
     {
-      "suspectName": "Team nihy",
-      "charges": "Assault deadly weapon",
-      "arrestingOfficer": "Agent nfl",
       "arrestLocation": "Grove st gas station",
+      "arrestingOfficer": "Agent nfl",
+      "charges": "Assault deadly weapon",
+      "createdAt": "2026-05-06T01:51:54.206Z",
       "evidenceAttached": "Yes",
+      "id": "arr-1778032314206-61msvpynz",
       "penalty": "None",
       "reportNotes": "",
-      "id": "arr-1778032314206-61msvpynz",
-      "createdAt": "2026-05-06T01:51:54.206Z"
+      "suspectName": "Team nihy"
     }
   ],
   "incidents": [],
   "evidence": [],
   "trafficStops": [],
-  "calls911": [],
+  "calls911": [
+    {
+      "assignedUnit": "D-04",
+      "callerName": "None",
+      "createdAt": "2026-05-06T02:05:50.638Z",
+      "description": "Shot fired",
+      "id": "911-1778033150638-dlstdzsfj",
+      "incidentType": "Shots fired",
+      "location": "Davis",
+      "priority": "Critical",
+      "status": "Closed"
+    }
+  ],
   "officers": [
     {
       "department": "LSPD",
@@ -85,10 +108,34 @@
   ],
   "activityLog": [
     {
+      "id": "act-1778055429864-hoyyrlsjh",
+      "type": "Warrant",
+      "message": "Warrant issued for undefined - undefined",
+      "timestamp": "2026-05-06T08:17:09.864Z"
+    },
+    {
+      "id": "act-1778033175870-dwsf1k2nb",
+      "message": "Call 911-1778033150638-dlstdzsfj status changed to En Route",
+      "timestamp": "2026-05-06T02:06:15.870Z",
+      "type": "Call Update"
+    },
+    {
+      "id": "act-1778033170794-kdfp9lh3n",
+      "message": "Call 911-1778033150638-dlstdzsfj status changed to Assigned",
+      "timestamp": "2026-05-06T02:06:10.794Z",
+      "type": "Call Update"
+    },
+    {
+      "id": "act-1778033150639-vbwvrfyxp",
+      "message": "New call created: Shots fired at Davis",
+      "timestamp": "2026-05-06T02:05:50.639Z",
+      "type": "911 Call"
+    },
+    {
       "id": "act-1778032314207-eqrux1n8l",
-      "type": "Arrest Report",
       "message": "Arrest filed for Team nihy - Assault deadly weapon",
-      "timestamp": "2026-05-06T01:51:54.207Z"
+      "timestamp": "2026-05-06T01:51:54.207Z",
+      "type": "Arrest Report"
     }
   ]
 }
