@@ -1410,6 +1410,35 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
 
 
+@app.route('/api/officer-status', methods=['PATCH'])
+def patch_officer_status():
+    data = request.get_json(silent=True) or {}
+    officer_id = data.get('id', '').strip()
+    new_status = data.get('status', '').strip()
+    valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty']
+    if not officer_id or new_status not in valid_statuses:
+        return jsonify({'success': False, 'error': 'invalid id or status'}), 400
+    cad = load_cad_data()
+    updated = False
+    for officer in cad.get('officers', []):
+        if officer['id'] == officer_id:
+            officer['status'] = new_status
+            officer['lastUpdate'] = datetime.now().isoformat()
+            updated = True
+            break
+    if not updated:
+        cad.setdefault('officers', []).append({
+            'id': officer_id,
+            'name': data.get('name', officer_id),
+            'status': new_status,
+            'department': data.get('department', ''),
+            'lastUpdate': datetime.now().isoformat(),
+        })
+    save_cad_data(cad)
+    logger.info(f"Officer status update: {officer_id} → {new_status}")
+    return jsonify({'success': True})
+
+
 @app.route('/api/officer-sessions', methods=['GET'])
 def get_officer_sessions():
     return jsonify({'sessions': load_officer_sessions()})

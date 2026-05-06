@@ -1,0 +1,9 @@
+{
+  "GU-01": {
+    "callsign": "GU-01",
+    "name": "Gang Unit 1",
+    "department": "Gang Enforcement",
+    "loggedInAt": "2026-05-06T01:48:15.757880",
+    "status": "On Duty"
+  }
+}

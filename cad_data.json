@@ -1,0 +1,75 @@
+{
+  "civilians": [],
+  "vehicles": [],
+  "licenses": [],
+  "warrants": [],
+  "arrests": [],
+  "incidents": [],
+  "evidence": [],
+  "trafficStops": [],
+  "calls911": [],
+  "officers": [
+    {
+      "id": "1L-01",
+      "name": "Chief Unit",
+      "status": "Available",
+      "department": "LSPD"
+    },
+    {
+      "id": "2L-12",
+      "name": "Patrol Unit",
+      "status": "En Route",
+      "department": "LSPD"
+    },
+    {
+      "id": "3L-22",
+      "name": "Traffic Unit",
+      "status": "On Scene",
+      "department": "Traffic Division"
+    },
+    {
+      "id": "D-04",
+      "name": "Dispatch",
+      "status": "Active",
+      "department": "Dispatch"
+    },
+    {
+      "id": "K9-02",
+      "name": "K9 Unit",
+      "status": "Available",
+      "department": "K9 Unit"
+    },
+    {
+      "id": "GU-01",
+      "name": "Gang Unit 1",
+      "status": "On Scene",
+      "department": "Gang Enforcement",
+      "lastUpdate": "2026-05-06T01:50:11.395404"
+    },
+    {
+      "id": "GU-02",
+      "name": "Gang Unit 2",
+      "status": "Available",
+      "department": "Gang Enforcement"
+    },
+    {
+      "id": "BCSO-1",
+      "name": "BCSO Deputy 1",
+      "status": "Available",
+      "department": "BCSO"
+    },
+    {
+      "id": "BCSO-2",
+      "name": "BCSO Deputy 2",
+      "status": "Off Duty",
+      "department": "BCSO"
+    },
+    {
+      "id": "SWT-1",
+      "name": "SWAT Unit",
+      "status": "Off Duty",
+      "department": "SWAT"
+    }
+  ],
+  "activityLog": []
+}
