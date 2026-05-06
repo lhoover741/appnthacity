@@ -180,7 +180,12 @@
             <h2 style="margin-bottom:4px;">My Dashboard</h2>
             <p id="my-officer-label" style="margin:0;color:var(--muted);font-size:0.9rem;">—</p>
           </div>
-          <button class="button button-ghost" style="font-size:0.82rem;" onclick="officerLogout()">🔓 End Shift</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <button type="button" id="ai-shift-btn" style="font-size:0.8rem;padding:8px 14px;background:rgba(255,45,45,0.12);color:var(--accent);border:1px solid rgba(255,45,45,0.3);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;" title="Generate AI end-of-shift summary for Discord">
+              <span id="ai-shift-icon">✦</span> AI Shift Summary
+            </button>
+            <button class="button button-ghost" style="font-size:0.82rem;" onclick="officerLogout()">🔓 End Shift</button>
+          </div>
         </div>
         <div class="my-dashboard-grid">
           <div class="my-panel">
@@ -195,6 +200,13 @@
             <h3 class="my-panel-title">🔒 My Recent Arrests</h3>
             <div id="my-arrests-list"><p class="my-empty">No arrest reports filed by you.</p></div>
           </div>
+        </div>
+        <div id="shift-summary-wrap" style="display:none;margin-top:20px;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:12px;padding:16px 18px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px;flex-wrap:wrap;">
+            <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0;">AI Shift Summary — Discord Ready</p>
+            <button onclick="navigator.clipboard.writeText(document.getElementById('shift-summary-text').value);this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy',2000);" style="background:#1e1e1e;border:1px solid #333;color:#ccc;padding:5px 14px;border-radius:6px;font-size:0.78rem;cursor:pointer;">Copy</button>
+          </div>
+          <textarea id="shift-summary-text" rows="10" readonly style="width:100%;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:12px;color:#e0e0e0;font-size:0.83rem;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;"></textarea>
         </div>
       </div>
     </section>
@@ -715,6 +727,20 @@
     <section class="container section lookup-results">
       <div id="civilian-lookup-results"></div>
       <div id="plate-lookup-results"></div>
+    </section>
+
+    <section class="container section">
+      <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:14px;padding:24px 28px;">
+        <div style="margin-bottom:18px;">
+          <h2 style="margin-bottom:4px;">🗂️ Criminal Record Check</h2>
+          <p style="margin:0;color:var(--muted);font-size:0.88rem;">Search all server records — warrants, arrests, traffic stops, and evidence — for any civilian.</p>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+          <input id="criminal-record-input" type="text" placeholder="Civilian name (e.g. John Smith)…" style="flex:1;min-width:200px;background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:10px 14px;color:#fff;font-size:0.9rem;outline:none;" />
+          <button id="criminal-record-btn" class="button button-primary" style="white-space:nowrap;">Search Records</button>
+        </div>
+        <div id="criminal-record-output"></div>
+      </div>
     </section>
 
     <section class="container section content-grid">
@@ -1571,7 +1597,124 @@
         btn.disabled = false;
       }
     });
+
+    /* ── CRIMINAL RECORD CHECK ── */
+    document.getElementById('criminal-record-btn').addEventListener('click', async function () {
+      const name = document.getElementById('criminal-record-input').value.trim();
+      const output = document.getElementById('criminal-record-output');
+      if (!name || name.length < 2) {
+        output.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Enter at least 2 characters to search.</p>';
+        return;
+      }
+      this.disabled = true;
+      output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching all CAD records…</p>';
+      try {
+        const res = await fetch(`/api/cad/criminal-record?name=${encodeURIComponent(name)}`);
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+        const { warrants, arrests, trafficStops, evidence } = json;
+        const total = warrants.length + arrests.length + trafficStops.length + evidence.length;
+        if (total === 0) {
+          output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No records found for this individual.</p>';
+          return;
+        }
+        const section = (title, icon, items, fn) => !items.length ? '' : `
+          <div style="margin-bottom:18px;">
+            <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">${icon} ${title} (${items.length})</p>
+            <div style="display:grid;gap:8px;">${items.map(fn).join('')}</div>
+          </div>`;
+        const wHtml = section('Warrants', '📋', warrants, w =>
+          `<div style="background:#0a0a0a;border:1px solid #e0525244;border-left:3px solid #e05252;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${w.warrantName || w.suspectName || '—'}</strong> <span style="color:#e05252;margin-left:8px;font-size:0.75rem;">${w.warrantStatus || w.status || 'Active'}</span><br><span style="color:#aaa;">${w.warrantCharges || w.charges || '—'}</span> · Issued by ${w.warrantIssuer || w.issuer || '—'}</div>`);
+        const aHtml = section('Arrests', '🔒', arrests, a =>
+          `<div style="background:#0a0a0a;border:1px solid #f5a62344;border-left:3px solid #f5a623;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${a.suspectName || '—'}</strong><br><span style="color:#aaa;">${a.charges || '—'}</span> · Penalty: ${a.penalty || '—'} · Officer: ${a.arrestingOfficer || '—'}</div>`);
+        const tHtml = section('Traffic Stops', '🚗', trafficStops, t =>
+          `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${t.driverName || '—'}</strong> · ${t.trafficPlate || t.plate || '—'}<br><span style="color:#aaa;">${t.trafficReason || t.reason || '—'}</span> → ${t.trafficOutcome || t.outcome || '—'}</div>`);
+        const eHtml = section('Evidence', '📦', evidence, e =>
+          `<div style="background:#0a0a0a;border:1px solid #4caf8244;border-left:3px solid #4caf82;border-radius:8px;padding:10px 14px;font-size:0.83rem;">Case <strong>${e.caseNumber || '—'}</strong> · ${e.evidenceType || e.type || '—'}<br><span style="color:#aaa;">${e.evidenceDescription || e.description || '—'}</span></div>`);
+        output.innerHTML = `
+          <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+            ${[['Warrants',warrants.length,'#e05252'],['Arrests',arrests.length,'#f5a623'],['Traffic Stops',trafficStops.length,'#4c9af5'],['Evidence',evidence.length,'#4caf82']].map(([lbl,cnt,col])=>
+              `<div style="background:${col}15;border:1px solid ${col}33;border-radius:8px;padding:8px 16px;text-align:center;"><strong style="color:${col};font-size:1.1rem;display:block;">${cnt}</strong><span style="font-size:0.72rem;color:#888;">${lbl}</span></div>`).join('')}
+          </div>
+          ${wHtml}${aHtml}${tHtml}${eHtml}`;
+      } catch (err) {
+        output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${err.message || 'Search failed.'}</p>`;
+      } finally {
+        this.disabled = false;
+      }
+    });
+
+    document.getElementById('criminal-record-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('criminal-record-btn').click();
+    });
+
+    /* ── AI SHIFT SUMMARY ── */
+    document.getElementById('ai-shift-btn').addEventListener('click', async function () {
+      const officer = typeof getOfficerSession === 'function' ? getOfficerSession() : null;
+      if (!officer) { typeof showToast === 'function' && showToast('No officer session active.', 'error'); return; }
+      const icon = document.getElementById('ai-shift-icon');
+      icon.textContent = '⏳';
+      this.disabled = true;
+      const cs = officer.callsign.toLowerCase();
+      const nm = officer.name.toLowerCase();
+      function matchesMe(str) { const s = (str || '').toLowerCase(); return s.includes(cs) || s.includes(nm); }
+      const calls        = (NThaCityData.calls911     || []).filter(c => matchesMe(c.assignedUnit));
+      const arrests      = (NThaCityData.arrests      || []).filter(a => matchesMe(a.arrestingOfficer));
+      const warrants     = (NThaCityData.warrants     || []).filter(w => matchesMe(w.warrantIssuer));
+      const trafficStops = (NThaCityData.trafficStops || []).filter(t => matchesMe(t.officerName));
+      try {
+        const res = await fetch('/api/ai/shift-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            officer:    officer.name,
+            callsign:   officer.callsign,
+            department: officer.department,
+            shiftStart: officer.loggedInAt ? new Date(officer.loggedInAt).toLocaleString() : 'Unknown',
+            calls, arrests, warrants, trafficStops
+          })
+        });
+        const json = await res.json();
+        if (json.success) {
+          const wrap = document.getElementById('shift-summary-wrap');
+          document.getElementById('shift-summary-text').value = json.summary;
+          wrap.style.display = 'block';
+          wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          typeof showToast === 'function' && showToast(json.error || 'Shift summary failed.', 'error');
+        }
+      } catch {
+        typeof showToast === 'function' && showToast('Network error generating shift summary.', 'error');
+      } finally {
+        icon.textContent = '✦';
+        this.disabled = false;
+      }
+    });
   </script>
+
+  <!-- Booking card modal -->
+  <div id="booking-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:3000;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;">
+    <div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,0.7);">
+      <div style="background:#0d0d0d;border-bottom:1px solid #1e1e1e;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:1;">
+        <div>
+          <p style="margin:0;font-size:0.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;">NThaCityRP LSPD</p>
+          <h3 style="margin:4px 0 0;font-size:1.05rem;color:#fff;">🔒 Arrest Booking Card</h3>
+        </div>
+        <button onclick="document.getElementById('booking-modal-overlay').style.display='none';" style="background:transparent;border:1px solid #333;color:#888;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1.1rem;display:flex;align-items:center;justify-content:center;">✕</button>
+      </div>
+      <div style="padding:20px;">
+        <div id="booking-card-content"></div>
+        <div style="margin-top:16px;">
+          <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Discord Post Text</p>
+          <textarea id="booking-discord-text" rows="8" readonly style="width:100%;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:10px 12px;color:#d0d0d0;font-size:0.8rem;line-height:1.5;font-family:inherit;resize:vertical;box-sizing:border-box;"></textarea>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button id="booking-copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('booking-discord-text').value);this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy for Discord',2000);" style="flex:1;background:rgba(255,45,45,0.12);color:var(--accent);border:1px solid rgba(255,45,45,0.3);border-radius:8px;padding:10px;font-size:0.85rem;cursor:pointer;font-weight:600;">Copy for Discord</button>
+            <button onclick="document.getElementById('booking-modal-overlay').style.display='none';" style="flex:1;background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:8px;padding:10px;font-size:0.85rem;cursor:pointer;">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Officer login overlay -->
   <div id="officer-login-overlay" class="officer-login-overlay">

@@ -882,13 +882,56 @@ function handleArrestForm() {
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const data = getFormData(form);
-    addArrest(data);
+    const record = addArrest(data);
     updateDashboard();
     renderArrestsTable();
     addActivity('Arrest Report', `Arrest filed for ${data.suspectName} - ${data.charges}`);
-    showToast('Arrest report filed successfully', 'success');
+    showBookingCard(record);
     form.reset();
   });
+}
+
+function showBookingCard(arrest) {
+  const modal = document.getElementById('booking-modal-overlay');
+  if (!modal) return;
+
+  const dt = new Date().toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+  const narrative = arrest.reportNotes || '';
+
+  const discordLines = [
+    `**🔒 ARREST REPORT — ${arrest.id}**`,
+    `**Date/Time:** ${dt}`,
+    `**Suspect:** ${arrest.suspectName || '—'}`,
+    `**Charges:** ${arrest.charges || '—'}`,
+    `**Arresting Officer:** ${arrest.arrestingOfficer || '—'}`,
+    `**Location:** ${arrest.arrestLocation || '—'}`,
+    `**Penalty:** ${arrest.penalty || '—'}`,
+    `**Evidence:** ${arrest.evidenceAttached || 'None'}`,
+  ];
+  if (narrative) discordLines.push('', '**Narrative:**', narrative);
+
+  document.getElementById('booking-card-content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:0.85rem;">
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Case ID</span><strong>${escapeHtml(arrest.id)}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Date / Time</span><strong>${dt}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Suspect</span><strong>${escapeHtml(arrest.suspectName || '—')}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Charges</span><strong style="color:#f5a623;">${escapeHtml(arrest.charges || '—')}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Arresting Officer</span><strong>${escapeHtml(arrest.arrestingOfficer || '—')}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Location</span><strong>${escapeHtml(arrest.arrestLocation || '—')}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Penalty</span><strong style="color:#e05252;">${escapeHtml(arrest.penalty || '—')}</strong></div>
+      <div><span style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:2px;">Evidence</span><strong>${escapeHtml(arrest.evidenceAttached || 'None')}</strong></div>
+    </div>
+    ${narrative ? `<div style="background:#0a0a0a;border:1px solid #1e1e1e;border-radius:8px;padding:12px;margin-top:12px;">
+      <p style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Report Narrative</p>
+      <p style="font-size:0.83rem;line-height:1.6;color:#d0d0d0;margin:0;">${escapeHtml(narrative)}</p>
+    </div>` : ''}
+  `;
+
+  document.getElementById('booking-discord-text').value = discordLines.join('\n');
+  modal.style.display = 'flex';
 }
 
 function handleEvidenceForm() {
@@ -1219,7 +1262,7 @@ function prefillOfficerForms(officer) {
 }
 
 function renderMyDashboard(officer) {
-  const data = getData();
+  const data = NThaCityData;
   const cs = officer.callsign.toLowerCase();
   const nm = officer.name.toLowerCase();
 

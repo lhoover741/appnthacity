@@ -1530,6 +1530,121 @@ def post_cad_data():
     return jsonify({'success': True})
 
 
+@app.route('/api/cad/criminal-record', methods=['GET'])
+def get_criminal_record():
+    name = request.args.get('name', '').strip().lower()
+    if not name or len(name) < 2:
+        return jsonify({'success': False, 'error': 'Name must be at least 2 characters'}), 400
+    data = load_cad_data()
+
+    def nm(val):
+        return name in (val or '').lower()
+
+    warrants    = [w for w in data.get('warrants',     []) if nm(w.get('warrantName')) or nm(w.get('suspectName'))]
+    arrests     = [a for a in data.get('arrests',      []) if nm(a.get('suspectName'))]
+    traffic     = [t for t in data.get('trafficStops', []) if nm(t.get('driverName'))]
+    evidence    = [e for e in data.get('evidence',     []) if nm(e.get('caseNumber')) or nm(e.get('evidenceDescription')) or nm(e.get('description'))]
+
+    return jsonify({
+        'success':     True,
+        'warrants':    warrants,
+        'arrests':     arrests,
+        'trafficStops': traffic,
+        'evidence':    evidence,
+    })
+
+
+@app.route('/api/ai/shift-summary', methods=['POST'])
+def ai_shift_summary():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data     = request.get_json(silent=True) or {}
+    officer  = data.get('officer',    'Unknown')
+    callsign = data.get('callsign',   '')
+    dept     = data.get('department', '')
+    started  = data.get('shiftStart', 'Unknown')
+    calls    = data.get('calls',        [])
+    arrests  = data.get('arrests',      [])
+    warrants = data.get('warrants',     [])
+    traffic  = data.get('trafficStops', [])
+
+    def fmt_calls(lst):
+        lines = [f"- [{c.get('priority','?')}] {c.get('incidentType','Unknown')} @ {c.get('location','?')} — {c.get('status','?')}" for c in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    def fmt_arrests(lst):
+        lines = [f"- {a.get('suspectName','?')}: {a.get('charges','?')} | Penalty: {a.get('penalty','?')}" for a in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    def fmt_warrants(lst):
+        lines = [f"- {w.get('warrantName', w.get('suspectName','?'))}: {w.get('warrantCharges', w.get('charges','?'))} ({w.get('warrantStatus', w.get('status','Active'))})" for w in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    def fmt_traffic(lst):
+        lines = [f"- {t.get('driverName','?')} ({t.get('trafficPlate', t.get('plate','?'))}): {t.get('trafficReason', t.get('reason','?'))} → {t.get('trafficOutcome', t.get('outcome','?'))}" for t in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    system_msg = (
+        "You are an AI report-writing assistant for NThaCityRP, a GTA V roleplay server set in Los Santos. "
+        "Write professional law enforcement shift summaries for Discord posting. Use GTA V location and street names. "
+        "Keep it RP-immersive, third-person, professional tone. No real-world city references."
+    )
+
+    user_msg = f"""Generate a Discord-ready end-of-shift summary for this officer. Use Discord markdown (bold with **, bullets with •). No # headers.
+
+Officer: {officer} ({callsign}) — {dept}
+Shift Started: {started}
+
+Calls Handled ({len(calls)} total):
+{fmt_calls(calls)}
+
+Arrests Made ({len(arrests)} total):
+{fmt_arrests(arrests)}
+
+Warrants Issued ({len(warrants)} total):
+{fmt_warrants(warrants)}
+
+Traffic Stops ({len(traffic)} total):
+{fmt_traffic(traffic)}
+
+Structure: one opening sentence → **Calls** section → **Arrests** section → **Warrants** section → **Traffic Stops** section → professional closing line. Under 300 words. Plain Discord text only, no JSON."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user',   'content': user_msg}
+            ],
+            'max_tokens': 500,
+            'temperature': 0.6,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            result  = json.loads(resp.read().decode('utf-8'))
+            summary = result['choices'][0]['message']['content']
+            return jsonify({'success': True, 'summary': summary})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter shift-summary error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI shift summary failed: {e}')
+        return jsonify({'success': False, 'error': 'Shift summary failed. Try again.'}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
