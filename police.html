@@ -97,9 +97,15 @@
 
     <section class="panel section cad-panel">
       <div class="container">
-        <div class="panel-header">
-          <h2>CAD Command Center</h2>
-          <p>Real-time dispatch dashboard for law enforcement operations.</p>
+        <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h2 style="margin-bottom:4px;">CAD Command Center</h2>
+            <p style="margin:0;">Real-time dispatch dashboard for law enforcement operations.</p>
+          </div>
+          <div id="cad-sync-indicator" style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--muted);">
+            <span id="cad-sync-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0;"></span>
+            <span id="cad-sync-label">Connecting…</span>
+          </div>
         </div>
         <div class="command-dashboard">
           <div class="dashboard-card" id="active-units-card">
