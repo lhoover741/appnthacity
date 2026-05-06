@@ -102,7 +102,8 @@
             <h2 style="margin-bottom:4px;">CAD Command Center</h2>
             <p style="margin:0;">Real-time dispatch dashboard for law enforcement operations.</p>
           </div>
-          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <span id="officer-header-chip" title="Logged in as this unit">👮 </span>
             <button class="button button-primary" style="font-size:0.82rem;padding:10px 18px;gap:6px;" onclick="openAlertModal()">🚨 Broadcast Alert</button>
             <div id="cad-sync-indicator" style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--muted);">
               <span id="cad-sync-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0;"></span>
@@ -166,6 +167,33 @@
             <strong id="traffic-stops">0</strong>
             <div class="card-status badge badge-primary">Logged</div>
             <div class="card-desc">Stops this week</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- My Dashboard — only visible when an officer is logged in -->
+    <section id="my-dashboard-section" class="container section" style="display:none;">
+      <div class="my-dashboard">
+        <div class="my-dashboard-header">
+          <div>
+            <h2 style="margin-bottom:4px;">My Dashboard</h2>
+            <p id="my-officer-label" style="margin:0;color:var(--muted);font-size:0.9rem;">—</p>
+          </div>
+          <button class="button button-ghost" style="font-size:0.82rem;" onclick="officerLogout()">🔓 End Shift</button>
+        </div>
+        <div class="my-dashboard-grid">
+          <div class="my-panel">
+            <h3 class="my-panel-title">📞 My Active Calls</h3>
+            <div id="my-calls-list"><p class="my-empty">No active calls assigned to you.</p></div>
+          </div>
+          <div class="my-panel">
+            <h3 class="my-panel-title">⚖️ My Open Warrants</h3>
+            <div id="my-warrants-list"><p class="my-empty">No warrants issued by you.</p></div>
+          </div>
+          <div class="my-panel">
+            <h3 class="my-panel-title">🔒 My Recent Arrests</h3>
+            <div id="my-arrests-list"><p class="my-empty">No arrest reports filed by you.</p></div>
           </div>
         </div>
       </div>
@@ -1543,6 +1571,117 @@
         btn.disabled = false;
       }
     });
+  </script>
+
+  <!-- Officer login overlay -->
+  <div id="officer-login-overlay" class="officer-login-overlay">
+    <div class="officer-login-box">
+      <div class="officer-login-top">
+        <div class="officer-login-badge">🚔</div>
+        <h2 class="officer-login-title">NThaCityRP CAD System</h2>
+        <p class="officer-login-sub">Select your unit to begin your shift.</p>
+      </div>
+
+      <div class="officer-login-tabs">
+        <button class="officer-tab active" id="tab-btn-select" onclick="switchOfficerTab('select')">Select Unit</button>
+        <button class="officer-tab" id="tab-btn-custom" onclick="switchOfficerTab('custom')">Custom Unit</button>
+      </div>
+
+      <div id="officer-tab-select" class="officer-tab-panel">
+        <div class="officer-unit-grid" id="officer-unit-grid"></div>
+      </div>
+
+      <div id="officer-tab-custom" class="officer-tab-panel" style="display:none;">
+        <div class="system-form officer-custom-form">
+          <label>Callsign <input id="custom-callsign" type="text" placeholder="e.g. LSPD-4B21" /></label>
+          <label>Officer Name <input id="custom-name" type="text" placeholder="e.g. J. Martinez" /></label>
+          <label>Department
+            <select id="custom-dept">
+              <option value="LSPD">LSPD</option>
+              <option value="BCSO">BCSO</option>
+              <option value="Gang Enforcement">Gang Enforcement</option>
+              <option value="Traffic Division">Traffic Division</option>
+              <option value="K9 Unit">K9 Unit</option>
+              <option value="SWAT">SWAT</option>
+              <option value="Dispatch">Dispatch</option>
+              <option value="EMS">EMS</option>
+            </select>
+          </label>
+          <button class="button button-primary" style="width:100%;margin-top:4px;" onclick="loginCustomOfficer()">Log In to CAD</button>
+          <div id="custom-login-err" style="font-size:0.82rem;color:var(--accent);margin-top:4px;display:none;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── Officer login overlay ──
+    const PREDEFINED_UNITS = [
+      { callsign: '1L-01',  name: 'Chief Unit',     department: 'LSPD',             icon: '⭐' },
+      { callsign: '2L-12',  name: 'Patrol Unit',    department: 'LSPD',             icon: '👮' },
+      { callsign: '3L-22',  name: 'Traffic Unit',   department: 'Traffic Division', icon: '🚗' },
+      { callsign: 'D-04',   name: 'Dispatch',       department: 'Dispatch',         icon: '📡' },
+      { callsign: 'K9-02',  name: 'K9 Unit',        department: 'K9 Unit',          icon: '🐕' },
+      { callsign: 'GU-01',  name: 'Gang Unit 1',    department: 'Gang Enforcement', icon: '🔫' },
+      { callsign: 'GU-02',  name: 'Gang Unit 2',    department: 'Gang Enforcement', icon: '🔫' },
+      { callsign: 'BCSO-1', name: 'BCSO Deputy 1',  department: 'BCSO',             icon: '🤠' },
+      { callsign: 'BCSO-2', name: 'BCSO Deputy 2',  department: 'BCSO',             icon: '🤠' },
+      { callsign: 'SWT-1',  name: 'SWAT Unit',      department: 'SWAT',             icon: '🛡️' },
+    ];
+
+    function buildUnitGrid() {
+      const grid = document.getElementById('officer-unit-grid');
+      grid.innerHTML = PREDEFINED_UNITS.map(u => `
+        <button class="officer-unit-card" onclick="loginUnit('${u.callsign}','${u.name}','${u.department}')">
+          <span class="unit-icon">${u.icon}</span>
+          <span class="unit-callsign">${u.callsign}</span>
+          <span class="unit-name">${u.name}</span>
+          <span class="unit-dept">${u.department}</span>
+        </button>
+      `).join('');
+    }
+
+    function switchOfficerTab(tab) {
+      document.getElementById('officer-tab-select').style.display = tab === 'select' ? 'block' : 'none';
+      document.getElementById('officer-tab-custom').style.display  = tab === 'custom'  ? 'block' : 'none';
+      document.getElementById('tab-btn-select').classList.toggle('active', tab === 'select');
+      document.getElementById('tab-btn-custom').classList.toggle('active', tab === 'custom');
+    }
+
+    function loginUnit(callsign, name, department) {
+      if (typeof officerLogin === 'function') {
+        officerLogin(callsign, name, department);
+      }
+    }
+
+    function loginCustomOfficer() {
+      const callsign = document.getElementById('custom-callsign').value.trim();
+      const name     = document.getElementById('custom-name').value.trim();
+      const dept     = document.getElementById('custom-dept').value;
+      const errEl    = document.getElementById('custom-login-err');
+      if (!callsign || !name) {
+        errEl.textContent = 'Callsign and officer name are required.';
+        errEl.style.display = 'block';
+        return;
+      }
+      errEl.style.display = 'none';
+      loginUnit(callsign, name, dept);
+    }
+
+    buildUnitGrid();
+
+    // Check for existing session immediately (before main.js async init finishes)
+    (function checkExistingSession() {
+      try {
+        const raw = localStorage.getItem('NThaCityOfficer');
+        if (raw) {
+          const officer = JSON.parse(raw);
+          if (officer && officer.callsign) {
+            document.getElementById('officer-login-overlay').style.display = 'none';
+          }
+        }
+      } catch (_) {}
+    })();
   </script>
 </body>
 </html>

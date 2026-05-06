@@ -5,5 +5,12 @@
     "message": "Black Bravado, plates PZD-947, last seen near Forum Drive Davis. Armed and dangerous.",
     "issuedBy": "LSPD-1A23",
     "issuedAt": "2026-05-06T01:41:19.804931"
+  },
+  {
+    "id": "ALERT-20260506014351-0002",
+    "type": "BOLO",
+    "message": "Killer on loose",
+    "issuedBy": "Gu-4",
+    "issuedAt": "2026-05-06T01:43:51.567817"
   }
 ]

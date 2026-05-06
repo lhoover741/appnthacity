@@ -26,13 +26,19 @@ BOLOS_FILE = 'bolos_data.json'
 RADIO_LOG_FILE = 'radio_log.json'
 CAD_DATA_FILE = 'cad_data.json'
 ALERTS_FILE = 'alerts_data.json'
+OFFICER_SESSIONS_FILE = 'officer_sessions.json'
 
 DEFAULT_OFFICERS = [
-    {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available'},
-    {'id': '2L-12', 'name': 'Patrol Unit', 'status': 'En Route'},
-    {'id': '3L-22', 'name': 'Traffic Unit', 'status': 'On Scene'},
-    {'id': 'D-04',  'name': 'Dispatch',     'status': 'Active'},
-    {'id': 'K9-02', 'name': 'K9 Unit',      'status': 'Available'},
+    {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
+    {'id': '2L-12',  'name': 'Patrol Unit',     'status': 'En Route',  'department': 'LSPD'},
+    {'id': '3L-22',  'name': 'Traffic Unit',    'status': 'On Scene',  'department': 'Traffic Division'},
+    {'id': 'D-04',   'name': 'Dispatch',        'status': 'Active',    'department': 'Dispatch'},
+    {'id': 'K9-02',  'name': 'K9 Unit',         'status': 'Available', 'department': 'K9 Unit'},
+    {'id': 'GU-01',  'name': 'Gang Unit 1',     'status': 'Available', 'department': 'Gang Enforcement'},
+    {'id': 'GU-02',  'name': 'Gang Unit 2',     'status': 'Available', 'department': 'Gang Enforcement'},
+    {'id': 'BCSO-1', 'name': 'BCSO Deputy 1',   'status': 'Available', 'department': 'BCSO'},
+    {'id': 'BCSO-2', 'name': 'BCSO Deputy 2',   'status': 'Off Duty',  'department': 'BCSO'},
+    {'id': 'SWT-1',  'name': 'SWAT Unit',       'status': 'Off Duty',  'department': 'SWAT'},
 ]
 
 DEFAULT_CAD_DATA = {
@@ -48,6 +54,18 @@ DEFAULT_CAD_DATA = {
     'officers': DEFAULT_OFFICERS,
     'activityLog': [],
 }
+
+
+def load_officer_sessions():
+    if os.path.exists(OFFICER_SESSIONS_FILE):
+        with open(OFFICER_SESSIONS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def save_officer_sessions(sessions):
+    with open(OFFICER_SESSIONS_FILE, 'w') as f:
+        json.dump(sessions, f, indent=2)
 
 
 def load_alerts():
@@ -1390,6 +1408,41 @@ Respond only with the JSON object. No markdown, no extra text."""
     except Exception as e:
         logger.error(f'AI suspect match failed: {e}')
         return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
+
+
+@app.route('/api/officer-sessions', methods=['GET'])
+def get_officer_sessions():
+    return jsonify({'sessions': load_officer_sessions()})
+
+
+@app.route('/api/officer-session', methods=['POST'])
+def post_officer_session():
+    data = request.get_json(silent=True) or {}
+    callsign = data.get('callsign', '').strip()
+    name = data.get('name', '').strip()
+    department = data.get('department', 'LSPD').strip()
+    if not callsign:
+        return jsonify({'success': False, 'error': 'callsign required'}), 400
+    sessions = load_officer_sessions()
+    sessions[callsign] = {
+        'callsign': callsign,
+        'name': name,
+        'department': department,
+        'loggedInAt': datetime.now().isoformat(),
+        'status': 'On Duty',
+    }
+    save_officer_sessions(sessions)
+    logger.info(f"Officer login: {callsign} ({name}) — {department}")
+    return jsonify({'success': True})
+
+
+@app.route('/api/officer-session/<callsign>', methods=['DELETE'])
+def delete_officer_session(callsign):
+    sessions = load_officer_sessions()
+    sessions.pop(callsign, None)
+    save_officer_sessions(sessions)
+    logger.info(f"Officer end shift: {callsign}")
+    return jsonify({'success': True})
 
 
 @app.route('/api/alerts', methods=['GET'])
