@@ -1049,6 +1049,78 @@ function getLocationData(location) {
   return locations[location];
 }
 
+// ── Alert polling & notification ──────────────────────────────────────────
+
+const _alertTypeIcons = { 'PANIC': '🚨', 'BOLO': '🔍', 'ALL UNITS': '📢', 'CODE RED': '🔴' };
+let _lastAlertTimestamp = new Date().toISOString();
+let _alertAutoDismissTimer = null;
+let _alertPollInterval = null;
+
+function _playAlertBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 660, 880].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.18, ctx.currentTime + i * 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.18 + 0.16);
+      osc.start(ctx.currentTime + i * 0.18);
+      osc.stop(ctx.currentTime + i * 0.18 + 0.18);
+    });
+  } catch (_) {}
+}
+
+function showAlertBanner(alert) {
+  const banner = document.getElementById('alert-notification-banner');
+  if (!banner) return;
+
+  const icon = _alertTypeIcons[alert.type] || '🚨';
+  document.getElementById('alert-notif-icon').textContent = icon;
+  document.getElementById('alert-notif-type').textContent = alert.type;
+  document.getElementById('alert-notif-message').textContent = alert.message;
+  document.getElementById('alert-notif-meta').textContent =
+    `Issued by ${alert.issuedBy} · ${new Date(alert.issuedAt).toLocaleTimeString()}`;
+
+  banner.style.display = 'block';
+  document.body.style.paddingTop = banner.offsetHeight + 'px';
+
+  _playAlertBeep();
+
+  if (_alertAutoDismissTimer) clearTimeout(_alertAutoDismissTimer);
+  _alertAutoDismissTimer = setTimeout(dismissAlertBanner, 60000);
+}
+
+function dismissAlertBanner() {
+  const banner = document.getElementById('alert-notification-banner');
+  if (banner) banner.style.display = 'none';
+  document.body.style.paddingTop = '';
+  if (_alertAutoDismissTimer) { clearTimeout(_alertAutoDismissTimer); _alertAutoDismissTimer = null; }
+}
+
+async function pollForAlerts() {
+  try {
+    const res = await fetch(`/api/alerts?since=${encodeURIComponent(_lastAlertTimestamp)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const newAlerts = data.alerts || [];
+    if (newAlerts.length > 0) {
+      const latest = newAlerts[newAlerts.length - 1];
+      _lastAlertTimestamp = latest.issuedAt;
+      showAlertBanner(latest);
+    }
+  } catch (_) {}
+}
+
+function startAlertPolling(intervalMs = 5000) {
+  const hasBanner = document.getElementById('alert-notification-banner');
+  if (!hasBanner) return;
+  _alertPollInterval = setInterval(pollForAlerts, intervalMs);
+}
+
 // ── Live CAD auto-refresh ──────────────────────────────────────────────────
 // Only activates on pages that have the CAD dashboard (police.html).
 
@@ -1162,4 +1234,5 @@ setActiveNav();
   renderOfficersBoard();
 
   startCADAutoRefresh(30000);
+  startAlertPolling(5000);
 })();

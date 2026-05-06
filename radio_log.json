@@ -5,5 +5,12 @@
     "channel": "Primary",
     "message": "10-4 en route to Legion Square, shots fired",
     "timestamp": "2026-05-05T07:58:29.683069"
+  },
+  {
+    "id": "RADIO-20260506013302-0002",
+    "unit": "GU-4",
+    "channel": "Tac-2",
+    "message": "En route",
+    "timestamp": "2026-05-06T01:33:02.256313"
   }
 ]

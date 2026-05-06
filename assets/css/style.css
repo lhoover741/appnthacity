@@ -1346,6 +1346,136 @@ button:focus-visible,
   margin-bottom: 4px;
 }
 
+/* ── Alert notification banner ──────────────────────────────────────────── */
+.alert-notification-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  animation: alertFlashBg 0.9s ease-in-out infinite;
+}
+
+@keyframes alertFlashBg {
+  0%, 100% { background: rgba(210, 15, 15, 0.97); }
+  50%       { background: rgba(139, 0, 0, 0.97); }
+}
+
+.alert-notification-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.alert-notification-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.alert-notif-icon {
+  font-size: 1.9rem;
+  animation: alertIconPulse 0.5s ease-in-out infinite alternate;
+  flex-shrink: 0;
+}
+
+@keyframes alertIconPulse {
+  from { transform: scale(1); }
+  to   { transform: scale(1.25); }
+}
+
+.alert-notif-type {
+  font-weight: 800;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #fff;
+}
+
+.alert-notif-message {
+  font-size: 0.92rem;
+  color: #ffd6d6;
+  margin-top: 2px;
+}
+
+.alert-notif-meta {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 2px;
+}
+
+.alert-notif-dismiss {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.alert-notif-dismiss:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* ── Alert broadcast modal ──────────────────────────────────────────────── */
+.alert-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  backdrop-filter: blur(4px);
+}
+
+.alert-modal-box {
+  background: #1a1a1a;
+  border: 1px solid rgba(255, 45, 45, 0.35);
+  border-radius: var(--radius);
+  padding: 28px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+}
+
+.alert-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.alert-modal-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #fff;
+}
+
+.alert-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 0.2s;
+}
+
+.alert-modal-close:hover {
+  color: #fff;
+}
+
 /* Empty states */
 .empty-state {
   text-align: center;
