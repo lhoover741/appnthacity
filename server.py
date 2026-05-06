@@ -979,14 +979,17 @@ Respond only with the JSON object. No markdown, no extra text."""
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
-            'max_tokens': 500,
-            'temperature': 0.7,
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user',   'content': user_msg}
+            ],
+            'max_tokens': 600,
+            'temperature': 0.6,
             'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openrouter.io/api/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -996,7 +999,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             },
             method='POST'
         )
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             ai_json = json.loads(result['choices'][0]['message']['content'])
             suspect_fled = ai_json.get('suspectFled', False)

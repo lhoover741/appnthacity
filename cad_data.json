@@ -3,73 +3,92 @@
   "vehicles": [],
   "licenses": [],
   "warrants": [],
-  "arrests": [],
+  "arrests": [
+    {
+      "suspectName": "Team nihy",
+      "charges": "Assault deadly weapon",
+      "arrestingOfficer": "Agent nfl",
+      "arrestLocation": "Grove st gas station",
+      "evidenceAttached": "Yes",
+      "penalty": "None",
+      "reportNotes": "",
+      "id": "arr-1778032314206-61msvpynz",
+      "createdAt": "2026-05-06T01:51:54.206Z"
+    }
+  ],
   "incidents": [],
   "evidence": [],
   "trafficStops": [],
   "calls911": [],
   "officers": [
     {
+      "department": "LSPD",
       "id": "1L-01",
       "name": "Chief Unit",
-      "status": "Available",
-      "department": "LSPD"
+      "status": "Available"
     },
     {
+      "department": "LSPD",
       "id": "2L-12",
       "name": "Patrol Unit",
-      "status": "En Route",
-      "department": "LSPD"
+      "status": "En Route"
     },
     {
+      "department": "Traffic Division",
       "id": "3L-22",
       "name": "Traffic Unit",
-      "status": "On Scene",
-      "department": "Traffic Division"
+      "status": "On Scene"
     },
     {
+      "department": "Dispatch",
       "id": "D-04",
       "name": "Dispatch",
-      "status": "Active",
-      "department": "Dispatch"
+      "status": "Active"
     },
     {
+      "department": "K9 Unit",
       "id": "K9-02",
       "name": "K9 Unit",
-      "status": "Available",
-      "department": "K9 Unit"
+      "status": "Available"
     },
     {
-      "id": "GU-01",
-      "name": "Gang Unit 1",
-      "status": "On Scene",
       "department": "Gang Enforcement",
-      "lastUpdate": "2026-05-06T01:50:11.395404"
+      "id": "GU-01",
+      "lastUpdate": "2026-05-06T01:50:11.395404",
+      "name": "Gang Unit 1",
+      "status": "On Scene"
     },
     {
+      "department": "Gang Enforcement",
       "id": "GU-02",
       "name": "Gang Unit 2",
-      "status": "Available",
-      "department": "Gang Enforcement"
+      "status": "Available"
     },
     {
+      "department": "BCSO",
       "id": "BCSO-1",
       "name": "BCSO Deputy 1",
-      "status": "Available",
-      "department": "BCSO"
+      "status": "Available"
     },
     {
+      "department": "BCSO",
       "id": "BCSO-2",
       "name": "BCSO Deputy 2",
-      "status": "Off Duty",
-      "department": "BCSO"
+      "status": "Off Duty"
     },
     {
+      "department": "SWAT",
       "id": "SWT-1",
       "name": "SWAT Unit",
-      "status": "Off Duty",
-      "department": "SWAT"
+      "status": "Off Duty"
     }
   ],
-  "activityLog": []
+  "activityLog": [
+    {
+      "id": "act-1778032314207-eqrux1n8l",
+      "type": "Arrest Report",
+      "message": "Arrest filed for Team nihy - Assault deadly weapon",
+      "timestamp": "2026-05-06T01:51:54.207Z"
+    }
+  ]
 }
