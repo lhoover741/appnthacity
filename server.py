@@ -24,6 +24,44 @@ APPLICATIONS_FILE = 'applications_data.json'
 SERVER_STATUS_FILE = 'server_status.json'
 BOLOS_FILE = 'bolos_data.json'
 RADIO_LOG_FILE = 'radio_log.json'
+CAD_DATA_FILE = 'cad_data.json'
+
+DEFAULT_OFFICERS = [
+    {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available'},
+    {'id': '2L-12', 'name': 'Patrol Unit', 'status': 'En Route'},
+    {'id': '3L-22', 'name': 'Traffic Unit', 'status': 'On Scene'},
+    {'id': 'D-04',  'name': 'Dispatch',     'status': 'Active'},
+    {'id': 'K9-02', 'name': 'K9 Unit',      'status': 'Available'},
+]
+
+DEFAULT_CAD_DATA = {
+    'civilians': [],
+    'vehicles': [],
+    'licenses': [],
+    'warrants': [],
+    'arrests': [],
+    'incidents': [],
+    'evidence': [],
+    'trafficStops': [],
+    'calls911': [],
+    'officers': DEFAULT_OFFICERS,
+    'activityLog': [],
+}
+
+
+def load_cad_data():
+    if os.path.exists(CAD_DATA_FILE):
+        with open(CAD_DATA_FILE, 'r') as f:
+            stored = json.load(f)
+        data = dict(DEFAULT_CAD_DATA)
+        data.update(stored)
+        return data
+    return dict(DEFAULT_CAD_DATA)
+
+
+def save_cad_data(data):
+    with open(CAD_DATA_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
 
 DEFAULT_STATUS = {
     'cityStatus': 'ACTIVE',
@@ -1339,6 +1377,25 @@ Respond only with the JSON object. No markdown, no extra text."""
     except Exception as e:
         logger.error(f'AI suspect match failed: {e}')
         return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
+
+
+@app.route('/api/cad/data', methods=['GET'])
+def get_cad_data():
+    return jsonify(load_cad_data())
+
+
+@app.route('/api/cad/data', methods=['POST'])
+def post_cad_data():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Invalid payload'}), 400
+    allowed_keys = {'civilians', 'vehicles', 'licenses', 'warrants', 'arrests',
+                    'incidents', 'evidence', 'trafficStops', 'calls911', 'officers', 'activityLog'}
+    cleaned = {k: v for k, v in data.items() if k in allowed_keys}
+    existing = load_cad_data()
+    existing.update(cleaned)
+    save_cad_data(existing)
+    return jsonify({'success': True})
 
 
 @app.route('/', defaults={'path': ''})
