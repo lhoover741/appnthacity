@@ -1346,6 +1346,229 @@ button:focus-visible,
   margin-bottom: 4px;
 }
 
+/* ── Officer login overlay ──────────────────────────────────────────────── */
+.officer-login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(8, 8, 10, 0.97);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+  backdrop-filter: blur(6px);
+}
+
+.officer-login-box {
+  background: #111114;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 36px 32px;
+  width: 100%;
+  max-width: 680px;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.7);
+}
+
+.officer-login-top {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.officer-login-badge {
+  font-size: 3rem;
+  margin-bottom: 10px;
+}
+
+.officer-login-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 6px;
+}
+
+.officer-login-sub {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.officer-login-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 20px;
+}
+
+.officer-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.2s, color 0.2s;
+}
+
+.officer-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.officer-tab-panel {
+  min-height: 80px;
+}
+
+.officer-unit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.officer-unit-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 16px 10px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+  text-align: center;
+}
+
+.officer-unit-card:hover {
+  background: rgba(255, 45, 45, 0.1);
+  border-color: rgba(255, 45, 45, 0.4);
+  transform: translateY(-2px);
+}
+
+.unit-icon {
+  font-size: 1.6rem;
+  margin-bottom: 2px;
+}
+
+.unit-callsign {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: #fff;
+  letter-spacing: 0.05em;
+}
+
+.unit-name {
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.unit-dept {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.officer-custom-form {
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+/* ── Officer header chip ─────────────────────────────────────────────────── */
+#officer-header-chip {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 45, 45, 0.1);
+  border: 1px solid rgba(255, 45, 45, 0.3);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: default;
+}
+
+/* ── My Dashboard section ────────────────────────────────────────────────── */
+.my-dashboard {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.my-dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.my-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.my-panel {
+  background: #111114;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.my-panel-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.my-item {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.my-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.my-item-header {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.my-item-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.my-item-status {
+  margin-top: 4px;
+}
+
+.my-empty {
+  font-size: 0.83rem;
+  color: var(--muted);
+  margin: 0;
+  font-style: italic;
+}
+
 /* ── Alert notification banner ──────────────────────────────────────────── */
 .alert-notification-banner {
   position: fixed;

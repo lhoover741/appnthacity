@@ -1049,6 +1049,152 @@ function getLocationData(location) {
   return locations[location];
 }
 
+// ── Officer session management ─────────────────────────────────────────────
+
+const OFFICER_SESSION_KEY = 'NThaCityOfficer';
+
+function getOfficerSession() {
+  try {
+    const raw = localStorage.getItem(OFFICER_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+
+function setOfficerSession(officer) {
+  localStorage.setItem(OFFICER_SESSION_KEY, JSON.stringify(officer));
+}
+
+function clearOfficerSession() {
+  localStorage.removeItem(OFFICER_SESSION_KEY);
+}
+
+function officerLogin(callsign, name, department) {
+  const officer = { callsign, name, department, loggedInAt: new Date().toISOString() };
+  setOfficerSession(officer);
+  fetch('/api/officer-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(officer)
+  }).catch(() => {});
+  const overlay = document.getElementById('officer-login-overlay');
+  if (overlay) overlay.style.display = 'none';
+  _applyOfficerSession(officer);
+}
+
+function officerLogout() {
+  const officer = getOfficerSession();
+  if (officer) {
+    fetch(`/api/officer-session/${encodeURIComponent(officer.callsign)}`, { method: 'DELETE' }).catch(() => {});
+  }
+  clearOfficerSession();
+  window.location.reload();
+}
+
+function _applyOfficerSession(officer) {
+  // Show the officer chip in the CAD header
+  const chip = document.getElementById('officer-header-chip');
+  if (chip) {
+    chip.textContent = `${officer.callsign} — ${officer.name}`;
+    chip.style.display = 'inline-flex';
+  }
+  // Show My Dashboard
+  const dashSection = document.getElementById('my-dashboard-section');
+  if (dashSection) {
+    dashSection.style.display = 'block';
+    const label = document.getElementById('my-officer-label');
+    if (label) label.textContent = `${officer.callsign} · ${officer.name} · ${officer.department}`;
+    renderMyDashboard(officer);
+  }
+  // Pre-fill all officer name fields
+  prefillOfficerForms(officer);
+}
+
+function prefillOfficerForms(officer) {
+  const fullId = `${officer.name} (${officer.callsign})`;
+  // ID-addressed fields
+  const idFills = [
+    ['dispatchUnit',  officer.callsign],
+    ['radio-unit',    officer.callsign],
+    ['bolo-issuer',   fullId],
+    ['uof-officer',   fullId],
+  ];
+  idFills.forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (el && !el.value) el.value = val;
+  });
+  // Name-addressed fields
+  const nameFills = [
+    ['officerName',      fullId],
+    ['arrestingOfficer', fullId],
+    ['evidenceOfficer',  fullId],
+    ['warrantIssuer',    fullId],
+  ];
+  nameFills.forEach(([name, val]) => {
+    const el = document.querySelector(`[name="${name}"]`);
+    if (el && !el.value) el.value = val;
+  });
+}
+
+function renderMyDashboard(officer) {
+  const data = getData();
+  const cs = officer.callsign.toLowerCase();
+  const nm = officer.name.toLowerCase();
+
+  function matchesOfficer(str) {
+    const s = (str || '').toLowerCase();
+    return s.includes(cs) || s.includes(nm);
+  }
+
+  // My Active Calls
+  const myCalls = (data.calls911 || []).filter(c => matchesOfficer(c.assignedUnit));
+  const callsEl = document.getElementById('my-calls-list');
+  if (callsEl) {
+    callsEl.innerHTML = myCalls.length === 0
+      ? '<p class="my-empty">No active calls assigned to you.</p>'
+      : myCalls.map(c => `
+        <div class="my-item">
+          <div class="my-item-header">
+            <span class="badge badge-${c.priority === 'Critical' ? 'danger' : 'primary'}">${c.priority || 'N/A'}</span>
+            ${escapeHtml(c.incidentType || 'Unknown')}
+          </div>
+          <div class="my-item-meta">📍 ${escapeHtml(c.location || '—')} &nbsp;·&nbsp; Caller: ${escapeHtml(c.callerName || '—')}</div>
+          <div class="my-item-status"><span class="badge">${escapeHtml(c.status || 'New')}</span></div>
+        </div>`).join('');
+  }
+
+  // My Warrants
+  const myWarrants = (data.warrants || []).filter(w => matchesOfficer(w.warrantIssuer));
+  const warrantsEl = document.getElementById('my-warrants-list');
+  if (warrantsEl) {
+    warrantsEl.innerHTML = myWarrants.length === 0
+      ? '<p class="my-empty">No warrants issued by you.</p>'
+      : myWarrants.slice(0, 8).map(w => `
+        <div class="my-item">
+          <div class="my-item-header">${escapeHtml(w.warrantName || 'Unknown')}</div>
+          <div class="my-item-meta">⚖️ ${escapeHtml(w.warrantCharges || '—')}</div>
+          <div class="my-item-status"><span class="badge badge-${w.warrantStatus === 'Active' ? 'danger' : 'secondary'}">${escapeHtml(w.warrantStatus || 'Active')}</span></div>
+        </div>`).join('');
+  }
+
+  // My Arrests
+  const myArrests = (data.arrests || []).filter(a => matchesOfficer(a.arrestingOfficer));
+  const arrestsEl = document.getElementById('my-arrests-list');
+  if (arrestsEl) {
+    arrestsEl.innerHTML = myArrests.length === 0
+      ? '<p class="my-empty">No arrest reports filed by you.</p>'
+      : myArrests.slice(0, 8).map(a => `
+        <div class="my-item">
+          <div class="my-item-header">${escapeHtml(a.suspectName || 'Unknown')}</div>
+          <div class="my-item-meta">🔒 ${escapeHtml(a.charges || '—')}</div>
+          <div class="my-item-status"><span class="badge badge-success">Filed</span></div>
+        </div>`).join('');
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // ── Alert polling & notification ──────────────────────────────────────────
 
 const _alertTypeIcons = { 'PANIC': '🚨', 'BOLO': '🔍', 'ALL UNITS': '📢', 'CODE RED': '🔴' };
@@ -1235,4 +1381,12 @@ setActiveNav();
 
   startCADAutoRefresh(30000);
   startAlertPolling(5000);
+
+  // Restore officer session after data is loaded
+  const _savedOfficer = getOfficerSession();
+  if (_savedOfficer) {
+    const overlay = document.getElementById('officer-login-overlay');
+    if (overlay) overlay.style.display = 'none';
+    _applyOfficerSession(_savedOfficer);
+  }
 })();
