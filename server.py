@@ -20,6 +20,7 @@ APPLICATIONS_FILE = 'applications_data.json'
 SERVER_STATUS_FILE = 'server_status.json'
 BOLOS_FILE = 'bolos_data.json'
 RADIO_LOG_FILE = 'radio_log.json'
+CAD_DATA_FILE = 'cad_data.json'
 
 DEFAULT_STATUS = {
     'cityStatus': 'ACTIVE',
@@ -28,6 +29,44 @@ DEFAULT_STATUS = {
     'customMessage': '24/7 dispatch channel live',
     'lastUpdated': None
 }
+
+DEFAULT_CAD_DATA = {
+    'civilians': [],
+    'vehicles': [],
+    'licenses': [],
+    'warrants': [],
+    'arrests': [],
+    'incidents': [],
+    'evidence': [],
+    'trafficStops': [],
+    'calls911': [],
+    'officers': [
+        {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available', 'lastUpdate': datetime.now().isoformat()},
+        {'id': '2L-12', 'name': 'Patrol Unit', 'status': 'En Route', 'lastUpdate': datetime.now().isoformat()},
+        {'id': '3L-22', 'name': 'Traffic Unit', 'status': 'On Scene', 'lastUpdate': datetime.now().isoformat()},
+        {'id': 'D-04', 'name': 'Dispatch', 'status': 'Active', 'lastUpdate': datetime.now().isoformat()},
+        {'id': 'K9-02', 'name': 'K9 Unit', 'status': 'Available', 'lastUpdate': datetime.now().isoformat()}
+    ],
+    'activityLog': []
+}
+
+
+def load_cad_data():
+    if os.path.exists(CAD_DATA_FILE):
+        with open(CAD_DATA_FILE, 'r') as f:
+            saved = json.load(f)
+        cad = {**DEFAULT_CAD_DATA, **saved}
+        for key, default_value in DEFAULT_CAD_DATA.items():
+            cad.setdefault(key, default_value)
+        return cad
+    return dict(DEFAULT_CAD_DATA)
+
+
+def save_cad_data(cad):
+    cad_data = {**DEFAULT_CAD_DATA}
+    cad_data.update({k: cad.get(k, v) for k, v in DEFAULT_CAD_DATA.items()})
+    with open(CAD_DATA_FILE, 'w') as f:
+        json.dump(cad_data, f, indent=2)
 
 
 def load_bolos():
@@ -661,6 +700,22 @@ def update_server_status():
     return jsonify({'success': True, 'status': status})
 
 
+@app.route('/api/cad', methods=['GET'])
+def get_cad_data():
+    return jsonify(load_cad_data())
+
+
+@app.route('/api/cad', methods=['POST'])
+def save_cad_data_route():
+    data = request.get_json(silent=True) or {}
+    cad = load_cad_data()
+    for key in DEFAULT_CAD_DATA:
+        if key in data:
+            cad[key] = data[key]
+    save_cad_data(cad)
+    return jsonify({'success': True})
+
+
 @app.route('/api/bolos', methods=['GET'])
 def get_bolos():
     return jsonify(load_bolos())
@@ -868,6 +923,174 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'BOLO generation failed. Try again.'}), 500
 
 
+@app.route('/api/ai/generate-call', methods=['POST'])
+def ai_generate_call():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    call_type = data.get('callType', 'Suspicious activity').strip()
+
+    system_msg = """You are an AI-powered CAD call generator for NThaCityRP, a GTA V roleplay server set in Los Santos.
+Use only GTA V locations and names. Keep output realistic for LSPD dispatch.
+Respond with a single JSON object only."""
+
+    user_msg = f"""Generate a 911 call scenario for NThaCityRP.
+Respond with ONLY a valid JSON object with these exact keys:
+- "callType": one of ["Robbery", "Assault", "Suspicious activity", "Traffic accident", "Shots fired", "Domestic disturbance", "Drug activity", "Pursuit", "Hostage situation", "Noise complaint"]
+- "priority": one of ["Critical", "High", "Medium", "Low"]
+- "location": a GTA V street and area (e.g. "Grove Street, Davis")
+- "caller": a short dispatcher-friendly caller name or description
+- "description": one paragraph describing the incident and what the caller reported
+- "dispatchNotes": one or two sentences for responding officers
+- "transcript": an array of speaker lines with objects containing "speaker" and "line"
+
+Requested call type: {call_type}
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 300,
+            'temperature': 0.65,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'call': ai_json})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter generate-call error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI call generation failed: {e}')
+        return jsonify({'success': False, 'error': 'Call generation failed. Try again.'}), 500
+
+
+@app.route('/api/ai/incident-summary', methods=['POST'])
+def ai_incident_summary():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    notes = data.get('notes', '').strip()
+    if not notes:
+        return jsonify({'success': False, 'error': 'Notes are required.'}), 400
+
+    system_msg = """You are an AI-assisted incident summarizer for NThaCityRP. Produce a short dispatch-ready summary that can be posted to Discord."""
+    user_msg = f"""Summarize the following incident notes into one concise paragraph suitable for a dispatch summary. Use GTA V location language if referenced.
+
+Notes:
+{notes}
+
+Respond only with a JSON object containing exactly one key:
+- "summary": the summary text
+
+No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 200,
+            'temperature': 0.5,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Incident Summary'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'summary': ai_json.get('summary', '')})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter incident-summary error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI incident summary failed: {e}')
+        return jsonify({'success': False, 'error': 'Summary generation failed. Try again.'}), 500
+
+
+@app.route('/api/ai/suspect-match', methods=['POST'])
+def ai_suspect_match():
+    data = request.get_json(silent=True) or {}
+    description = data.get('description', '').strip().lower()
+    civilians = data.get('civilians', [])
+
+    if not description:
+        return jsonify({'success': False, 'error': 'Description is required.'}), 400
+    if not civilians:
+        return jsonify({'success': True, 'matches': [], 'note': 'No civilian registry records available for matching.'})
+
+    matches = []
+    for civ in civilians:
+        score = 0
+        reason_parts = []
+        text = ' '.join(str(civ.get(k, '')).lower() for k in ['firstName', 'lastName', 'discord', 'address', 'occupation', 'vehicleMake', 'vehicleModel', 'plate', 'driverLicense'])
+        if civ.get('firstName') and civ.get('firstName').lower() in description:
+            score += 2
+            reason_parts.append('first name match')
+        if civ.get('lastName') and civ.get('lastName').lower() in description:
+            score += 2
+            reason_parts.append('last name match')
+        for keyword in ['black', 'blue', 'white', 'red', 'blonde', 'tall', 'short', 'tattoo', 'scar', 'beard', 'hoodie', 'jacket', 'truck', 'biker']:
+            if keyword in text and keyword in description:
+                score += 1
+                reason_parts.append(f'{keyword} referenced')
+        if civ.get('plate') and civ.get('plate').lower() in description:
+            score += 3
+            reason_parts.append('plate match')
+
+        if score > 0:
+            confidence = 'Low'
+            if score >= 5:
+                confidence = 'High'
+            elif score >= 3:
+                confidence = 'Medium'
+            matches.append({
+                'name': f"{civ.get('firstName', '')} {civ.get('lastName', '')}".strip() or civ.get('discord', 'Unknown'),
+                'confidence': confidence,
+                'reason': ', '.join(reason_parts) or 'Description similarity detected.'
+            })
+
+    matches.sort(key=lambda m: {'High': 3, 'Medium': 2, 'Low': 1}.get(m['confidence'], 0), reverse=True)
+    if not matches:
+        return jsonify({'success': True, 'matches': [], 'note': 'No strong suspect matches found in current records.'})
+    return jsonify({'success': True, 'matches': matches})
+
+
 @app.route('/api/ai/police-report', methods=['POST'])
 def ai_police_report():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
@@ -903,17 +1126,22 @@ Officer Notes: {notes if notes else 'None provided'}
 
 Respond only with the JSON object. No markdown, no extra text."""
 
+    prompt = [
+        {'role': 'system', 'content': system_msg},
+        {'role': 'user', 'content': user_msg}
+    ]
+
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
+            'messages': prompt,
             'max_tokens': 500,
             'temperature': 0.7,
             'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openrouter.io/api/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -1011,17 +1239,22 @@ Description: {description if description else 'No description provided'}
 
 Respond only with the JSON object. No markdown, no extra text."""
 
+    prompt = [
+        {'role': 'system', 'content': system_msg},
+        {'role': 'user', 'content': user_msg}
+    ]
+
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
+            'messages': prompt,
             'max_tokens': 200,
             'temperature': 0.4,
             'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openrouter.io/api/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -1082,16 +1315,21 @@ Respond only with the JSON object. No markdown, no extra text."""
     expiration_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
 
     try:
+        prompt = [
+            {'role': 'system', 'content': system_msg},
+            {'role': 'user', 'content': user_msg}
+        ]
+
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
+            'messages': prompt,
             'max_tokens': 300,
             'temperature': 0.7,
             'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            'https://api.openrouter.io/api/v1/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             data=payload,
             headers={
                 'Content-Type': 'application/json',
@@ -1117,213 +1355,6 @@ Respond only with the JSON object. No markdown, no extra text."""
     except Exception as e:
         logger.error(f'AI warrant generation failed: {e}')
         return jsonify({'success': False, 'error': 'Warrant generation failed. Try again.'}), 500
-
-
-@app.route('/api/ai/generate-call', methods=['POST'])
-def ai_generate_call():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
-
-    data = request.get_json(silent=True) or {}
-    call_type = data.get('callType', '').strip()
-
-    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system for NThaCityRP, a GTA V roleplay server set in Los Santos.
-CALL GENERATION MODE: Generate fully realistic GTA V emergency calls.
-LOCATION RULES (CRITICAL): ALL locations must be real GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Rockford Hills, Sandy Shores, Paleto Bay, Route 68, Senora Freeway, Great Ocean Highway, Legion Square, Pillbox Hill Medical Center, Maze Bank Arena, LSIA, La Mesa, Cypress Flats, etc.
-DISPATCH LOGIC: Assign LSPD units (LSPD-1A23, LSPD-2B04) for city calls, BCSO (BCSO-3C11) for county/highway, K9-01/K9-02, AIR-1 for helicopter. Escalate priority based on severity.
-Generate realistic caller names (first + last). The transcript must feel like a real 911 call — dispatcher asks clarifying questions, caller may be panicked or calm depending on incident. No real-world references."""
-
-    type_hint = f" The call type should be: {call_type}." if call_type else " Pick a random realistic incident type."
-
-    user_msg = f"""Generate a complete GTA V 911 emergency call for an LSPD dispatch session.{type_hint}
-
-Respond with ONLY a valid JSON object with these exact keys:
-- "callType": the incident type (e.g. "Shots Fired", "Traffic Accident", "Armed Robbery", "Domestic Disturbance", "Pursuit", "Suspicious Person", "Drug Activity", "Assault in Progress")
-- "caller": realistic full name of the caller
-- "location": specific GTA V street, area, or landmark (e.g. "Forum Drive & Covenant Ave, Davis" or "Route 68 near Harmony")
-- "description": 2-3 sentences of what the caller describes to dispatch
-- "dispatchNotes": 1-2 sentences of internal dispatcher notes (unit recommendation, hazards, backup needed)
-- "priority": one of "Critical", "High", "Medium", "Low"
-- "assignedUnit": LSPD/BCSO unit designation (e.g. "LSPD-1A23", "BCSO-2B11", "AIR-1", "K9-02")
-- "transcript": an array of 6-10 objects, each with "speaker" ("Dispatch" or "Caller") and "line" (the spoken dialogue). Make it realistic — dispatcher confirms location, caller may be scared or urgent, dispatcher gives instructions and confirms unit en route.
-
-Respond only with the JSON object. No markdown, no extra text."""
-
-    try:
-        payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
-            'messages': [
-                {'role': 'system', 'content': system_msg},
-                {'role': 'user', 'content': user_msg}
-            ],
-            'max_tokens': 800,
-            'temperature': 0.9,
-            'response_format': {'type': 'json_object'}
-        }).encode('utf-8')
-
-        req = urllib.request.Request(
-            'https://openrouter.ai/api/v1/chat/completions',
-            data=payload,
-            headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
-                'X-Title': 'NThaCityRP Police CAD'
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            ai_json = json.loads(result['choices'][0]['message']['content'])
-            return jsonify({'success': True, 'call': ai_json})
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        logger.error(f'OpenRouter generate-call error: {e.code} {body}')
-        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
-    except Exception as e:
-        logger.error(f'AI call generation failed: {e}')
-        return jsonify({'success': False, 'error': 'Call generation failed. Try again.'}), 500
-
-
-@app.route('/api/ai/incident-summary', methods=['POST'])
-def ai_incident_summary():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
-
-    data = request.get_json(silent=True) or {}
-    notes = data.get('notes', '').strip()
-
-    if not notes:
-        return jsonify({'success': False, 'error': 'No CAD notes provided.'}), 400
-
-    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system and report-writing assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
-LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, etc. Convert any vague or real-world locations to the closest GTA V equivalent.
-OUTPUT: Generate Discord-formatted (#criminal-files channel) summaries. Use INCIDENT REPORT MODE structure. Professional law enforcement tone only."""
-
-    user_msg = f"""An officer has provided raw CAD notes. Generate a clean Discord-formatted incident summary for the #criminal-files channel.
-
-Rules:
-- Use **bold** for all section labels
-- Use a `code block` only for case/report numbers if present
-- Max 200 words
-- Sections (include if data available): **Incident Type**, **Location** (GTA V formatted), **Date/Time**, **Officers Involved**, **Unit(s)**, **Suspect(s)**, **Charges**, **Outcome**, **Notes**
-- End with: ―――――――――――――――――――――
-- Raw Discord markdown only — no wrapper blocks
-
-Raw CAD Notes:
-{notes}
-
-Respond with ONLY a valid JSON object with one key:
-- "summary": the full Discord-formatted incident summary string"""
-
-    try:
-        payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
-            'max_tokens': 500,
-            'temperature': 0.4,
-            'response_format': {'type': 'json_object'}
-        }).encode('utf-8')
-
-        req = urllib.request.Request(
-            'https://openrouter.ai/api/v1/chat/completions',
-            data=payload,
-            headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
-                'X-Title': 'NThaCityRP Police CAD'
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            ai_json = json.loads(result['choices'][0]['message']['content'])
-            return jsonify({'success': True, 'summary': ai_json.get('summary', '')})
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        logger.error(f'OpenRouter incident summary error: {e.code} {body}')
-        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
-    except Exception as e:
-        logger.error(f'AI incident summary failed: {e}')
-        return jsonify({'success': False, 'error': 'Summary failed. Try again.'}), 500
-
-
-@app.route('/api/ai/suspect-match', methods=['POST'])
-def ai_suspect_match():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
-
-    data = request.get_json(silent=True) or {}
-    description = data.get('description', '').strip()
-    civilians = data.get('civilians', [])
-
-    if not description:
-        return jsonify({'success': False, 'error': 'No description provided.'}), 400
-
-    if not civilians:
-        return jsonify({'success': True, 'matches': [], 'note': 'No civilians registered in the system yet.'})
-
-    civ_list = '\n'.join([
-        f"- Name: {c.get('firstName','?')} {c.get('lastName','?')} | DOB: {c.get('dob','?')} | Gender: {c.get('gender','?')} | Occupation: {c.get('occupation','?')} | Notes: {c.get('notes','')}"
-        for c in civilians[:50]
-    ])
-
-    system_msg = """You are an AI-powered suspect identification assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
-You help LSPD officers cross-reference physical suspect descriptions against the civilian registry. Be precise and analytical. Only match civilians where there is genuine physical basis. Maintain professional law enforcement tone."""
-
-    user_msg = f"""An LSPD officer has provided a physical description of a suspect spotted in Los Santos. Cross-reference the registered civilian database and return the top matches.
-
-Respond with ONLY a valid JSON object with one key:
-- "matches": array of up to 3 objects, each with:
-  - "name": full civilian name
-  - "confidence": "High", "Medium", or "Low"
-  - "reason": one short sentence (max 15 words) citing specific matching physical traits
-
-If no civilians reasonably match, return an empty matches array.
-
-Suspect Description: {description}
-
-Registered Civilians:
-{civ_list}
-
-Respond only with the JSON object. No markdown, no extra text."""
-
-    try:
-        payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
-            'messages': [{'role': 'user', 'content': prompt}],
-            'max_tokens': 300,
-            'temperature': 0.3,
-            'response_format': {'type': 'json_object'}
-        }).encode('utf-8')
-
-        req = urllib.request.Request(
-            'https://api.openrouter.io/api/v1/chat/completions',
-            data=payload,
-            headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
-                'X-Title': 'NThaCityRP Police CAD'
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            ai_json = json.loads(result['choices'][0]['message']['content'])
-            return jsonify({'success': True, 'matches': ai_json.get('matches', [])})
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        logger.error(f'OpenRouter suspect match error: {e.code} {body}')
-        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
-    except Exception as e:
-        logger.error(f'AI suspect match failed: {e}')
-        return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
-
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')

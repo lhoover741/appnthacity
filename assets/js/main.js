@@ -37,14 +37,29 @@ const NThaCityData = {
 };
 
 // Data persistence functions
+const CAD_API_URL = '/api/cad';
+
 function saveData() {
-  localStorage.setItem('NThaCityData', JSON.stringify(NThaCityData));
+  fetch(CAD_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(NThaCityData)
+  }).catch((error) => {
+    console.warn('CAD save failed:', error);
+  });
 }
 
-function loadData() {
-  const data = localStorage.getItem('NThaCityData');
-  if (data) {
-    Object.assign(NThaCityData, JSON.parse(data));
+async function loadData() {
+  try {
+    const res = await fetch(CAD_API_URL);
+    if (res.ok) {
+      const data = await res.json();
+      Object.assign(NThaCityData, data);
+      return;
+    }
+    console.warn('CAD load failed:', res.status);
+  } catch (error) {
+    console.warn('CAD load failed:', error);
   }
 }
 
@@ -1034,28 +1049,32 @@ function getLocationData(location) {
 }
 
 // Initialize
-loadData();
-handleCivilianForm();
-handle911Form();
-handleTrafficForm();
-handleArrestForm();
-handleEvidenceForm();
-handleWarrantForm();
-handleCivilianLookupForm();
-handlePlateLookupForm();
-handleLicenseForm();
-handleVehicleForm();
-handleDMVPlateForm();
+async function initApp() {
+  await loadData();
+  handleCivilianForm();
+  handle911Form();
+  handleTrafficForm();
+  handleArrestForm();
+  handleEvidenceForm();
+  handleWarrantForm();
+  handleCivilianLookupForm();
+  handlePlateLookupForm();
+  handleLicenseForm();
+  handleVehicleForm();
+  handleDMVPlateForm();
 
-// Initialize new components
-updateDashboard();
-renderCallQueue();
-renderActivityFeed();
-renderWarrantsTable();
-renderArrestsTable();
-renderTrafficTable();
-renderEvidenceTable();
-renderOfficersBoard();
+  // Initialize new components
+  updateDashboard();
+  renderCallQueue();
+  renderActivityFeed();
+  renderWarrantsTable();
+  renderArrestsTable();
+  renderTrafficTable();
+  renderEvidenceTable();
+  renderOfficersBoard();
+
+  setActiveNav();
+}
 
 const setActiveNav = () => {
   const links = document.querySelectorAll('.global-nav a');
@@ -1067,4 +1086,4 @@ const setActiveNav = () => {
   });
 };
 
-setActiveNav();
+initApp();
