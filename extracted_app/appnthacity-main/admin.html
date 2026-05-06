@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Panel | NThaCityRP</title>
+  <style>
+    :root {
+      --bg: #0b0b0b;
+      --surface: #111111;
+      --surface-strong: #1a1a1a;
+      --text: #ececec;
+      --muted: #b3b3b3;
+      --accent: #ff2d2d;
+      --accent-dark: #8b0000;
+      --border: rgba(255,45,45,0.16);
+      --radius: 14px;
+      --green: #4caf82;
+      --yellow: #f5a623;
+      --blue: #4a9eff;
+      --gray: #555;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', Arial, sans-serif; min-height: 100vh; }
+
+    /* LOGIN */
+    #login-screen {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 24px;
+    }
+    .login-card {
+      background: var(--surface-strong); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 48px 40px; width: 100%; max-width: 420px;
+      text-align: center;
+    }
+    .login-card .brand { color: var(--accent); font-size: 1.4rem; font-weight: 800; letter-spacing: 1px; margin-bottom: 6px; }
+    .login-card h2 { font-size: 1.1rem; color: var(--muted); font-weight: 400; margin-bottom: 32px; }
+    .login-card input {
+      width: 100%; padding: 14px 16px; background: #0b0b0b; border: 1px solid #333;
+      border-radius: 8px; color: var(--text); font-size: 1rem; margin-bottom: 16px; outline: none;
+    }
+    .login-card input:focus { border-color: var(--accent); }
+    .login-card .login-btn {
+      width: 100%; padding: 14px; background: var(--accent); color: #fff; border: none;
+      border-radius: 8px; font-size: 1rem; font-weight: 700; cursor: pointer; transition: background 0.2s;
+    }
+    .login-card .login-btn:hover { background: var(--accent-dark); }
+    .login-error { color: #ff6b6b; font-size: 0.9rem; margin-top: 12px; min-height: 20px; }
+
+    /* ADMIN PANEL */
+    #admin-panel { display: none; }
+    .admin-header {
+      background: var(--surface); border-bottom: 1px solid #222;
+      padding: 0 32px; display: flex; align-items: center; justify-content: space-between;
+      height: 64px; position: sticky; top: 0; z-index: 100;
+    }
+    .admin-header .brand { color: var(--accent); font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; }
+    .admin-header .header-right { display: flex; align-items: center; gap: 16px; }
+    .admin-header .header-right span { color: var(--muted); font-size: 0.9rem; }
+    .logout-btn {
+      background: transparent; border: 1px solid #333; color: var(--muted);
+      padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s;
+    }
+    .logout-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .admin-main { padding: 32px; max-width: 1200px; margin: 0 auto; }
+
+    /* STATS */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .stat-card {
+      background: var(--surface-strong); border: 1px solid #222;
+      border-radius: var(--radius); padding: 20px 24px;
+    }
+    .stat-card .stat-label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .stat-card .stat-value { font-size: 2rem; font-weight: 800; }
+    .stat-card.total .stat-value { color: var(--text); }
+    .stat-card.open .stat-value { color: var(--accent); }
+    .stat-card.review .stat-value { color: var(--yellow); }
+    .stat-card.resolved .stat-value { color: var(--green); }
+    .stat-card.dismissed .stat-value { color: var(--gray); }
+
+    /* FILTERS & TOOLBAR */
+    .toolbar {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 8px 18px; border-radius: 20px; border: 1px solid #333;
+      background: transparent; color: var(--muted); cursor: pointer; font-size: 0.85rem; transition: all 0.2s;
+    }
+    .filter-btn.active, .filter-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(255,45,45,0.08); }
+    .search-box {
+      margin-left: auto; padding: 8px 14px; background: var(--surface-strong);
+      border: 1px solid #333; border-radius: 8px; color: var(--text); font-size: 0.9rem; width: 220px; outline: none;
+    }
+    .search-box:focus { border-color: var(--accent); }
+
+    /* COMPLAINTS LIST */
+    .complaints-list { display: flex; flex-direction: column; gap: 16px; }
+    .complaint-card {
+      background: var(--surface-strong); border: 1px solid #222;
+      border-radius: var(--radius); overflow: hidden; transition: border-color 0.2s;
+    }
+    .complaint-card:hover { border-color: #333; }
+    .complaint-card.open { border-left: 3px solid var(--accent); }
+    .complaint-card.under-review { border-left: 3px solid var(--yellow); }
+    .complaint-card.resolved { border-left: 3px solid var(--green); }
+    .complaint-card.dismissed { border-left: 3px solid var(--gray); }
+
+    .card-header {
+      display: flex; align-items: center; gap: 16px; padding: 16px 20px;
+      cursor: pointer; user-select: none;
+    }
+    .card-header:hover { background: rgba(255,255,255,0.02); }
+    .card-id { font-family: monospace; font-size: 0.8rem; color: var(--muted); min-width: 190px; }
+    .card-title { flex: 1; font-weight: 600; font-size: 0.95rem; }
+    .card-meta { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
+    .status-badge {
+      padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
+    }
+    .status-badge.open { background: rgba(255,45,45,0.15); color: var(--accent); }
+    .status-badge.under-review { background: rgba(245,166,35,0.15); color: var(--yellow); }
+    .status-badge.resolved { background: rgba(76,175,130,0.15); color: var(--green); }
+    .status-badge.dismissed { background: rgba(85,85,85,0.15); color: #aaa; }
+    .chevron { color: var(--muted); font-size: 0.8rem; transition: transform 0.2s; }
+    .chevron.open { transform: rotate(180deg); }
+
+    .card-body { display: none; padding: 0 20px 20px; border-top: 1px solid #1e1e1e; }
+    .card-body.visible { display: block; }
+
+    .detail-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px; margin: 16px 0;
+    }
+    .detail-field { }
+    .detail-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .detail-value { font-size: 0.9rem; color: var(--text); word-break: break-word; }
+    .detail-value a { color: var(--accent); }
+
+    .detail-block { margin: 12px 0; }
+    .detail-block .detail-label { margin-bottom: 6px; }
+    .detail-block .detail-text {
+      background: #0b0b0b; border-radius: 8px; padding: 12px 14px;
+      border-left: 3px solid #333; font-size: 0.9rem; line-height: 1.5; color: var(--text);
+    }
+
+    .card-actions { display: flex; align-items: flex-start; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+    .card-actions .notes-input {
+      flex: 1; min-width: 200px; padding: 10px 12px; background: #0b0b0b; border: 1px solid #333;
+      border-radius: 8px; color: var(--text); font-size: 0.85rem; resize: vertical; min-height: 60px; outline: none;
+    }
+    .card-actions .notes-input:focus { border-color: #444; }
+    .action-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+    .action-btn {
+      padding: 8px 14px; border-radius: 8px; border: none; font-size: 0.8rem;
+      font-weight: 600; cursor: pointer; transition: opacity 0.2s; white-space: nowrap;
+    }
+    .action-btn:hover { opacity: 0.85; }
+    .btn-review { background: rgba(245,166,35,0.2); color: var(--yellow); border: 1px solid rgba(245,166,35,0.3); }
+    .btn-resolve { background: rgba(76,175,130,0.2); color: var(--green); border: 1px solid rgba(76,175,130,0.3); }
+    .btn-dismiss { background: rgba(85,85,85,0.2); color: #aaa; border: 1px solid rgba(85,85,85,0.3); }
+    .btn-reopen { background: rgba(255,45,45,0.2); color: var(--accent); border: 1px solid rgba(255,45,45,0.3); }
+    .btn-save { background: rgba(74,158,255,0.2); color: var(--blue); border: 1px solid rgba(74,158,255,0.3); }
+    .btn-delete { background: rgba(255,45,45,0.08); color: #ff6b6b; border: 1px solid rgba(255,45,45,0.2); }
+
+    .empty-state { text-align: center; padding: 64px 24px; color: var(--muted); }
+    .empty-state h3 { font-size: 1.2rem; margin-bottom: 8px; }
+
+    .loading { text-align: center; padding: 48px; color: var(--muted); }
+
+    /* TABS */
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 28px; border-bottom: 1px solid #222; }
+    .tab-btn {
+      padding: 10px 24px; background: transparent; border: none; color: var(--muted);
+      font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; transition: all 0.2s;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* APPLICATION-SPECIFIC STATUSES */
+    .status-badge.pending { background: rgba(74,158,255,0.15); color: var(--blue); }
+    .status-badge.accepted { background: rgba(76,175,130,0.15); color: var(--green); }
+    .status-badge.denied { background: rgba(85,85,85,0.15); color: #aaa; }
+    .complaint-card.pending { border-left: 3px solid var(--blue); }
+    .complaint-card.accepted { border-left: 3px solid var(--green); }
+    .complaint-card.denied { border-left: 3px solid var(--gray); }
+
+    .btn-accept { background: rgba(76,175,130,0.2); color: var(--green); border: 1px solid rgba(76,175,130,0.3); }
+    .btn-deny { background: rgba(85,85,85,0.2); color: #aaa; border: 1px solid rgba(85,85,85,0.3); }
+
+    @media (max-width: 640px) {
+      .admin-main { padding: 16px; }
+      .card-id { display: none; }
+      .search-box { width: 100%; margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen">
+    <div class="login-card">
+      <div class="brand">NThaCityRP</div>
+      <h2>Staff Admin Panel</h2>
+      <form onsubmit="event.preventDefault(); doLogin();">
+        <input type="password" id="admin-password" placeholder="Enter admin password" autocomplete="current-password" />
+        <button class="login-btn" type="submit">Sign In</button>
+      </form>
+      <div class="login-error" id="login-error"></div>
+    </div>
+  </div>
+
+  <!-- ADMIN PANEL -->
+  <div id="admin-panel">
+    <header class="admin-header">
+      <div class="brand">NThaCityRP — Admin</div>
+      <div class="header-right">
+        <span>Staff Dashboard</span>
+        <button class="logout-btn" onclick="doLogout()">Sign Out</button>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('complaints', this)">Complaints</button>
+        <button class="tab-btn" onclick="switchTab('applications', this)">Applications</button>
+        <button class="tab-btn" onclick="switchTab('status', this)">Server Status</button>
+      </div>
+
+      <!-- COMPLAINTS TAB -->
+      <div class="tab-panel active" id="tab-complaints">
+        <div class="stats-grid">
+          <div class="stat-card total"><div class="stat-label">Total</div><div class="stat-value" id="stat-total">—</div></div>
+          <div class="stat-card open"><div class="stat-label">Open</div><div class="stat-value" id="stat-open">—</div></div>
+          <div class="stat-card review"><div class="stat-label">Under Review</div><div class="stat-value" id="stat-review">—</div></div>
+          <div class="stat-card resolved"><div class="stat-label">Resolved</div><div class="stat-value" id="stat-resolved">—</div></div>
+          <div class="stat-card dismissed"><div class="stat-label">Dismissed</div><div class="stat-value" id="stat-dismissed">—</div></div>
+        </div>
+        <div class="toolbar">
+          <button class="filter-btn active" onclick="setFilter('All', this, 'complaint')">All</button>
+          <button class="filter-btn" onclick="setFilter('Open', this, 'complaint')">Open</button>
+          <button class="filter-btn" onclick="setFilter('Under Review', this, 'complaint')">Under Review</button>
+          <button class="filter-btn" onclick="setFilter('Resolved', this, 'complaint')">Resolved</button>
+          <button class="filter-btn" onclick="setFilter('Dismissed', this, 'complaint')">Dismissed</button>
+          <input class="search-box" type="text" placeholder="Search complaints…" oninput="renderComplaints()" id="search-complaints" />
+        </div>
+        <div class="complaints-list" id="complaints-list"><div class="loading">Loading…</div></div>
+      </div>
+
+      <!-- SERVER STATUS TAB -->
+      <div class="tab-panel" id="tab-status">
+        <div class="status-control-card" style="background:var(--surface-strong);border:1px solid #222;border-radius:var(--radius);padding:32px;max-width:560px;">
+          <h3 style="margin:0 0 24px;font-size:1.1rem;">City Status Control</h3>
+
+          <div style="margin-bottom:20px;">
+            <div class="detail-label" style="margin-bottom:10px;">City Status</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;" id="status-btns">
+              <button class="action-btn" id="sbtn-ACTIVE" onclick="setStatusMode('ACTIVE')" style="background:rgba(255,45,45,0.2);color:var(--accent);border:1px solid rgba(255,45,45,0.4);">ACTIVE</button>
+              <button class="action-btn" id="sbtn-OFFLINE" onclick="setStatusMode('OFFLINE')" style="background:rgba(85,85,85,0.2);color:#aaa;border:1px solid rgba(85,85,85,0.4);">OFFLINE</button>
+              <button class="action-btn" id="sbtn-MAINTENANCE" onclick="setStatusMode('MAINTENANCE')" style="background:rgba(74,158,255,0.2);color:var(--blue);border:1px solid rgba(74,158,255,0.4);">MAINTENANCE</button>
+              <button class="action-btn" id="sbtn-WHITELIST" onclick="setStatusMode('WHITELIST')" style="background:rgba(245,166,35,0.2);color:var(--yellow);border:1px solid rgba(245,166,35,0.4);">WHITELIST</button>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+            <div>
+              <div class="detail-label" style="margin-bottom:6px;">Players Online</div>
+              <input type="number" id="input-players" min="0" max="999" placeholder="0"
+                style="width:100%;padding:10px 12px;background:#0b0b0b;border:1px solid #333;border-radius:8px;color:var(--text);font-size:0.95rem;outline:none;" />
+            </div>
+            <div>
+              <div class="detail-label" style="margin-bottom:6px;">Max Players</div>
+              <input type="number" id="input-maxplayers" min="1" max="999" placeholder="32"
+                style="width:100%;padding:10px 12px;background:#0b0b0b;border:1px solid #333;border-radius:8px;color:var(--text);font-size:0.95rem;outline:none;" />
+            </div>
+          </div>
+
+          <div style="margin-bottom:24px;">
+            <div class="detail-label" style="margin-bottom:6px;">Custom Message <span style="color:#444;font-weight:400;">(shown on homepage)</span></div>
+            <input type="text" id="input-message" maxlength="200" placeholder="e.g. Events tonight at 8PM EST"
+              style="width:100%;padding:10px 12px;background:#0b0b0b;border:1px solid #333;border-radius:8px;color:var(--text);font-size:0.95rem;outline:none;" />
+          </div>
+
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button class="action-btn btn-resolve" style="padding:12px 28px;font-size:0.9rem;" onclick="saveServerStatus()">Save & Publish</button>
+            <span id="status-save-msg" style="font-size:0.85rem;color:var(--green);display:none;">Status updated!</span>
+          </div>
+
+          <div style="margin-top:24px;padding-top:20px;border-top:1px solid #1e1e1e;">
+            <div class="detail-label" style="margin-bottom:8px;">Current Live Status</div>
+            <div id="status-preview" style="color:var(--muted);font-size:0.9rem;">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- APPLICATIONS TAB -->
+      <div class="tab-panel" id="tab-applications">
+        <div class="stats-grid">
+          <div class="stat-card total"><div class="stat-label">Total</div><div class="stat-value" id="app-stat-total">—</div></div>
+          <div class="stat-card open"><div class="stat-label">Pending</div><div class="stat-value" id="app-stat-pending">—</div></div>
+          <div class="stat-card review"><div class="stat-label">Under Review</div><div class="stat-value" id="app-stat-review">—</div></div>
+          <div class="stat-card resolved"><div class="stat-label">Accepted</div><div class="stat-value" id="app-stat-accepted">—</div></div>
+          <div class="stat-card dismissed"><div class="stat-label">Denied</div><div class="stat-value" id="app-stat-denied">—</div></div>
+        </div>
+        <div class="toolbar">
+          <button class="filter-btn active" onclick="setFilter('All', this, 'application')">All</button>
+          <button class="filter-btn" onclick="setFilter('Pending', this, 'application')">Pending</button>
+          <button class="filter-btn" onclick="setFilter('Under Review', this, 'application')">Under Review</button>
+          <button class="filter-btn" onclick="setFilter('Accepted', this, 'application')">Accepted</button>
+          <button class="filter-btn" onclick="setFilter('Denied', this, 'application')">Denied</button>
+          <input class="search-box" type="text" placeholder="Search applications…" oninput="renderApplications()" id="search-applications" />
+        </div>
+        <div class="complaints-list" id="applications-list"><div class="loading">Loading…</div></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    let allComplaints = [];
+    let allApplications = [];
+    let currentComplaintFilter = 'All';
+    let currentAppFilter = 'All';
+
+    function statusClass(status) {
+      return (status || 'open').toLowerCase().replace(/ /g, '-');
+    }
+    function badgeHtml(status) {
+      return `<span class="status-badge ${statusClass(status)}">${status || 'Open'}</span>`;
+    }
+    function fmtDate(iso) {
+      if (!iso) return 'N/A';
+      return new Date(iso).toLocaleString();
+    }
+
+    function switchTab(tab, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + tab).classList.add('active');
+      if (tab === 'applications' && allApplications.length === 0) loadApplications();
+      if (tab === 'status') loadServerStatus();
+    }
+
+    /* ── SERVER STATUS ── */
+    let currentStatusMode = 'ACTIVE';
+
+    function setStatusMode(mode) {
+      currentStatusMode = mode;
+      document.querySelectorAll('#status-btns .action-btn').forEach(b => {
+        b.style.outline = 'none';
+        b.style.boxShadow = 'none';
+      });
+      const btn = document.getElementById('sbtn-' + mode);
+      if (btn) btn.style.boxShadow = '0 0 0 2px white';
+    }
+
+    async function loadServerStatus() {
+      try {
+        const res = await fetch('/api/server-status');
+        const s = await res.json();
+        currentStatusMode = s.cityStatus || 'ACTIVE';
+        document.getElementById('input-players').value = s.playerCount ?? 0;
+        document.getElementById('input-maxplayers').value = s.maxPlayers ?? 32;
+        document.getElementById('input-message').value = s.customMessage || '';
+        setStatusMode(currentStatusMode);
+        renderStatusPreview(s);
+      } catch {
+        document.getElementById('status-preview').textContent = 'Failed to load status.';
+      }
+    }
+
+    function renderStatusPreview(s) {
+      const labels = { ACTIVE:'🟢 ACTIVE', OFFLINE:'🔴 OFFLINE', MAINTENANCE:'🔵 MAINTENANCE', WHITELIST:'🟡 WHITELIST' };
+      document.getElementById('status-preview').innerHTML = `
+        <strong>${labels[s.cityStatus] || s.cityStatus}</strong> &nbsp;·&nbsp;
+        ${s.playerCount} / ${s.maxPlayers} players
+        ${s.customMessage ? `&nbsp;·&nbsp; "${s.customMessage}"` : ''}
+        ${s.lastUpdated ? `<br><span style="color:#444;font-size:0.8rem;">Last saved: ${new Date(s.lastUpdated).toLocaleString()}</span>` : ''}
+      `;
+    }
+
+    async function saveServerStatus() {
+      const payload = {
+        cityStatus: currentStatusMode,
+        playerCount: parseInt(document.getElementById('input-players').value) || 0,
+        maxPlayers: parseInt(document.getElementById('input-maxplayers').value) || 32,
+        customMessage: document.getElementById('input-message').value.trim()
+      };
+      try {
+        const res = await fetch('/api/server-status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (json.success) {
+          renderStatusPreview(json.status);
+          const msg = document.getElementById('status-save-msg');
+          msg.style.display = 'inline';
+          setTimeout(() => { msg.style.display = 'none'; }, 2500);
+        }
+      } catch {
+        alert('Failed to save status. Try again.');
+      }
+    }
+
+    async function doLogin() {
+      const pw = document.getElementById('admin-password').value;
+      const err = document.getElementById('login-error');
+      err.textContent = '';
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw })
+        });
+        const json = await res.json();
+        if (json.success) showPanel();
+        else err.textContent = 'Incorrect password. Try again.';
+      } catch { err.textContent = 'Connection error. Try again.'; }
+    }
+
+    async function doLogout() {
+      await fetch('/api/admin/logout', { method: 'POST' });
+      document.getElementById('admin-panel').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('admin-password').value = '';
+    }
+
+    function showPanel() {
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('admin-panel').style.display = 'block';
+      loadComplaints();
+    }
+
+    /* ── COMPLAINTS ── */
+    async function loadComplaints() {
+      try {
+        const res = await fetch('/api/complaints');
+        if (res.status === 401) { doLogout(); return; }
+        const json = await res.json();
+        allComplaints = json.complaints || [];
+        updateComplaintStats();
+        renderComplaints();
+      } catch {
+        document.getElementById('complaints-list').innerHTML = '<div class="empty-state"><h3>Failed to load complaints</h3></div>';
+      }
+    }
+
+    function updateComplaintStats() {
+      const c = { total: allComplaints.length, open: 0, review: 0, resolved: 0, dismissed: 0 };
+      allComplaints.forEach(x => {
+        if (x.status === 'Open') c.open++;
+        else if (x.status === 'Under Review') c.review++;
+        else if (x.status === 'Resolved') c.resolved++;
+        else if (x.status === 'Dismissed') c.dismissed++;
+      });
+      document.getElementById('stat-total').textContent = c.total;
+      document.getElementById('stat-open').textContent = c.open;
+      document.getElementById('stat-review').textContent = c.review;
+      document.getElementById('stat-resolved').textContent = c.resolved;
+      document.getElementById('stat-dismissed').textContent = c.dismissed;
+    }
+
+    function setFilter(f, btn, type) {
+      const panelId = type === 'complaint' ? 'tab-complaints' : 'tab-applications';
+      document.querySelectorAll(`#${panelId} .filter-btn`).forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (type === 'complaint') { currentComplaintFilter = f; renderComplaints(); }
+      else { currentAppFilter = f; renderApplications(); }
+    }
+
+    function renderComplaints() {
+      const search = (document.getElementById('search-complaints').value || '').toLowerCase();
+      let list = allComplaints;
+      if (currentComplaintFilter !== 'All') list = list.filter(c => c.status === currentComplaintFilter);
+      if (search) list = list.filter(c =>
+        (c.id||'').toLowerCase().includes(search) ||
+        (c.complaintDiscord||'').toLowerCase().includes(search) ||
+        (c.reportedName||'').toLowerCase().includes(search) ||
+        (c.complaintType||'').toLowerCase().includes(search) ||
+        (c.incidentLocation||'').toLowerCase().includes(search)
+      );
+      const container = document.getElementById('complaints-list');
+      if (!list.length) { container.innerHTML = '<div class="empty-state"><h3>No complaints found</h3><p>Try adjusting your filter or search.</p></div>'; return; }
+      container.innerHTML = list.map(c => {
+        const sc = statusClass(c.status);
+        const ev = c.evidenceLink ? `<a href="${c.evidenceLink}" target="_blank" rel="noopener">View Evidence</a>` : 'None';
+        return `
+          <div class="complaint-card ${sc}" id="card-${c.id}">
+            <div class="card-header" onclick="toggleCard('${c.id}')">
+              <span class="card-id">${c.id}</span>
+              <span class="card-title">${c.complaintType} — ${c.reportedName}</span>
+              <span class="card-meta">${fmtDate(c.submittedAt)}</span>
+              ${badgeHtml(c.status)}
+              <span class="chevron" id="chev-${c.id}">▼</span>
+            </div>
+            <div class="card-body" id="body-${c.id}">
+              <div class="detail-grid">
+                <div class="detail-field"><div class="detail-label">Discord</div><div class="detail-value">${c.complaintDiscord||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Reported Person</div><div class="detail-value">${c.reportedName||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Type</div><div class="detail-value">${c.complaintType||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Incident Date</div><div class="detail-value">${c.incidentDate||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Location</div><div class="detail-value">${c.incidentLocation||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Witnesses</div><div class="detail-value">${c.witnesses||'None'}</div></div>
+                <div class="detail-field"><div class="detail-label">Evidence</div><div class="detail-value">${ev}</div></div>
+                <div class="detail-field"><div class="detail-label">Submitted</div><div class="detail-value">${fmtDate(c.submittedAt)}</div></div>
+                ${c.updatedAt?`<div class="detail-field"><div class="detail-label">Last Updated</div><div class="detail-value">${fmtDate(c.updatedAt)}</div></div>`:''}
+              </div>
+              <div class="detail-block"><div class="detail-label">Description</div><div class="detail-text">${c.description||'N/A'}</div></div>
+              <div class="detail-block"><div class="detail-label">Desired Resolution</div><div class="detail-text">${c.resolution||'N/A'}</div></div>
+              <div class="card-actions">
+                <textarea class="notes-input" id="notes-${c.id}" placeholder="Staff notes…">${c.staffNotes||''}</textarea>
+                <div class="action-buttons">
+                  <button class="action-btn btn-review" onclick="updateComplaintStatus('${c.id}','Under Review')">Under Review</button>
+                  <button class="action-btn btn-resolve" onclick="updateComplaintStatus('${c.id}','Resolved')">Resolved</button>
+                  <button class="action-btn btn-dismiss" onclick="updateComplaintStatus('${c.id}','Dismissed')">Dismiss</button>
+                  <button class="action-btn btn-reopen" onclick="updateComplaintStatus('${c.id}','Open')">Reopen</button>
+                  <button class="action-btn btn-save" onclick="saveComplaintNotes('${c.id}',event)">Save Notes</button>
+                  <button class="action-btn btn-delete" onclick="deleteComplaint('${c.id}')">Delete</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function toggleCard(id) {
+      document.getElementById('body-'+id).classList.toggle('visible');
+      document.getElementById('chev-'+id).classList.toggle('open');
+    }
+
+    async function updateComplaintStatus(id, status) {
+      const notes = document.getElementById('notes-'+id)?.value;
+      const res = await fetch(`/api/complaint/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status, staffNotes: notes}) });
+      const json = await res.json();
+      if (json.success) {
+        const idx = allComplaints.findIndex(c => c.id === id);
+        if (idx !== -1) allComplaints[idx] = json.complaint;
+        updateComplaintStats(); renderComplaints();
+        document.getElementById('body-'+id)?.classList.add('visible');
+        document.getElementById('chev-'+id)?.classList.add('open');
+      }
+    }
+
+    async function saveComplaintNotes(id, e) {
+      const notes = document.getElementById('notes-'+id)?.value || '';
+      const res = await fetch(`/api/complaint/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({staffNotes: notes}) });
+      const json = await res.json();
+      if (json.success) {
+        const idx = allComplaints.findIndex(c => c.id === id);
+        if (idx !== -1) allComplaints[idx] = json.complaint;
+        const btn = e.target; btn.textContent = 'Saved!';
+        setTimeout(() => { btn.textContent = 'Save Notes'; }, 1500);
+      }
+    }
+
+    async function deleteComplaint(id) {
+      if (!confirm(`Delete complaint ${id}? This cannot be undone.`)) return;
+      const res = await fetch(`/api/complaint/${id}`, { method:'DELETE' });
+      const json = await res.json();
+      if (json.success) { allComplaints = allComplaints.filter(c => c.id !== id); updateComplaintStats(); renderComplaints(); }
+    }
+
+    /* ── APPLICATIONS ── */
+    async function loadApplications() {
+      try {
+        const res = await fetch('/api/applications');
+        if (res.status === 401) { doLogout(); return; }
+        const json = await res.json();
+        allApplications = json.applications || [];
+        updateAppStats();
+        renderApplications();
+      } catch {
+        document.getElementById('applications-list').innerHTML = '<div class="empty-state"><h3>Failed to load applications</h3></div>';
+      }
+    }
+
+    function updateAppStats() {
+      const c = { total: allApplications.length, pending: 0, review: 0, accepted: 0, denied: 0 };
+      allApplications.forEach(a => {
+        if (a.status === 'Pending') c.pending++;
+        else if (a.status === 'Under Review') c.review++;
+        else if (a.status === 'Accepted') c.accepted++;
+        else if (a.status === 'Denied') c.denied++;
+      });
+      document.getElementById('app-stat-total').textContent = c.total;
+      document.getElementById('app-stat-pending').textContent = c.pending;
+      document.getElementById('app-stat-review').textContent = c.review;
+      document.getElementById('app-stat-accepted').textContent = c.accepted;
+      document.getElementById('app-stat-denied').textContent = c.denied;
+    }
+
+    function renderApplications() {
+      const search = (document.getElementById('search-applications').value || '').toLowerCase();
+      let list = allApplications;
+      if (currentAppFilter !== 'All') list = list.filter(a => a.status === currentAppFilter);
+      if (search) list = list.filter(a =>
+        (a.id||'').toLowerCase().includes(search) ||
+        (a.appDiscord||'').toLowerCase().includes(search) ||
+        (a.appCharacter||'').toLowerCase().includes(search) ||
+        (a.applicationType||'').toLowerCase().includes(search)
+      );
+      const container = document.getElementById('applications-list');
+      if (!list.length) { container.innerHTML = '<div class="empty-state"><h3>No applications found</h3><p>Try adjusting your filter or search.</p></div>'; return; }
+      container.innerHTML = list.map(a => {
+        const sc = statusClass(a.status);
+        return `
+          <div class="complaint-card ${sc}" id="card-${a.id}">
+            <div class="card-header" onclick="toggleCard('${a.id}')">
+              <span class="card-id">${a.id}</span>
+              <span class="card-title">${a.applicationType} — ${a.appCharacter}</span>
+              <span class="card-meta">${fmtDate(a.submittedAt)}</span>
+              ${badgeHtml(a.status)}
+              <span class="chevron" id="chev-${a.id}">▼</span>
+            </div>
+            <div class="card-body" id="body-${a.id}">
+              <div class="detail-grid">
+                <div class="detail-field"><div class="detail-label">Discord</div><div class="detail-value">${a.appDiscord||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Character</div><div class="detail-value">${a.appCharacter||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Role</div><div class="detail-value">${a.applicationType||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Age</div><div class="detail-value">${a.ageConfirmation||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Availability</div><div class="detail-value">${a.availability||'N/A'}</div></div>
+                <div class="detail-field"><div class="detail-label">Submitted</div><div class="detail-value">${fmtDate(a.submittedAt)}</div></div>
+                ${a.updatedAt?`<div class="detail-field"><div class="detail-label">Last Updated</div><div class="detail-value">${fmtDate(a.updatedAt)}</div></div>`:''}
+              </div>
+              <div class="detail-block"><div class="detail-label">RP Experience</div><div class="detail-text">${a.experience||'N/A'}</div></div>
+              <div class="detail-block"><div class="detail-label">Why This Role</div><div class="detail-text">${a.roleReason||'N/A'}</div></div>
+              <div class="card-actions">
+                <textarea class="notes-input" id="notes-${a.id}" placeholder="Staff notes…">${a.staffNotes||''}</textarea>
+                <div class="action-buttons">
+                  <button class="action-btn btn-review" onclick="updateAppStatus('${a.id}','Under Review')">Under Review</button>
+                  <button class="action-btn btn-accept" onclick="updateAppStatus('${a.id}','Accepted')">Accept</button>
+                  <button class="action-btn btn-deny" onclick="updateAppStatus('${a.id}','Denied')">Deny</button>
+                  <button class="action-btn btn-reopen" onclick="updateAppStatus('${a.id}','Pending')">Reset to Pending</button>
+                  <button class="action-btn btn-save" onclick="saveAppNotes('${a.id}',event)">Save Notes</button>
+                  <button class="action-btn btn-delete" onclick="deleteApplication('${a.id}')">Delete</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    async function updateAppStatus(id, status) {
+      const notes = document.getElementById('notes-'+id)?.value;
+      const res = await fetch(`/api/application/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status, staffNotes: notes}) });
+      const json = await res.json();
+      if (json.success) {
+        const idx = allApplications.findIndex(a => a.id === id);
+        if (idx !== -1) allApplications[idx] = json.application;
+        updateAppStats(); renderApplications();
+        document.getElementById('body-'+id)?.classList.add('visible');
+        document.getElementById('chev-'+id)?.classList.add('open');
+      }
+    }
+
+    async function saveAppNotes(id, e) {
+      const notes = document.getElementById('notes-'+id)?.value || '';
+      const res = await fetch(`/api/application/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({staffNotes: notes}) });
+      const json = await res.json();
+      if (json.success) {
+        const idx = allApplications.findIndex(a => a.id === id);
+        if (idx !== -1) allApplications[idx] = json.application;
+        const btn = e.target; btn.textContent = 'Saved!';
+        setTimeout(() => { btn.textContent = 'Save Notes'; }, 1500);
+      }
+    }
+
+    async function deleteApplication(id) {
+      if (!confirm(`Delete application ${id}? This cannot be undone.`)) return;
+      const res = await fetch(`/api/application/${id}`, { method:'DELETE' });
+      const json = await res.json();
+      if (json.success) { allApplications = allApplications.filter(a => a.id !== id); updateAppStats(); renderApplications(); }
+    }
+
+    (async () => {
+      const res = await fetch('/api/admin/session');
+      const json = await res.json();
+      if (json.loggedIn) showPanel();
+    })();
+  </script>
+</body>
+</html>

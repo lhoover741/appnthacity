@@ -1,0 +1,52 @@
+modules = ["web", "nodejs-20", "python-3.11"]
+[agent]
+expertMode = true
+stack = "BEST_EFFORT_FALLBACK"
+
+[nix]
+channel = "stable-25_05"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 server.py"
+waitForPort = 5000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[deployment]
+deploymentTarget = "dynamic"
+publicDir = "."
+
+[userenv]
+
+[userenv.shared]
+SMTP_HOST = "mail.nthatcityrp.com"
+SMTP_PORT = "465"
+SMTP_FROM_NAME = "NThaCityRP"
+SMTP_EMAIL = "noreply@nthatcityrp.com"
+SMTP_PASSWORD = "test1234"
+NOTIFY_EMAIL = "admin@nthatcityrp.com"
+ADMIN_PASSWORD = "nthatcityrp2024"
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/placeholder/placeholder"
+OPENROUTER_API_KEY = "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"
