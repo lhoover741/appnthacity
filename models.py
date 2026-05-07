@@ -128,6 +128,7 @@ class Warrant(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     warrant_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64))
     warrant_name = db.Column(db.String(255))
     warrant_charges = db.Column(db.Text)
     warrant_issuer = db.Column(db.String(255))
@@ -144,6 +145,7 @@ class Arrest(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     arrest_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64))
     suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
     arresting_officer = db.Column(db.String(255))

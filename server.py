@@ -3202,6 +3202,154 @@ def get_neighborhoods():
     return jsonify({'success': True, 'neighborhoods': NEIGHBORHOODS})
 
 
+# ---------------------------------------------------------------------------
+# Relationship Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/relationships/link-vehicle', methods=['POST'])
+@admin_required
+def link_vehicle_route():
+    """Link civilian to vehicle."""
+    data = request.get_json(silent=True) or {}
+    civilian_id = data.get('civilian_id')
+    vehicle_id = data.get('vehicle_id')
+
+    if not civilian_id or not vehicle_id:
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    from relationships_service import link_civilian_to_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = link_civilian_to_vehicle(civilian_id, vehicle_id)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('relationships', 'link_vehicle', 'Vehicle', vehicle_id)
+        return jsonify({'success': True, 'message': 'Vehicle linked to civilian'})
+    except Exception as e:
+        logger.error(f'Failed to link vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/relationships/gang-crew/<gang_name>', methods=['GET'])
+def get_gang_crew_route(gang_name):
+    """Get gang crew with relationships."""
+    from relationships_service import get_gang_crew
+
+    crew = get_gang_crew(gang_name)
+    return jsonify({'success': True, 'crew': crew, 'total': len(crew)})
+
+
+@app.route('/api/relationships/criminal-history/<civilian_id>', methods=['GET'])
+def get_criminal_history_route(civilian_id):
+    """Get complete criminal history."""
+    from relationships_service import get_civilian_criminal_history
+
+    history = get_civilian_criminal_history(civilian_id)
+    if not history:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({'success': True, 'history': history})
+
+
+@app.route('/api/relationships/create-arrest', methods=['POST'])
+@admin_required
+def create_arrest_route():
+    """Create arrest and update criminal history."""
+    data = request.get_json(silent=True) or {}
+
+    required = ['civilian_id', 'charges', 'arresting_officer', 'location', 'narrative']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    from relationships_service import create_arrest_record, create_warrant_from_arrest
+    from cad_helpers import log_audit
+
+    try:
+        arrest = create_arrest_record(
+            data['civilian_id'],
+            data['charges'],
+            data['arresting_officer'],
+            data['location'],
+            data['narrative']
+        )
+
+        # Auto-create warrant if requested
+        if data.get('create_warrant'):
+            warrant = create_warrant_from_arrest(
+                arrest.arrest_id,
+                data['civilian_id'],
+                data['charges'],
+                data.get('probable_cause', 'Arrest warrant')
+            )
+            log_audit('relationships', 'create_warrant', 'Warrant', warrant.warrant_id)
+
+        log_audit('relationships', 'create_arrest', 'Arrest', arrest.arrest_id)
+        return jsonify({'success': True, 'arrest_id': arrest.arrest_id})
+    except Exception as e:
+        logger.error(f'Failed to create arrest: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/relationships/warrant-check/<plate>', methods=['GET'])
+def warrant_check_route(plate):
+    """Check for warrants on traffic stop."""
+    from relationships_service import check_warrant_on_traffic_stop
+
+    result = check_warrant_on_traffic_stop(plate)
+    if not result:
+        return jsonify({'success': True, 'warrants': None})
+
+    return jsonify({'success': True, 'warrants': result})
+
+
+@app.route('/api/relationships/family', methods=['POST'])
+@admin_required
+def create_family_route():
+    """Create family relationship."""
+    data = request.get_json(silent=True) or {}
+
+    from relationships_service import create_family_relationship
+    from cad_helpers import log_audit
+
+    try:
+        assoc = create_family_relationship(
+            data['civilian_id1'],
+            data['civilian_id2'],
+            data.get('relationship', 'Family')
+        )
+
+        log_audit('relationships', 'create_family', 'KnownAssociate', assoc.associate_id)
+        return jsonify({'success': True, 'message': 'Family relationship created'})
+    except Exception as e:
+        logger.error(f'Failed to create family: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/relationships/employment', methods=['POST'])
+@admin_required
+def create_employment_route():
+    """Link civilian to business as employee."""
+    data = request.get_json(silent=True) or {}
+
+    from relationships_service import create_employment_relationship
+    from cad_helpers import log_audit
+
+    try:
+        assoc = create_employment_relationship(
+            data['civilian_id'],
+            data['business_id']
+        )
+
+        log_audit('relationships', 'create_employment', 'KnownAssociate', assoc.associate_id)
+        return jsonify({'success': True, 'message': 'Employment relationship created'})
+    except Exception as e:
+        logger.error(f'Failed to create employment: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
