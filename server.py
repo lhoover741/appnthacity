@@ -2589,6 +2589,55 @@ def generate_ai_civilian():
 
 
 # ---------------------------------------------------------------------------
+# AI Assist — Civilian Generator (public, no admin required)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/ai/civilian-assist', methods=['POST'])
+def ai_civilian_assist():
+    """Generate civilian with AI assist and auto-save."""
+    data = request.get_json(silent=True) or {}
+
+    from ai_assist_service import generate_ai_civilian, save_generated_civilian
+
+    try:
+        # Generate civilian
+        ai_data, source = generate_ai_civilian(data)
+
+        if 'error' in ai_data:
+            return jsonify({'success': False, 'error': ai_data['error']}), 500
+
+        # Save to database
+        civilian = save_generated_civilian(ai_data)
+
+        return jsonify({
+            'success': True,
+            'civilian_id': civilian.civilian_id,
+            'source': source,
+            'data': {
+                'civilian_id': civilian.civilian_id,
+                'first_name': civilian.first_name,
+                'last_name': civilian.last_name,
+                'full_name': civilian.full_name,
+                'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else None,
+                'age': civilian.age,
+                'gender': civilian.gender,
+                'race': civilian.race,
+                'phone_number': civilian.phone_number,
+                'address': civilian.address,
+                'occupation': civilian.occupation,
+                'biography': civilian.biography,
+                'criminal_background': civilian.criminal_background,
+                'gang_affiliation': civilian.gang_affiliation,
+                'risk_level': civilian.risk_level,
+                'officer_safety_notes': civilian.officer_safety_notes,
+            }
+        })
+    except Exception as e:
+        logger.error(f'AI assist failed: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Advanced AI Character Engine
 # ---------------------------------------------------------------------------
 
