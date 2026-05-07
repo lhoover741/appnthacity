@@ -33,6 +33,13 @@ with app.app_context():
     db.create_all()
     logger.info('Database tables verified/created.')
 
+    # Run database migrations
+    try:
+        from migrations import run_migrations
+        run_migrations()
+    except Exception as e:
+        logger.error(f'Migration error: {e}')
+
 DEFAULT_OFFICERS = [
     {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
     {'id': '2L-12',  'name': 'Patrol Unit',     'status': 'En Route',  'department': 'LSPD'},
