@@ -48,9 +48,13 @@ class Civilian(db.Model):
     first_name = db.Column(db.String(255))
     last_name = db.Column(db.String(255))
     dob = db.Column(db.String(64))
+    gender = db.Column(db.String(64))
     phone = db.Column(db.String(64))
     address = db.Column(db.Text)
+    occupation = db.Column(db.String(255))
+    notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
 
 
 class Vehicle(db.Model):
@@ -62,6 +66,132 @@ class Vehicle(db.Model):
     model = db.Column(db.String(255))
     color = db.Column(db.String(255))
     registration_status = db.Column(db.String(64), default='Valid')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class License(db.Model):
+    __tablename__ = 'licenses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    license_id = db.Column(db.String(64), unique=True, nullable=False)
+    owner_name = db.Column(db.String(255))
+    license_type = db.Column(db.String(64))
+    status = db.Column(db.String(64), default='Valid')
+    issued_date = db.Column(db.String(64))
+    expiry_date = db.Column(db.String(64))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Warrant(db.Model):
+    __tablename__ = 'warrants'
+
+    id = db.Column(db.Integer, primary_key=True)
+    warrant_id = db.Column(db.String(64), unique=True, nullable=False)
+    warrant_name = db.Column(db.String(255))
+    warrant_charges = db.Column(db.Text)
+    warrant_issuer = db.Column(db.String(255))
+    warrant_notes = db.Column(db.Text)
+    warrant_status = db.Column(db.String(64), default='Active')
+    expiration_date = db.Column(db.String(64))
+    justification = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Arrest(db.Model):
+    __tablename__ = 'arrests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    arrest_id = db.Column(db.String(64), unique=True, nullable=False)
+    suspect_name = db.Column(db.String(255))
+    charges = db.Column(db.Text)
+    arresting_officer = db.Column(db.String(255))
+    arrest_location = db.Column(db.String(255))
+    evidence_attached = db.Column(db.Text)
+    penalty = db.Column(db.String(255))
+    report_notes = db.Column(db.Text)
+    narrative = db.Column(db.Text)
+    status = db.Column(db.String(64), default='Active')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Incident(db.Model):
+    __tablename__ = 'incidents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    incident_id = db.Column(db.String(64), unique=True, nullable=False)
+    incident_type = db.Column(db.String(255))
+    location = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    officers_involved = db.Column(db.Text)
+    suspects = db.Column(db.Text)
+    status = db.Column(db.String(64), default='Open')
+    priority = db.Column(db.String(64), default='Medium')
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Evidence(db.Model):
+    __tablename__ = 'evidence'
+
+    id = db.Column(db.Integer, primary_key=True)
+    evidence_id = db.Column(db.String(64), unique=True, nullable=False)
+    case_number = db.Column(db.String(64))
+    evidence_description = db.Column(db.Text)
+    collected_by = db.Column(db.String(255))
+    location_found = db.Column(db.String(255))
+    status = db.Column(db.String(64), default='Active')
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class TrafficStop(db.Model):
+    __tablename__ = 'traffic_stops'
+
+    id = db.Column(db.Integer, primary_key=True)
+    stop_id = db.Column(db.String(64), unique=True, nullable=False)
+    driver_name = db.Column(db.String(255))
+    plate = db.Column(db.String(64))
+    reason = db.Column(db.Text)
+    outcome = db.Column(db.String(255))
+    officer = db.Column(db.String(255))
+    location = db.Column(db.String(255))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Call911(db.Model):
+    __tablename__ = 'calls_911'
+
+    id = db.Column(db.Integer, primary_key=True)
+    call_id = db.Column(db.String(64), unique=True, nullable=False)
+    caller_name = db.Column(db.String(255))
+    location = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    incident_type = db.Column(db.String(255))
+    priority = db.Column(db.String(64), default='Medium')
+    assigned_unit = db.Column(db.String(64))
+    status = db.Column(db.String(64), default='New')
+    dispatch_notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class ActivityLog(db.Model):
+    __tablename__ = 'activity_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    log_id = db.Column(db.String(64), unique=True, nullable=False)
+    action = db.Column(db.String(255))
+    officer = db.Column(db.String(255))
+    details = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -224,6 +354,7 @@ class Bolo(db.Model):
     status = db.Column(db.String(64), default='Active')
     auto_generated = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
 
 
 class OfficerSession(db.Model):
@@ -232,9 +363,44 @@ class OfficerSession(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     callsign = db.Column(db.String(64), unique=True, nullable=False)
     officer_name = db.Column(db.String(255))
-    department = db.Column(db.String(255), default='LSPD')
+    badge_number = db.Column(db.String(64))
+    department = db.Column(db.String(255))
     status = db.Column(db.String(64), default='On Duty')
     logged_in_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Alert(db.Model):
+    __tablename__ = 'alerts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    alert_id = db.Column(db.String(64), unique=True, nullable=False)
+    alert_type = db.Column(db.String(64))
+    message = db.Column(db.Text)
+    issued_by = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class RadioLog(db.Model):
+    __tablename__ = 'radio_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    log_id = db.Column(db.String(64), unique=True, nullable=False)
+    unit = db.Column(db.String(64))
+    channel = db.Column(db.String(64), default='Primary')
+    message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ServerStatus(db.Model):
+    __tablename__ = 'server_status'
+
+    id = db.Column(db.Integer, primary_key=True)
+    city_status = db.Column(db.String(64), default='ACTIVE')
+    player_count = db.Column(db.Integer, default=0)
+    max_players = db.Column(db.Integer, default=32)
+    custom_message = db.Column(db.String(255), default='24/7 dispatch channel live')
+    last_updated = db.Column(db.DateTime)
 
 
 class Inmate(db.Model):

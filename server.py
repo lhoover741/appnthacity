@@ -28,13 +28,26 @@ if not _flask_secret:
     _flask_secret = secrets.token_hex(32)
 app.secret_key = _flask_secret
 
-# Configure database IMMEDIATELY after app creation
+from database import db, configure_database
+from models import (
+    Complaint, Application, Civilian, Vehicle, License,
+    Warrant, Arrest, Incident, Evidence, TrafficStop, Call911,
+    ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
+    ServerStatus, Inmate, Hearing, DispatchCall
+)
+
 configure_database(app)
 
-# Create all tables in app context
 with app.app_context():
     db.create_all()
     logger.info('Database tables verified/created.')
+
+    # Run database migrations
+    try:
+        from migrations import run_migrations
+        run_migrations()
+    except Exception as e:
+        logger.error(f'Migration error: {e}')
 
 DEFAULT_OFFICERS = [
     {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
@@ -51,42 +64,8 @@ DEFAULT_OFFICERS = [
 
 
 # ---------------------------------------------------------------------------
-# Model → dict helpers
+# Helper: convert model instances to dicts matching the original JSON shape
 # ---------------------------------------------------------------------------
-
-def complaint_to_dict(c):
-    return {
-        'id': c.complaint_id,
-        'complaintDiscord': c.complaint_discord,
-        'reportedName': c.reported_name,
-        'complaintType': c.complaint_type,
-        'incidentDate': c.incident_date,
-        'incidentLocation': c.incident_location,
-        'witnesses': c.witnesses,
-        'evidenceLink': c.evidence_link,
-        'description': c.description,
-        'resolution': c.resolution,
-        'status': c.status,
-        'staffNotes': c.staff_notes or '',
-        'submittedAt': c.submitted_at.isoformat() if c.submitted_at else None,
-    }
-
-
-def application_to_dict(a):
-    return {
-        'id': a.application_id,
-        'appDiscord': a.app_discord,
-        'appCharacter': a.app_character,
-        'applicationType': a.application_type,
-        'ageConfirmation': a.age_confirmation,
-        'experience': a.experience,
-        'roleReason': a.role_reason,
-        'availability': a.availability,
-        'status': a.status,
-        'staffNotes': a.staff_notes or '',
-        'submittedAt': a.submitted_at.isoformat() if a.submitted_at else None,
-    }
-
 
 def bolo_to_dict(b):
     return {
@@ -104,49 +83,474 @@ def bolo_to_dict(b):
     }
 
 
-# ---------------------------------------------------------------------------
-# DB-backed load/save functions
-# ---------------------------------------------------------------------------
-
-def load_officer_sessions():
-    sessions = OfficerSession.query.all()
-    return {s.callsign: {'callsign': s.callsign, 'name': s.officer_name or '', 'department': s.department or 'LSPD', 'loggedInAt': s.logged_in_at.isoformat() if s.logged_in_at else None, 'status': s.status or 'On Duty'} for s in sessions}
-
-
-def load_alerts():
-    alerts = Alert.query.order_by(Alert.created_at.desc()).limit(100).all()
-    return [{'id': a.alert_id, 'type': a.alert_type, 'message': a.message, 'issuedBy': a.issued_by, 'issuedAt': a.created_at.isoformat() if a.created_at else None} for a in alerts]
-
-
-def load_cad_data():
+def complaint_to_dict(c):
     return {
-        'civilians': [{'id': c.civilian_id, 'firstName': c.first_name or '', 'lastName': c.last_name or '', 'dob': c.dob or '', 'phone': c.phone or '', 'address': c.address or ''} for c in Civilian.query.all()],
-        'vehicles': [{'plate': v.plate, 'ownerName': v.owner_name or '', 'model': v.model or '', 'color': v.color or '', 'registrationStatus': v.registration_status or 'Valid'} for v in Vehicle.query.all()],
-        'licenses': [{'id': l.license_id, 'ownerName': l.owner_name or '', 'licenseType': l.license_type or '', 'status': l.status or 'Valid'} for l in License.query.all()],
-        'warrants': [{'id': w.warrant_id, 'warrantName': w.warrant_name or '', 'warrantCharges': w.warrant_charges or '', 'warrantStatus': w.warrant_status or 'Active', 'warrantIssuer': w.warrant_issuer or '', 'warrantNotes': w.warrant_notes or '', 'expirationDate': w.expiration_date or ''} for w in Warrant.query.all()],
-        'arrests': [{'id': a.arrest_id, 'suspectName': a.suspect_name or '', 'charges': a.charges or '', 'arrestingOfficer': a.arresting_officer or '', 'arrestLocation': a.arrest_location or '', 'penalty': a.penalty or '', 'narrative': a.narrative or '', 'status': a.status or 'Active'} for a in Arrest.query.all()],
-        'incidents': [{'id': i.incident_id, 'incidentType': i.incident_type or '', 'location': i.location or '', 'description': i.description or '', 'status': i.status or 'Open'} for i in Incident.query.all()],
-        'evidence': [{'id': e.evidence_id, 'caseNumber': e.case_number or '', 'evidenceDescription': e.evidence_description or '', 'status': e.status or 'Active'} for e in Evidence.query.all()],
-        'trafficStops': [{'id': t.stop_id, 'driverName': t.driver_name or '', 'plate': t.plate or '', 'reason': t.reason or '', 'outcome': t.outcome or '', 'officer': t.officer or ''} for t in TrafficStop.query.all()],
-        'calls911': [{'id': c.call_id, 'callerName': c.caller_name or '', 'location': c.location or '', 'description': c.description or '', 'incidentType': c.incident_type or '', 'priority': c.priority or 'Medium', 'assignedUnit': c.assigned_unit or '', 'status': c.status or 'New'} for c in Call911.query.all()],
-        'officers': DEFAULT_OFFICERS,
-        'activityLog': [{'id': a.log_id, 'action': a.action or '', 'officer': a.officer or '', 'details': a.details or ''} for a in ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(200).all()],
+        'id': c.complaint_id,
+        'complaintDiscord': c.complaint_discord,
+        'reportedName': c.reported_name,
+        'complaintType': c.complaint_type,
+        'incidentDate': c.incident_date,
+        'incidentLocation': c.incident_location,
+        'witnesses': c.witnesses,
+        'evidenceLink': c.evidence_link,
+        'description': c.description,
+        'resolution': c.resolution,
+        'status': c.status,
+        'staffNotes': c.staff_notes or '',
+        'submittedAt': c.submitted_at.isoformat() if c.submitted_at else None,
+        'updatedAt': c.updated_at.isoformat() if c.updated_at else None,
     }
 
 
+def application_to_dict(a):
+    return {
+        'id': a.application_id,
+        'appDiscord': a.app_discord,
+        'appCharacter': a.app_character,
+        'applicationType': a.application_type,
+        'ageConfirmation': a.age_confirmation,
+        'experience': a.experience,
+        'roleReason': a.role_reason,
+        'availability': a.availability,
+        'status': a.status,
+        'staffNotes': a.staff_notes or '',
+        'submittedAt': a.submitted_at.isoformat() if a.submitted_at else None,
+        'updatedAt': a.updated_at.isoformat() if a.updated_at else None,
+    }
+
+
+def session_to_dict(s):
+    return {
+        'callsign': s.callsign,
+        'name': s.officer_name or '',
+        'department': s.department or 'LSPD',
+        'loggedInAt': s.logged_in_at.isoformat() if s.logged_in_at else None,
+        'status': s.status or 'On Duty',
+    }
+
+
+def alert_to_dict(a):
+    return {
+        'id': a.alert_id,
+        'type': a.alert_type,
+        'message': a.message,
+        'issuedBy': a.issued_by,
+        'issuedAt': a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+def radio_to_dict(r):
+    return {
+        'id': r.log_id,
+        'unit': r.unit,
+        'channel': r.channel,
+        'message': r.message,
+        'timestamp': r.created_at.isoformat() if r.created_at else None,
+    }
+
+
+def status_to_dict(s):
+    return {
+        'cityStatus': s.city_status,
+        'playerCount': s.player_count,
+        'maxPlayers': s.max_players,
+        'customMessage': s.custom_message,
+        'lastUpdated': s.last_updated.isoformat() if s.last_updated else None,
+    }
+
+
+def inmate_to_dict(i):
+    return {
+        'id': i.inmate_id,
+        'suspectName': i.suspect_name,
+        'charges': i.charges or '',
+        'penalty': i.penalty or '',
+        'cell': i.cell or '',
+        'bookedBy': i.booked_by,
+        'arrestId': i.arrest_id or '',
+        'estimatedRelease': i.estimated_release or '',
+        'notes': i.notes or '',
+        'status': i.status,
+        'bookedAt': (i.booked_at.isoformat() + 'Z') if i.booked_at else None,
+        'releasedAt': (i.released_at.isoformat() + 'Z') if i.released_at else None,
+        'releasedBy': i.released_by or '',
+        'releaseReason': i.release_reason or '',
+        'updatedAt': (i.updated_at.isoformat() + 'Z') if i.updated_at else None,
+    }
+
+
+def hearing_to_dict(h):
+    return {
+        'id': h.hearing_id,
+        'suspectName': h.suspect_name,
+        'charges': h.charges or '',
+        'hearingType': h.hearing_type,
+        'scheduledAt': h.scheduled_at or '',
+        'judge': h.judge or '',
+        'notes': h.notes or '',
+        'arrestId': h.arrest_id or '',
+        'filingOfficer': h.filing_officer or '',
+        'outcome': h.outcome or '',
+        'status': h.status,
+        'createdAt': (h.created_at.isoformat() + 'Z') if h.created_at else None,
+        'updatedAt': (h.updated_at.isoformat() + 'Z') if h.updated_at else None,
+    }
+
+
+def civilian_to_dict(c):
+    return {
+        'id': c.civilian_id,
+        'firstName': c.first_name or '',
+        'lastName': c.last_name or '',
+        'dob': c.dob or '',
+        'gender': c.gender or '',
+        'phone': c.phone or '',
+        'address': c.address or '',
+        'occupation': c.occupation or '',
+        'notes': c.notes or '',
+    }
+
+
+def vehicle_to_dict(v):
+    return {
+        'plate': v.plate,
+        'ownerName': v.owner_name or '',
+        'model': v.model or '',
+        'color': v.color or '',
+        'registrationStatus': v.registration_status or 'Valid',
+    }
+
+
+def license_to_dict(l):
+    return {
+        'id': l.license_id,
+        'ownerName': l.owner_name or '',
+        'licenseType': l.license_type or '',
+        'status': l.status or 'Valid',
+        'issuedDate': l.issued_date or '',
+        'expiryDate': l.expiry_date or '',
+        'notes': l.notes or '',
+    }
+
+  
+def warrant_to_dict(w):
+    return {
+        'id': w.warrant_id,
+        'warrantName': w.warrant_name or '',
+        'warrantCharges': w.warrant_charges or '',
+        'warrantIssuer': w.warrant_issuer or '',
+        'warrantNotes': w.warrant_notes or '',
+        'warrantStatus': w.warrant_status or 'Active',
+        'expirationDate': w.expiration_date or '',
+        'justification': w.justification or '',
+        'createdAt': w.created_at.isoformat() if w.created_at else None,
+    }
+
+
+def arrest_to_dict(a):
+    return {
+        'id': a.arrest_id,
+        'suspectName': a.suspect_name or '',
+        'charges': a.charges or '',
+        'arrestingOfficer': a.arresting_officer or '',
+        'arrestLocation': a.arrest_location or '',
+        'evidenceAttached': a.evidence_attached or '',
+        'penalty': a.penalty or '',
+        'reportNotes': a.report_notes or '',
+        'narrative': a.narrative or '',
+        'status': a.status or 'Active',
+        'createdAt': a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+def incident_to_dict(i):
+    return {
+        'id': i.incident_id,
+        'incidentType': i.incident_type or '',
+        'location': i.location or '',
+        'description': i.description or '',
+        'officersInvolved': i.officers_involved or '',
+        'suspects': i.suspects or '',
+        'status': i.status or 'Open',
+        'priority': i.priority or 'Medium',
+        'notes': i.notes or '',
+        'createdAt': i.created_at.isoformat() if i.created_at else None,
+    }
+
+
+def evidence_to_dict(e):
+    return {
+        'id': e.evidence_id,
+        'caseNumber': e.case_number or '',
+        'evidenceDescription': e.evidence_description or '',
+        'collectedBy': e.collected_by or '',
+        'locationFound': e.location_found or '',
+        'status': e.status or 'Active',
+        'notes': e.notes or '',
+        'createdAt': e.created_at.isoformat() if e.created_at else None,
+    }
+
+
+def traffic_stop_to_dict(t):
+    return {
+        'id': t.stop_id,
+        'driverName': t.driver_name or '',
+        'trafficPlate': t.plate or '',
+        'plate': t.plate or '',
+        'trafficReason': t.reason or '',
+        'reason': t.reason or '',
+        'trafficOutcome': t.outcome or '',
+        'outcome': t.outcome or '',
+        'officer': t.officer or '',
+        'location': t.location or '',
+        'notes': t.notes or '',
+        'createdAt': t.created_at.isoformat() if t.created_at else None,
+    }
+
+
+def call911_to_dict(c):
+    return {
+        'id': c.call_id,
+        'callerName': c.caller_name or '',
+        'location': c.location or '',
+        'description': c.description or '',
+        'incidentType': c.incident_type or '',
+        'priority': c.priority or 'Medium',
+        'assignedUnit': c.assigned_unit or '',
+        'status': c.status or 'New',
+        'dispatchNotes': c.dispatch_notes or '',
+        'createdAt': c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def activity_log_to_dict(a):
+    return {
+        'id': a.log_id,
+        'action': a.action or '',
+        'officer': a.officer or '',
+        'details': a.details or '',
+        'timestamp': a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Database-backed CAD data helpers
+# ---------------------------------------------------------------------------
+
+def load_cad_data():
+    """Return the full CAD data dict assembled from DB tables."""
+    civilians   = [civilian_to_dict(c)     for c in Civilian.query.order_by(Civilian.created_at).all()]
+    vehicles    = [vehicle_to_dict(v)      for v in Vehicle.query.order_by(Vehicle.created_at).all()]
+    licenses    = [license_to_dict(l)      for l in License.query.order_by(License.created_at).all()]
+    warrants    = [warrant_to_dict(w)      for w in Warrant.query.order_by(Warrant.created_at.desc()).all()]
+    arrests     = [arrest_to_dict(a)       for a in Arrest.query.order_by(Arrest.created_at.desc()).all()]
+    incidents   = [incident_to_dict(i)     for i in Incident.query.order_by(Incident.created_at.desc()).all()]
+    evidence    = [evidence_to_dict(e)     for e in Evidence.query.order_by(Evidence.created_at.desc()).all()]
+    traffic     = [traffic_stop_to_dict(t) for t in TrafficStop.query.order_by(TrafficStop.created_at.desc()).all()]
+    calls911    = [call911_to_dict(c)      for c in Call911.query.order_by(Call911.created_at.desc()).all()]
+    activity    = [activity_log_to_dict(a) for a in ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(200).all()]
+    hearings    = [hearing_to_dict(h)      for h in Hearing.query.order_by(Hearing.created_at.desc()).all()]
+    return {
+        'civilians':   civilians,
+        'vehicles':    vehicles,
+        'licenses':    licenses,
+        'warrants':    warrants,
+        'arrests':     arrests,
+        'incidents':   incidents,
+        'evidence':    evidence,
+        'trafficStops': traffic,
+        'calls911':    calls911,
+        'officers':    DEFAULT_OFFICERS,
+        'activityLog': activity,
+        'hearings':    hearings,
+    }
+
+
+def _upsert_civilian(data):
+    civ_id = data.get('id') or f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = Civilian.query.filter_by(civilian_id=civ_id).first()
+    if obj is None:
+        obj = Civilian(civilian_id=civ_id)
+        db.session.add(obj)
+    obj.first_name  = data.get('firstName', '')
+    obj.last_name   = data.get('lastName', '')
+    obj.dob         = data.get('dob', '')
+    obj.gender      = data.get('gender', '')
+    obj.phone       = data.get('phone', '')
+    obj.address     = data.get('address', '')
+    obj.occupation  = data.get('occupation', '')
+    obj.notes       = data.get('notes', '')
+    obj.updated_at  = datetime.utcnow()
+
+
+def _upsert_vehicle(data):
+    plate = data.get('plate', '').strip()
+    if not plate:
+        return
+    obj = Vehicle.query.filter_by(plate=plate).first()
+    if obj is None:
+        obj = Vehicle(plate=plate)
+        db.session.add(obj)
+    obj.owner_name          = data.get('ownerName', '')
+    obj.model               = data.get('model', '')
+    obj.color               = data.get('color', '')
+    obj.registration_status = data.get('registrationStatus', 'Valid')
+    obj.updated_at          = datetime.utcnow()
+
+
+def _upsert_license(data):
+    lic_id = data.get('id') or f"LIC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = License.query.filter_by(license_id=lic_id).first()
+    if obj is None:
+        obj = License(license_id=lic_id)
+        db.session.add(obj)
+    obj.owner_name   = data.get('ownerName', '')
+    obj.license_type = data.get('licenseType', '')
+    obj.status       = data.get('status', 'Valid')
+    obj.issued_date  = data.get('issuedDate', '')
+    obj.expiry_date  = data.get('expiryDate', '')
+    obj.notes        = data.get('notes', '')
+    obj.updated_at   = datetime.utcnow()
+
+
+def _upsert_warrant(data):
+    w_id = data.get('id') or f"WRT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = Warrant.query.filter_by(warrant_id=w_id).first()
+    if obj is None:
+        obj = Warrant(warrant_id=w_id)
+        db.session.add(obj)
+    obj.warrant_name    = data.get('warrantName', '')
+    obj.warrant_charges = data.get('warrantCharges', '')
+    obj.warrant_issuer  = data.get('warrantIssuer', '')
+    obj.warrant_notes   = data.get('warrantNotes', '')
+    obj.warrant_status  = data.get('warrantStatus', 'Active')
+    obj.expiration_date = data.get('expirationDate', '')
+    obj.justification   = data.get('justification', '')
+    obj.updated_at      = datetime.utcnow()
+
+
+def _upsert_arrest(data):
+    a_id = data.get('id') or f"ARR-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = Arrest.query.filter_by(arrest_id=a_id).first()
+    if obj is None:
+        obj = Arrest(arrest_id=a_id)
+        db.session.add(obj)
+    obj.suspect_name       = data.get('suspectName', '')
+    obj.charges            = data.get('charges', '')
+    obj.arresting_officer  = data.get('arrestingOfficer', '')
+    obj.arrest_location    = data.get('arrestLocation', '')
+    obj.evidence_attached  = data.get('evidenceAttached', '')
+    obj.penalty            = data.get('penalty', '')
+    obj.report_notes       = data.get('reportNotes', '')
+    obj.narrative          = data.get('narrative', '')
+    obj.status             = data.get('status', 'Active')
+    obj.updated_at         = datetime.utcnow()
+
+
+def _upsert_incident(data):
+    i_id = data.get('id') or f"INC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = Incident.query.filter_by(incident_id=i_id).first()
+    if obj is None:
+        obj = Incident(incident_id=i_id)
+        db.session.add(obj)
+    obj.incident_type     = data.get('incidentType', '')
+    obj.location          = data.get('location', '')
+    obj.description       = data.get('description', '')
+    obj.officers_involved = data.get('officersInvolved', '')
+    obj.suspects          = data.get('suspects', '')
+    obj.status            = data.get('status', 'Open')
+    obj.priority          = data.get('priority', 'Medium')
+    obj.notes             = data.get('notes', '')
+    obj.updated_at        = datetime.utcnow()
+
+
+def _upsert_evidence(data):
+    e_id = data.get('id') or f"EVD-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = Evidence.query.filter_by(evidence_id=e_id).first()
+    if obj is None:
+        obj = Evidence(evidence_id=e_id)
+        db.session.add(obj)
+    obj.case_number          = data.get('caseNumber', '')
+    obj.evidence_description = data.get('evidenceDescription', data.get('description', ''))
+    obj.collected_by         = data.get('collectedBy', '')
+    obj.location_found       = data.get('locationFound', '')
+    obj.status               = data.get('status', 'Active')
+    obj.notes                = data.get('notes', '')
+    obj.updated_at           = datetime.utcnow()
+
+
+def _upsert_traffic_stop(data):
+    t_id = data.get('id') or f"TRF-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = TrafficStop.query.filter_by(stop_id=t_id).first()
+    if obj is None:
+        obj = TrafficStop(stop_id=t_id)
+        db.session.add(obj)
+    obj.driver_name = data.get('driverName', '')
+    obj.plate       = data.get('trafficPlate', data.get('plate', ''))
+    obj.reason      = data.get('trafficReason', data.get('reason', ''))
+    obj.outcome     = data.get('trafficOutcome', data.get('outcome', ''))
+    obj.officer     = data.get('officer', '')
+    obj.location    = data.get('location', '')
+    obj.notes       = data.get('notes', '')
+    obj.updated_at  = datetime.utcnow()
+
+
+def _upsert_call911(data):
+    c_id = data.get('id') or f"911-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = Call911.query.filter_by(call_id=c_id).first()
+    if obj is None:
+        obj = Call911(call_id=c_id)
+        db.session.add(obj)
+    obj.caller_name    = data.get('callerName', '')
+    obj.location       = data.get('location', '')
+    obj.description    = data.get('description', '')
+    obj.incident_type  = data.get('incidentType', '')
+    obj.priority       = data.get('priority', 'Medium')
+    obj.assigned_unit  = data.get('assignedUnit', '')
+    obj.status         = data.get('status', 'New')
+    obj.dispatch_notes = data.get('dispatchNotes', '')
+    obj.updated_at     = datetime.utcnow()
+
+
+def _upsert_activity(data):
+    a_id = data.get('id') or f"ACT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    obj = ActivityLog.query.filter_by(log_id=a_id).first()
+    if obj is None:
+        obj = ActivityLog(log_id=a_id)
+        db.session.add(obj)
+    obj.action  = data.get('action', '')
+    obj.officer = data.get('officer', '')
+    obj.details = data.get('details', '')
+
+
 def save_cad_data(data):
-    # No-op: individual routes handle DB saves directly
-    pass
-
-
-def load_bolos():
-    bolos = Bolo.query.order_by(Bolo.created_at.desc()).all()
-    return [bolo_to_dict(b) for b in bolos]
-
-
-def load_jail():
-    inmates = Inmate.query.order_by(Inmate.booked_at.desc()).all()
-    return [{'id': i.inmate_id, 'suspectName': i.suspect_name, 'charges': i.charges or '', 'penalty': i.penalty or '', 'cell': i.cell or '', 'bookedBy': i.booked_by, 'arrestId': i.arrest_id or '', 'estimatedRelease': i.estimated_release or '', 'notes': i.notes or '', 'status': i.status, 'bookedAt': (i.booked_at.isoformat() + 'Z') if i.booked_at else None, 'releasedAt': (i.released_at.isoformat() + 'Z') if i.released_at else None, 'releasedBy': i.released_by or '', 'releaseReason': i.release_reason or '', 'updatedAt': (i.updated_at.isoformat() + 'Z') if i.updated_at else None} for i in inmates]
+    """Persist a full CAD data dict to the database."""
+    try:
+        for item in data.get('civilians', []):
+            _upsert_civilian(item)
+        for item in data.get('vehicles', []):
+            _upsert_vehicle(item)
+        for item in data.get('licenses', []):
+            _upsert_license(item)
+        for item in data.get('warrants', []):
+            _upsert_warrant(item)
+        for item in data.get('arrests', []):
+            _upsert_arrest(item)
+        for item in data.get('incidents', []):
+            _upsert_incident(item)
+        for item in data.get('evidence', []):
+            _upsert_evidence(item)
+        for item in data.get('trafficStops', []):
+            _upsert_traffic_stop(item)
+        for item in data.get('calls911', []):
+            _upsert_call911(item)
+        for item in data.get('activityLog', []):
+            _upsert_activity(item)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'save_cad_data error: {e}')
+        raise
 
 
 def send_bolo_discord(bolo):
@@ -218,7 +622,7 @@ def create_bolo(suspect_name, description, last_location, charges, officer, thre
 
 def load_radio_log():
     entries = RadioLog.query.order_by(RadioLog.created_at.desc()).limit(100).all()
-    return [{'id': r.log_id, 'unit': r.unit, 'channel': r.channel, 'message': r.message, 'timestamp': r.created_at.isoformat() if r.created_at else None} for r in reversed(entries)]
+    return [radio_to_dict(r) for r in reversed(entries)]
 
 
 def load_server_status():
@@ -236,13 +640,7 @@ def load_server_status():
         except Exception as e:
             db.session.rollback()
             logger.error(f'load_server_status init error: {e}')
-    return {
-        'cityStatus': status.city_status,
-        'playerCount': status.player_count,
-        'maxPlayers': status.max_players,
-        'customMessage': status.custom_message,
-        'lastUpdated': status.last_updated.isoformat() if status.last_updated else None,
-    }
+    return status_to_dict(status)
 
 
 def save_server_status(status_dict):
@@ -250,24 +648,18 @@ def save_server_status(status_dict):
     if status is None:
         status = ServerStatus()
         db.session.add(status)
-    status.city_status = status_dict.get('cityStatus', 'ACTIVE')
-    status.player_count = status_dict.get('playerCount', 0)
-    status.max_players = status_dict.get('maxPlayers', 32)
+    status.city_status    = status_dict.get('cityStatus', 'ACTIVE')
+    status.player_count   = status_dict.get('playerCount', 0)
+    status.max_players    = status_dict.get('maxPlayers', 32)
     status.custom_message = status_dict.get('customMessage', '')
-    status.last_updated = datetime.utcnow()
+    status.last_updated   = datetime.utcnow()
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         logger.error(f'save_server_status error: {e}')
         raise
-    return {
-        'cityStatus': status.city_status,
-        'playerCount': status.player_count,
-        'maxPlayers': status.max_players,
-        'customMessage': status.custom_message,
-        'lastUpdated': status.last_updated.isoformat() if status.last_updated else None,
-    }
+    return status_to_dict(status)
 
 
 def load_applications():
@@ -663,8 +1055,9 @@ def submit_complaint():
 @app.route('/api/complaints', methods=['GET'])
 @admin_required
 def list_complaints():
-    complaints = load_complaints()
-    return jsonify({'complaints': complaints, 'total': len(complaints)})
+    complaints = Complaint.query.order_by(Complaint.submitted_at.desc()).all()
+    result = [complaint_to_dict(c) for c in complaints]
+    return jsonify({'complaints': result, 'total': len(result)})
 
 
 @app.route('/api/complaint/<complaint_id>/status', methods=['POST'])
@@ -677,35 +1070,35 @@ def update_complaint_status(complaint_id):
     if new_status and new_status not in valid_statuses:
         return jsonify({'success': False, 'error': 'Invalid status'}), 400
 
-    cmp_obj = Complaint.query.filter_by(complaint_id=complaint_id).first()
-    if not cmp_obj:
+    c = Complaint.query.filter_by(complaint_id=complaint_id).first()
+    if c is None:
         return jsonify({'success': False, 'error': 'Complaint not found'}), 404
     if new_status:
-        cmp_obj.status = new_status
-        cmp_obj.updated_at = datetime.utcnow()
+        c.status = new_status
+        c.updated_at = datetime.utcnow()
     if staff_notes is not None:
-        cmp_obj.staff_notes = staff_notes
+        c.staff_notes = staff_notes
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'update_complaint_status DB error: {e}')
+        logger.error(f'update_complaint_status error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    return jsonify({'success': True, 'complaint': complaint_to_dict(cmp_obj)})
+    return jsonify({'success': True, 'complaint': complaint_to_dict(c)})
 
 
 @app.route('/api/complaint/<complaint_id>', methods=['DELETE'])
 @admin_required
 def delete_complaint(complaint_id):
-    cmp_obj = Complaint.query.filter_by(complaint_id=complaint_id).first()
-    if not cmp_obj:
+    c = Complaint.query.filter_by(complaint_id=complaint_id).first()
+    if c is None:
         return jsonify({'success': False, 'error': 'Complaint not found'}), 404
     try:
-        db.session.delete(cmp_obj)
+        db.session.delete(c)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'delete_complaint DB error: {e}')
+        logger.error(f'delete_complaint error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'success': True})
 
@@ -732,8 +1125,9 @@ def submit_application():
 @app.route('/api/applications', methods=['GET'])
 @admin_required
 def list_applications():
-    applications = load_applications()
-    return jsonify({'applications': applications, 'total': len(applications)})
+    apps = Application.query.order_by(Application.submitted_at.desc()).all()
+    result = [application_to_dict(a) for a in apps]
+    return jsonify({'applications': result, 'total': len(result)})
 
 
 @app.route('/api/application/<app_id>/status', methods=['POST'])
@@ -746,35 +1140,35 @@ def update_application_status(app_id):
     if new_status and new_status not in valid_statuses:
         return jsonify({'success': False, 'error': 'Invalid status'}), 400
 
-    app_obj = Application.query.filter_by(application_id=app_id).first()
-    if not app_obj:
+    a = Application.query.filter_by(application_id=app_id).first()
+    if a is None:
         return jsonify({'success': False, 'error': 'Application not found'}), 404
     if new_status:
-        app_obj.status = new_status
-        app_obj.updated_at = datetime.utcnow()
+        a.status = new_status
+        a.updated_at = datetime.utcnow()
     if staff_notes is not None:
-        app_obj.staff_notes = staff_notes
+        a.staff_notes = staff_notes
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'update_application_status DB error: {e}')
+        logger.error(f'update_application_status error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    return jsonify({'success': True, 'application': application_to_dict(app_obj)})
+    return jsonify({'success': True, 'application': application_to_dict(a)})
 
 
 @app.route('/api/application/<app_id>', methods=['DELETE'])
 @admin_required
 def delete_application(app_id):
-    app_obj = Application.query.filter_by(application_id=app_id).first()
-    if not app_obj:
+    a = Application.query.filter_by(application_id=app_id).first()
+    if a is None:
         return jsonify({'success': False, 'error': 'Application not found'}), 404
     try:
-        db.session.delete(app_obj)
+        db.session.delete(a)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'delete_application DB error: {e}')
+        logger.error(f'delete_application error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'success': True})
 
@@ -873,7 +1267,8 @@ def update_server_status():
 
 @app.route('/api/bolos', methods=['GET'])
 def get_bolos():
-    return jsonify(load_bolos())
+    bolos = Bolo.query.order_by(Bolo.created_at.desc()).all()
+    return jsonify([bolo_to_dict(b) for b in bolos])
 
 
 @app.route('/api/bolo', methods=['POST'])
@@ -909,15 +1304,16 @@ def post_bolo():
 
 @app.route('/api/bolo/<bolo_id>/clear', methods=['POST'])
 def clear_bolo(bolo_id):
-    bolo_obj = Bolo.query.filter_by(bolo_id=bolo_id).first()
-    if not bolo_obj:
+    b = Bolo.query.filter_by(bolo_id=bolo_id).first()
+    if b is None:
         return jsonify({'success': False, 'error': 'BOLO not found.'}), 404
-    bolo_obj.status = 'Cleared'
+    b.status = 'Cleared'
+    b.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'clear_bolo DB error: {e}')
+        logger.error(f'clear_bolo error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'success': True})
 
@@ -1181,8 +1577,8 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/radio-log', methods=['GET'])
 def get_radio_log():
-    log = load_radio_log()
-    return jsonify(log)
+    entries = RadioLog.query.order_by(RadioLog.created_at.desc()).limit(50).all()
+    return jsonify([radio_to_dict(r) for r in reversed(entries)])
 
 
 @app.route('/api/radio-log', methods=['POST'])
@@ -1194,21 +1590,20 @@ def post_radio_log():
     if not unit or not message:
         return jsonify({'success': False, 'error': 'Unit and message are required.'}), 400
     log_id = f"RADIO-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
-    radio_obj = RadioLog(
+    entry_obj = RadioLog(
         log_id=log_id,
         unit=unit,
         channel=channel,
         message=message,
     )
     try:
-        db.session.add(radio_obj)
+        db.session.add(entry_obj)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'post_radio_log DB error: {e}')
+        logger.error(f'post_radio_log error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    entry = {'id': radio_obj.log_id, 'unit': radio_obj.unit, 'channel': radio_obj.channel, 'message': radio_obj.message, 'timestamp': radio_obj.created_at.isoformat() if radio_obj.created_at else None}
-    return jsonify({'success': True, 'entry': entry})
+    return jsonify({'success': True, 'entry': radio_to_dict(entry_obj)})
 
 
 @app.route('/api/ai/dispatch', methods=['POST'])
@@ -1571,33 +1966,34 @@ def patch_officer_status():
     data = request.get_json(silent=True) or {}
     officer_id = data.get('id', '').strip()
     new_status = data.get('status', '').strip()
-    valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty']
+    valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty', 'Active']
     if not officer_id or new_status not in valid_statuses:
         return jsonify({'success': False, 'error': 'invalid id or status'}), 400
-    cad = load_cad_data()
-    updated = False
-    for officer in cad.get('officers', []):
-        if officer['id'] == officer_id:
-            officer['status'] = new_status
-            officer['lastUpdate'] = datetime.now().isoformat()
-            updated = True
-            break
-    if not updated:
-        cad.setdefault('officers', []).append({
-            'id': officer_id,
-            'name': data.get('name', officer_id),
-            'status': new_status,
-            'department': data.get('department', ''),
-            'lastUpdate': datetime.now().isoformat(),
-        })
-    save_cad_data(cad)
+    s = OfficerSession.query.filter_by(callsign=officer_id).first()
+    if s is None:
+        s = OfficerSession(
+            callsign=officer_id,
+            officer_name=data.get('name', officer_id),
+            department=data.get('department', ''),
+        )
+        db.session.add(s)
+    s.status = new_status
+    s.updated_at = datetime.utcnow()
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'patch_officer_status error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
     logger.info(f"Officer status update: {officer_id} → {new_status}")
     return jsonify({'success': True})
 
 
 @app.route('/api/officer-sessions', methods=['GET'])
 def get_officer_sessions():
-    return jsonify({'sessions': load_officer_sessions()})
+    sessions = OfficerSession.query.all()
+    result = {s.callsign: session_to_dict(s) for s in sessions}
+    return jsonify({'sessions': result})
 
 
 @app.route('/api/officer-session', methods=['POST'])
@@ -1608,25 +2004,20 @@ def post_officer_session():
     department = data.get('department', 'LSPD').strip()
     if not callsign:
         return jsonify({'success': False, 'error': 'callsign required'}), 400
-    session_obj = OfficerSession.query.filter_by(callsign=callsign).first()
-    if session_obj:
-        session_obj.officer_name = name
-        session_obj.department = department
-        session_obj.status = 'On Duty'
-        session_obj.logged_in_at = datetime.utcnow()
-    else:
-        session_obj = OfficerSession(
-            callsign=callsign,
-            officer_name=name,
-            department=department,
-            status='On Duty',
-        )
-        db.session.add(session_obj)
+    s = OfficerSession.query.filter_by(callsign=callsign).first()
+    if s is None:
+        s = OfficerSession(callsign=callsign)
+        db.session.add(s)
+    s.officer_name = name
+    s.department = department
+    s.status = 'On Duty'
+    s.logged_in_at = datetime.utcnow()
+    s.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'post_officer_session DB error: {e}')
+        logger.error(f'post_officer_session error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     logger.info(f"Officer login: {callsign} ({name}) — {department}")
     return jsonify({'success': True})
@@ -1634,14 +2025,14 @@ def post_officer_session():
 
 @app.route('/api/officer-session/<callsign>', methods=['DELETE'])
 def delete_officer_session(callsign):
-    session_obj = OfficerSession.query.filter_by(callsign=callsign).first()
-    if session_obj:
+    s = OfficerSession.query.filter_by(callsign=callsign).first()
+    if s:
         try:
-            db.session.delete(session_obj)
+            db.session.delete(s)
             db.session.commit()
         except Exception as e:
             db.session.rollback()
-            logger.error(f'delete_officer_session DB error: {e}')
+            logger.error(f'delete_officer_session error: {e}')
             return jsonify({'success': False, 'error': str(e)}), 500
     logger.info(f"Officer end shift: {callsign}")
     return jsonify({'success': True})
@@ -1650,10 +2041,11 @@ def delete_officer_session(callsign):
 @app.route('/api/alerts', methods=['GET'])
 def get_alerts():
     since = request.args.get('since', '')
-    alerts = load_alerts()
+    query = Alert.query.order_by(Alert.created_at.desc()).limit(100)
+    alerts = [alert_to_dict(a) for a in query.all()]
     if since:
-        alerts = [a for a in alerts if a.get('issuedAt', '') > since]
-    return jsonify({'alerts': alerts[-20:]})
+        alerts = [a for a in alerts if (a.get('issuedAt') or '') > since]
+    return jsonify({'alerts': alerts[:20]})
 
 
 @app.route('/api/alert', methods=['POST'])
@@ -1679,10 +2071,10 @@ def post_alert():
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'post_alert DB error: {e}')
+        logger.error(f'post_alert error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    alert_dict = {'id': alert_obj.alert_id, 'type': alert_obj.alert_type, 'message': alert_obj.message, 'issuedBy': alert_obj.issued_by, 'issuedAt': alert_obj.created_at.isoformat() if alert_obj.created_at else None}
-    logger.info(f"Alert broadcast: {alert_obj.alert_id} — {alert_type} by {issued_by}")
+    alert_dict = alert_to_dict(alert_obj)
+    logger.info(f"Alert broadcast: {alert_id} — {alert_type} by {issued_by}")
     return jsonify({'success': True, 'alert': alert_dict})
 
 
@@ -1978,8 +2370,7 @@ Structure: one opening sentence → **Calls** section → **Arrests** section �
 @app.route('/api/court/hearings', methods=['GET'])
 def get_hearings():
     hearings = Hearing.query.order_by(Hearing.scheduled_at.desc()).all()
-    result = [{'id': h.hearing_id, 'suspectName': h.suspect_name, 'charges': h.charges or '', 'hearingType': h.hearing_type, 'scheduledAt': h.scheduled_at or '', 'judge': h.judge or '', 'notes': h.notes or '', 'arrestId': h.arrest_id or '', 'filingOfficer': h.filing_officer or '', 'outcome': h.outcome or '', 'status': h.status, 'createdAt': (h.created_at.isoformat() + 'Z') if h.created_at else None, 'updatedAt': (h.updated_at.isoformat() + 'Z') if h.updated_at else None} for h in hearings]
-    return jsonify({'success': True, 'hearings': result})
+    return jsonify({'success': True, 'hearings': [hearing_to_dict(h) for h in hearings]})
 
 
 @app.route('/api/court/hearings', methods=['POST'])
@@ -2008,53 +2399,56 @@ def create_hearing():
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'create_hearing DB error: {e}')
+        logger.error(f'create_hearing error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    hearing_dict = {'id': hearing_obj.hearing_id, 'suspectName': hearing_obj.suspect_name, 'charges': hearing_obj.charges or '', 'hearingType': hearing_obj.hearing_type, 'scheduledAt': hearing_obj.scheduled_at or '', 'judge': hearing_obj.judge or '', 'notes': hearing_obj.notes or '', 'arrestId': hearing_obj.arrest_id or '', 'filingOfficer': hearing_obj.filing_officer or '', 'outcome': hearing_obj.outcome or '', 'status': hearing_obj.status, 'createdAt': (hearing_obj.created_at.isoformat() + 'Z') if hearing_obj.created_at else None}
-    return jsonify({'success': True, 'hearing': hearing_dict})
+    return jsonify({'success': True, 'hearing': hearing_to_dict(hearing_obj)})
 
 
 @app.route('/api/court/hearings/<hearing_id>', methods=['PUT'])
 def update_hearing(hearing_id):
     body = request.get_json(silent=True) or {}
-    hearing_obj = Hearing.query.filter_by(hearing_id=hearing_id).first()
-    if not hearing_obj:
+    h = Hearing.query.filter_by(hearing_id=hearing_id).first()
+    if h is None:
         return jsonify({'success': False, 'error': 'Hearing not found'}), 404
-    field_map = {'outcome': 'outcome', 'status': 'status', 'judge': 'judge', 'notes': 'notes', 'scheduledAt': 'scheduled_at'}
-    for json_field, db_field in field_map.items():
-        if json_field in body:
-            setattr(hearing_obj, db_field, body[json_field])
-    hearing_obj.updated_at = datetime.utcnow()
+    if 'outcome' in body:
+        h.outcome = body['outcome']
+    if 'status' in body:
+        h.status = body['status']
+    if 'judge' in body:
+        h.judge = body['judge']
+    if 'notes' in body:
+        h.notes = body['notes']
+    if 'scheduledAt' in body:
+        h.scheduled_at = body['scheduledAt']
+    h.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'update_hearing DB error: {e}')
+        logger.error(f'update_hearing error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    hearing_dict = {'id': hearing_obj.hearing_id, 'suspectName': hearing_obj.suspect_name, 'charges': hearing_obj.charges or '', 'hearingType': hearing_obj.hearing_type, 'scheduledAt': hearing_obj.scheduled_at or '', 'judge': hearing_obj.judge or '', 'notes': hearing_obj.notes or '', 'arrestId': hearing_obj.arrest_id or '', 'filingOfficer': hearing_obj.filing_officer or '', 'outcome': hearing_obj.outcome or '', 'status': hearing_obj.status, 'updatedAt': (hearing_obj.updated_at.isoformat() + 'Z') if hearing_obj.updated_at else None}
-    return jsonify({'success': True, 'hearing': hearing_dict})
+    return jsonify({'success': True, 'hearing': hearing_to_dict(h)})
 
 
 @app.route('/api/court/hearings/<hearing_id>', methods=['DELETE'])
 def delete_hearing(hearing_id):
-    hearing_obj = Hearing.query.filter_by(hearing_id=hearing_id).first()
-    if not hearing_obj:
+    h = Hearing.query.filter_by(hearing_id=hearing_id).first()
+    if h is None:
         return jsonify({'success': False, 'error': 'Hearing not found'}), 404
     try:
-        db.session.delete(hearing_obj)
+        db.session.delete(h)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'delete_hearing DB error: {e}')
+        logger.error(f'delete_hearing error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'success': True})
 
 
 @app.route('/api/jail/inmates', methods=['GET'])
 def get_inmates():
-    inmates = load_jail()
-    inmates_sorted = sorted(inmates, key=lambda i: i.get('bookedAt', ''), reverse=True)
-    return jsonify({'success': True, 'inmates': inmates_sorted})
+    inmates = Inmate.query.order_by(Inmate.booked_at.desc()).all()
+    return jsonify({'success': True, 'inmates': [inmate_to_dict(i) for i in inmates]})
 
 
 @app.route('/api/jail/inmates', methods=['POST'])
@@ -2082,52 +2476,55 @@ def book_inmate():
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'book_inmate DB error: {e}')
+        logger.error(f'book_inmate error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    inmate_dict = {'id': inmate_obj.inmate_id, 'suspectName': inmate_obj.suspect_name, 'charges': inmate_obj.charges or '', 'penalty': inmate_obj.penalty or '', 'cell': inmate_obj.cell or '', 'bookedBy': inmate_obj.booked_by, 'arrestId': inmate_obj.arrest_id or '', 'estimatedRelease': inmate_obj.estimated_release or '', 'notes': inmate_obj.notes or '', 'status': inmate_obj.status, 'bookedAt': (inmate_obj.booked_at.isoformat() + 'Z') if inmate_obj.booked_at else None, 'releasedAt': None, 'releasedBy': '', 'releaseReason': '', 'updatedAt': None}
-    return jsonify({'success': True, 'inmate': inmate_dict})
+    return jsonify({'success': True, 'inmate': inmate_to_dict(inmate_obj)})
 
 
 @app.route('/api/jail/inmates/<inmate_id>', methods=['PUT'])
 def update_inmate(inmate_id):
     body = request.get_json(silent=True) or {}
-    inmate_obj = Inmate.query.filter_by(inmate_id=inmate_id).first()
-    if not inmate_obj:
+    inmate = Inmate.query.filter_by(inmate_id=inmate_id).first()
+    if inmate is None:
         return jsonify({'success': False, 'error': 'Inmate not found'}), 404
-    field_map = {'estimatedRelease': 'estimated_release', 'cell': 'cell', 'notes': 'notes', 'penalty': 'penalty', 'status': 'status'}
-    for json_field, db_field in field_map.items():
-        if json_field in body:
-            setattr(inmate_obj, db_field, body[json_field])
-    inmate_obj.updated_at = datetime.utcnow()
+    if 'estimatedRelease' in body:
+        inmate.estimated_release = body['estimatedRelease']
+    if 'cell' in body:
+        inmate.cell = body['cell']
+    if 'notes' in body:
+        inmate.notes = body['notes']
+    if 'penalty' in body:
+        inmate.penalty = body['penalty']
+    if 'status' in body:
+        inmate.status = body['status']
+    inmate.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'update_inmate DB error: {e}')
+        logger.error(f'update_inmate error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    inmate_dict = {'id': inmate_obj.inmate_id, 'suspectName': inmate_obj.suspect_name, 'charges': inmate_obj.charges or '', 'penalty': inmate_obj.penalty or '', 'cell': inmate_obj.cell or '', 'bookedBy': inmate_obj.booked_by, 'arrestId': inmate_obj.arrest_id or '', 'estimatedRelease': inmate_obj.estimated_release or '', 'notes': inmate_obj.notes or '', 'status': inmate_obj.status, 'bookedAt': (inmate_obj.booked_at.isoformat() + 'Z') if inmate_obj.booked_at else None, 'releasedAt': (inmate_obj.released_at.isoformat() + 'Z') if inmate_obj.released_at else None, 'releasedBy': inmate_obj.released_by or '', 'releaseReason': inmate_obj.release_reason or '', 'updatedAt': (inmate_obj.updated_at.isoformat() + 'Z') if inmate_obj.updated_at else None}
-    return jsonify({'success': True, 'inmate': inmate_dict})
+    return jsonify({'success': True, 'inmate': inmate_to_dict(inmate)})
 
 
 @app.route('/api/jail/inmates/<inmate_id>/release', methods=['POST'])
 def release_inmate(inmate_id):
     body = request.get_json(silent=True) or {}
-    inmate_obj = Inmate.query.filter_by(inmate_id=inmate_id).first()
-    if not inmate_obj:
+    inmate = Inmate.query.filter_by(inmate_id=inmate_id).first()
+    if inmate is None:
         return jsonify({'success': False, 'error': 'Inmate not found'}), 404
-    inmate_obj.status = 'Released'
-    inmate_obj.released_at = datetime.utcnow()
-    inmate_obj.released_by = body.get('releasedBy', 'Officer').strip()
-    inmate_obj.release_reason = body.get('releaseReason', '').strip()
-    inmate_obj.updated_at = datetime.utcnow()
+    inmate.status = 'Released'
+    inmate.released_at = datetime.utcnow()
+    inmate.released_by = body.get('releasedBy', 'Officer').strip()
+    inmate.release_reason = body.get('releaseReason', '').strip()
+    inmate.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f'release_inmate DB error: {e}')
+        logger.error(f'release_inmate error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    inmate_dict = {'id': inmate_obj.inmate_id, 'suspectName': inmate_obj.suspect_name, 'charges': inmate_obj.charges or '', 'penalty': inmate_obj.penalty or '', 'cell': inmate_obj.cell or '', 'bookedBy': inmate_obj.booked_by, 'arrestId': inmate_obj.arrest_id or '', 'estimatedRelease': inmate_obj.estimated_release or '', 'notes': inmate_obj.notes or '', 'status': inmate_obj.status, 'bookedAt': (inmate_obj.booked_at.isoformat() + 'Z') if inmate_obj.booked_at else None, 'releasedAt': (inmate_obj.released_at.isoformat() + 'Z') if inmate_obj.released_at else None, 'releasedBy': inmate_obj.released_by or '', 'releaseReason': inmate_obj.release_reason or '', 'updatedAt': (inmate_obj.updated_at.isoformat() + 'Z') if inmate_obj.updated_at else None}
-    return jsonify({'success': True, 'inmate': inmate_dict})
+    return jsonify({'success': True, 'inmate': inmate_to_dict(inmate)})
 
 
 @app.route('/', defaults={'path': ''})
