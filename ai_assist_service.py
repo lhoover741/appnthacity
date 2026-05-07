@@ -21,7 +21,7 @@ def check_name_exists(first_name, last_name):
 def generate_ai_civilian(params):
     """Generate civilian using AI with fallback to local generator."""
     from ai_character_engine import generate_character
-    from world_realism_service import generate_name, generate_address, generate_vehicle
+    from world_realism_service import generate_name, generate_address
 
     # Try AI generation first
     try:
@@ -53,7 +53,6 @@ def generate_ai_civilian(params):
         attempts += 1
 
     address = generate_address(params.get('neighborhood'))
-    vehicle = generate_vehicle()
 
     return {
         'first_name': name['first_name'],
@@ -69,7 +68,7 @@ def generate_ai_civilian(params):
         'biography': f"New resident of {params.get('neighborhood', 'the city')}. Just arrived looking for opportunities.",
 
         # CLEAN RECORD - NO EXCEPTIONS
-        'criminal_background': 'Clean record',
+        'criminal_background': 'No criminal history on file',
         'gang_affiliation': 'None',
         'gang_rank': 'None',
         'parole_status': 'None',
@@ -85,12 +84,21 @@ def generate_ai_civilian(params):
         'insurance_status': 'Valid',
         'driver_license_status': 'Valid',
 
-        # VEHICLE (randomized)
-        'vehicle_make': vehicle['make'],
-        'vehicle_model': vehicle['make'],
-        'vehicle_color': vehicle['color'],
-        'vehicle_plate': vehicle['plate'],
-        'vehicle_vin': vehicle['vin'],
+        # NO VEHICLES - civilians must visit dealerships in RP
+        'vehicle_make': None,
+        'vehicle_model': None,
+        'vehicle_year': None,
+        'vehicle_color': None,
+        'vehicle_plate': None,
+        'vehicle_vin': None,
+
+        # NO DISCORD USERNAME - civilians create their own
+        'discord_username': None,
+
+        # Emergency contact (randomized)
+        'emergency_contact_name': generate_name()['full_name'],
+        'emergency_contact_phone': f"555-{random.randint(1000, 9999)}",
+        'emergency_contact_relationship': random.choice(['Parent', 'Sibling', 'Friend', 'Spouse', 'Relative']),
     }, 'fallback'
 
 

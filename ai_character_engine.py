@@ -80,20 +80,21 @@ PARAMETERS:
 - Gang Affiliation: None (NO gang affiliation)
 - Occupation: {occupation_type}
 - Risk Level: Low (new resident, no known issues)
-- Vehicle Preference: {vehicle_preference}
 - Neighborhood: {neighborhood}
 
-CRITICAL REQUIREMENTS:
-1. Generate UNIQUE names - NEVER use generic names (John Doe, Jane Doe, Mike Smith, Marcus Smith)
-2. Use diverse, realistic names appropriate for ethnicity
-3. Create complex, believable character with depth
-4. Generate realistic GTA-style addresses
+INSTRUCTIONS:
+1. Generate realistic name (NEVER generic like John Doe or Jane Doe)
+2. Create realistic date of birth
+3. Generate realistic phone number
+4. Create realistic address in neighborhood
 5. Create realistic employment history
-6. Generate realistic vehicle with plate
+6. Generate realistic personality traits
 7. Create believable social connections
 8. This character is a NEW RESIDENT - they have NO warrants, NO arrests, NO criminal history
 9. Officer safety notes must reflect clean background only
 10. Make character feel like a real person just starting fresh in the city
+11. DO NOT generate vehicle information - civilians must visit dealerships in RP
+12. DO NOT generate Discord username - civilians create their own
 
 Return ONLY valid JSON (no markdown, no code blocks):
 {{
@@ -104,12 +105,13 @@ Return ONLY valid JSON (no markdown, no code blocks):
   "age": {age},
   "gender": "{gender}",
   "ethnicity": "{race}",
-  "phone_number": "555-XXXX",
+  "phone_number": "555-XXXX format",
   "address": "realistic GTA address",
+  "neighborhood": "{neighborhood}",
   "occupation": "specific job title",
   "employment_history": "2-3 previous jobs with dates",
   "biography": "3-4 sentence detailed RP biography as a new city resident",
-  "criminal_background": "Clean record",
+  "criminal_background": "No criminal history on file",
   "known_associates": ["name1", "name2", "name3"],
   "aliases": [],
   "gang_affiliation": "None",
@@ -117,11 +119,10 @@ Return ONLY valid JSON (no markdown, no code blocks):
   "mental_state": "Stable",
   "habits": ["habit1", "habit2", "habit3"],
   "social_behavior": "how they interact with others",
-  "vehicle_make": "vehicle make",
-  "vehicle_model": "vehicle model",
-  "vehicle_color": "vehicle color",
-  "vehicle_plate": "realistic plate format",
-  "vehicle_vin": "realistic VIN",
+  "personality_traits": "detailed personality description",
+  "emergency_contact_name": "realistic name",
+  "emergency_contact_phone": "555-XXXX format",
+  "emergency_contact_relationship": "family/friend relationship",
   "warrants": [],
   "parole_status": "None",
   "probation_status": "None",
@@ -133,7 +134,7 @@ Return ONLY valid JSON (no markdown, no code blocks):
   "violence_history": "None"
 }}
 
-Make this character FEEL REAL. Include contradictions, flaws, and depth. Avoid stereotypes. Remember: clean record, new to the city."""
+Make this character FEEL REAL. Include contradictions, flaws, and depth. Avoid stereotypes. Remember: clean record, new to the city, NO vehicles, NO Discord username."""
 
 
 def generate_character(age, gender, race, personality_traits,
@@ -195,7 +196,7 @@ def generate_character(age, gender, race, personality_traits,
             character_data = json.loads(content)
 
             # CLEAN RECORD ENFORCEMENT — override any AI-generated criminal fields
-            character_data['criminal_background'] = 'Clean record'
+            character_data['criminal_background'] = 'No criminal history on file'
             character_data['gang_affiliation'] = 'None'
             character_data['gang_rank'] = 'None'
             character_data['parole_status'] = 'None'
@@ -212,6 +213,17 @@ def generate_character(age, gender, race, personality_traits,
             character_data['weapon_permit'] = False
             character_data['insurance_status'] = 'Valid'
             character_data['driver_license_status'] = 'Valid'
+
+            # NO VEHICLES - civilians must visit dealerships in RP
+            character_data['vehicle_make'] = None
+            character_data['vehicle_model'] = None
+            character_data['vehicle_year'] = None
+            character_data['vehicle_color'] = None
+            character_data['vehicle_plate'] = None
+            character_data['vehicle_vin'] = None
+
+            # NO DISCORD USERNAME - civilians create their own
+            character_data['discord_username'] = None
 
             return character_data
         except json.JSONDecodeError as e:
