@@ -2964,158 +2964,167 @@ def panic_button():
 
 
 # ---------------------------------------------------------------------------
-# Criminal Database Routes
+# DMV/Records Routes
 # ---------------------------------------------------------------------------
 
-@app.route('/api/criminal/charges/<civilian_id>', methods=['GET'])
-def get_charges(civilian_id):
-    """Get all charges for a civilian."""
-    from criminal_db_service import get_civilian_charges
+@app.route('/api/dmv/license/<license_id>', methods=['GET'])
+def get_license(license_id):
+    """Get license information."""
+    from dmv_service import get_license_by_id
 
-    charges = get_civilian_charges(civilian_id)
-    return jsonify({'success': True, 'charges': charges, 'total': len(charges)})
+    license = get_license_by_id(license_id)
+    if not license:
+        return jsonify({'success': False, 'error': 'License not found'}), 404
 
+    return jsonify({
+        'success': True,
+        'license': {
+            'license_id': license.license_id,
+            'owner_name': license.owner_name,
+            'license_type': license.license_type,
+            'status': license.status,
+            'issued_date': license.issued_date,
+            'expiry_date': license.expiry_date,
+            'notes': license.notes,
+        }
+    })
 
-@app.route('/api/criminal/warrants/<civilian_id>', methods=['GET'])
-def get_warrants(civilian_id):
-    """Get all active warrants for a civilian."""
-    from criminal_db_service import get_civilian_warrants
+@app.route('/api/dmv/license/civilian/<civilian_id>', methods=['GET'])
+def check_civilian_license(civilian_id):
+    """Check license status for a civilian."""
+    from dmv_service import check_license_status
 
-    warrants = get_civilian_warrants(civilian_id)
-    return jsonify({'success': True, 'warrants': warrants, 'total': len(warrants)})
+    result = check_license_status(civilian_id)
+    return jsonify({'success': True, 'data': result})
 
-
-@app.route('/api/criminal/bolos/<civilian_id>', methods=['GET'])
-def get_bolos(civilian_id):
-    """Get all BOLOs for a civilian."""
-    from criminal_db_service import get_civilian_bolos
-
-    bolos = get_civilian_bolos(civilian_id)
-    return jsonify({'success': True, 'bolos': bolos, 'total': len(bolos)})
-
-
-@app.route('/api/criminal/bolos/search', methods=['POST'])
-def search_bolos_route():
-    """Search BOLO archive."""
+@app.route('/api/dmv/license/<license_id>/suspend', methods=['POST'])
+def suspend_license_route(license_id):
+    """Suspend a driver's license."""
     data = request.get_json(silent=True) or {}
-    query = data.get('query', '').strip()
-
-    if not query or len(query) < 2:
-        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
-
-    from criminal_db_service import search_bolos
-
-    bolos = search_bolos(query)
-    return jsonify({'success': True, 'results': bolos, 'total': len(bolos)})
-
-
-@app.route('/api/criminal/warrants/search', methods=['POST'])
-def search_warrants_route():
-    """Search warrant archive."""
-    data = request.get_json(silent=True) or {}
-    query = data.get('query', '').strip()
-
-    if not query or len(query) < 2:
-        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
-
-    from criminal_db_service import search_warrants
-
-    warrants = search_warrants(query)
-    return jsonify({'success': True, 'results': warrants, 'total': len(warrants)})
-
-
-@app.route('/api/criminal/evidence/<evidence_id>', methods=['GET'])
-def get_evidence_custody(evidence_id):
-    """Get chain of custody for evidence."""
-    from criminal_db_service import get_evidence_chain_of_custody
-
-    evidence = get_evidence_chain_of_custody(evidence_id)
-    if not evidence:
-        return jsonify({'success': False, 'error': 'Evidence not found'}), 404
-
-    return jsonify({'success': True, 'evidence': evidence})
-
-
-@app.route('/api/criminal/evidence/<evidence_id>/transfer', methods=['POST'])
-def transfer_evidence_route(evidence_id):
-    """Transfer evidence custody."""
-    data = request.get_json(silent=True) or {}
-    from_officer = data.get('from_officer', 'Unknown')
-    to_officer = data.get('to_officer', 'Unknown')
     reason = data.get('reason', 'No reason provided')
 
-    from criminal_db_service import transfer_evidence
+    from dmv_service import suspend_license
     from cad_helpers import log_audit
 
     try:
-        evidence = transfer_evidence(evidence_id, from_officer, to_officer, reason)
-        if not evidence:
-            return jsonify({'success': False, 'error': 'Evidence not found'}), 404
+        license = suspend_license(license_id, reason)
+        if not license:
+            return jsonify({'success': False, 'error': 'License not found'}), 404
 
-        log_audit('criminal', 'transfer_evidence', 'Evidence', evidence_id)
-        return jsonify({'success': True, 'message': 'Evidence transferred'})
+        log_audit('dmv', 'suspend_license', 'License', license_id)
+        return jsonify({'success': True, 'message': 'License suspended'})
     except Exception as e:
-        logger.error(f'Failed to transfer evidence: {e}')
+        logger.error(f'Failed to suspend license: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
-
-@app.route('/api/criminal/gang/<gang_name>', methods=['GET'])
-def get_gang_members_route(gang_name):
-    """Get all known members of a gang."""
-    from criminal_db_service import get_gang_members
-
-    members = get_gang_members(gang_name)
-    return jsonify({'success': True, 'members': members, 'total': len(members)})
-
-
-@app.route('/api/criminal/gang-stats', methods=['GET'])
-def get_gang_stats():
-    """Get gang statistics."""
-    from criminal_db_service import get_gang_statistics
-
-    stats = get_gang_statistics()
-    return jsonify({'success': True, 'gangs': stats})
-
-
-@app.route('/api/criminal/bolo/<bolo_id>/archive', methods=['POST'])
-def archive_bolo_route(bolo_id):
-    """Archive a BOLO."""
+@app.route('/api/dmv/license/<license_id>/revoke', methods=['POST'])
+def revoke_license_route(license_id):
+    """Revoke a driver's license."""
     data = request.get_json(silent=True) or {}
-    resolution = data.get('resolution', 'No resolution provided')
+    reason = data.get('reason', 'No reason provided')
 
-    from criminal_db_service import archive_bolo
+    from dmv_service import revoke_license
     from cad_helpers import log_audit
 
     try:
-        bolo = archive_bolo(bolo_id, resolution)
-        if not bolo:
-            return jsonify({'success': False, 'error': 'BOLO not found'}), 404
+        license = revoke_license(license_id, reason)
+        if not license:
+            return jsonify({'success': False, 'error': 'License not found'}), 404
 
-        log_audit('criminal', 'archive_bolo', 'Bolo', bolo_id)
-        return jsonify({'success': True, 'message': 'BOLO archived'})
+        log_audit('dmv', 'revoke_license', 'License', license_id)
+        return jsonify({'success': True, 'message': 'License revoked'})
     except Exception as e:
-        logger.error(f'Failed to archive BOLO: {e}')
+        logger.error(f'Failed to revoke license: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/dmv/vehicle/plate/<plate>', methods=['GET'])
+def lookup_plate(plate):
+    """Look up vehicle by license plate."""
+    from dmv_service import lookup_vehicle_by_plate
 
-@app.route('/api/criminal/warrant/<warrant_id>/archive', methods=['POST'])
-def archive_warrant_route(warrant_id):
-    """Archive a warrant."""
-    data = request.get_json(silent=True) or {}
-    resolution = data.get('resolution', 'No resolution provided')
+    vehicle = lookup_vehicle_by_plate(plate)
+    if not vehicle:
+        return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
 
-    from criminal_db_service import archive_warrant
+    return jsonify({'success': True, 'vehicle': vehicle})
+
+@app.route('/api/dmv/vehicle/owner/<civilian_id>', methods=['GET'])
+def lookup_owner_vehicles(civilian_id):
+    """Look up all vehicles owned by a civilian."""
+    from dmv_service import lookup_vehicles_by_owner
+
+    vehicles = lookup_vehicles_by_owner(civilian_id)
+    return jsonify({'success': True, 'vehicles': vehicles, 'total': len(vehicles)})
+
+@app.route('/api/dmv/vehicle/stolen/<plate>', methods=['POST'])
+def flag_stolen(plate):
+    """Flag a vehicle as stolen."""
+    from dmv_service import flag_stolen_vehicle
     from cad_helpers import log_audit
 
     try:
-        warrant = archive_warrant(warrant_id, resolution)
-        if not warrant:
-            return jsonify({'success': False, 'error': 'Warrant not found'}), 404
+        vehicle = flag_stolen_vehicle(plate)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
 
-        log_audit('criminal', 'archive_warrant', 'Warrant', warrant_id)
-        return jsonify({'success': True, 'message': 'Warrant archived'})
+        log_audit('dmv', 'flag_stolen', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle flagged as stolen'})
     except Exception as e:
-        logger.error(f'Failed to archive warrant: {e}')
+        logger.error(f'Failed to flag stolen vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/recovered/<plate>', methods=['POST'])
+def recover_vehicle(plate):
+    """Mark a stolen vehicle as recovered."""
+    from dmv_service import recover_stolen_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = recover_stolen_vehicle(plate)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'recover_vehicle', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle marked as recovered'})
+    except Exception as e:
+        logger.error(f'Failed to recover vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/impound/<plate>', methods=['POST'])
+def impound_vehicle_route(plate):
+    """Impound a vehicle."""
+    data = request.get_json(silent=True) or {}
+    reason = data.get('reason', 'No reason provided')
+
+    from dmv_service import impound_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = impound_vehicle(plate, reason)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'impound_vehicle', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle impounded'})
+    except Exception as e:
+        logger.error(f'Failed to impound vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/release/<plate>', methods=['POST'])
+def release_vehicle_route(plate):
+    """Release an impounded vehicle."""
+    from dmv_service import release_impounded_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = release_impounded_vehicle(plate)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'release_vehicle', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle released from impound'})
+    except Exception as e:
+        logger.error(f'Failed to release vehicle: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
