@@ -48,6 +48,15 @@ def create_civilian_from_ai(ai_data):
         except (ValueError, TypeError):
             dob = None
 
+    # Normalise JSON-array fields — accept list or string
+    def _json_field(val):
+        if val is None:
+            return None
+        if isinstance(val, list):
+            import json as _json
+            return _json.dumps(val)
+        return str(val)
+
     civilian = Civilian(
         civilian_id=civilian_id,
         first_name=ai_data.get('first_name', ''),
@@ -59,11 +68,25 @@ def create_civilian_from_ai(ai_data):
         occupation=ai_data.get('occupation', ''),
         biography=ai_data.get('biography', ''),
         criminal_background=ai_data.get('criminal_background', ''),
-        mental_state_notes=ai_data.get('mental_state_notes', ''),
+        # Support both legacy key (mental_state_notes) and new key (mental_state)
+        mental_state_notes=ai_data.get('mental_state_notes') or ai_data.get('mental_state', ''),
         officer_safety_notes=ai_data.get('officer_safety_notes', ''),
         warrant_risk=ai_data.get('warrant_risk', 'Low'),
         parole_status=ai_data.get('parole_status', 'None'),
         probation_status=ai_data.get('probation_status', 'None'),
+        gang_affiliation=ai_data.get('gang_affiliation', ''),
+        race=ai_data.get('ethnicity') or ai_data.get('race', ''),
+        age=ai_data.get('age'),
+        gender=ai_data.get('gender', ''),
+        # Advanced character engine fields
+        nickname=ai_data.get('nickname', ''),
+        aliases=_json_field(ai_data.get('aliases')),
+        employment_history=ai_data.get('employment_history', ''),
+        gang_rank=ai_data.get('gang_rank', ''),
+        habits=_json_field(ai_data.get('habits')),
+        social_behavior=ai_data.get('social_behavior', ''),
+        weapon_access=ai_data.get('weapon_access', 'None'),
+        violence_history=ai_data.get('violence_history', 'None'),
         ai_generated=True,
     )
 
