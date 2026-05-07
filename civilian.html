@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Civilian Registration | NThaCityRP</title>
   <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="static/css/ai-assist.css" />
 </head>
 <body>
   <header class="site-header">
@@ -70,10 +71,13 @@
 
     <section class="panel section form-panel">
       <div class="container">
-        <div class="section-header">
+        <div class="section-header civilian-form-header">
           <h2>Register Civilian</h2>
-          <p>Complete the profile for your NThaCityRP civilian persona. This information is stored locally and structured for future CAD or database integration.</p>
+          <button id="ai-assist-btn" class="ai-assist-btn">
+            🤖 AI Assist
+          </button>
         </div>
+        <p class="civilian-form-desc">Complete the profile for your NThaCityRP civilian persona. This information is stored locally and structured for future CAD or database integration.</p>
         <form id="civilian-form" class="system-form">
           <div class="form-grid">
             <div class="form-row">
@@ -180,5 +184,6 @@
   </footer>
 
   <script src="assets/js/main.js"></script>
+  <script src="static/js/ai-assist.js"></script>
 </body>
 </html>
