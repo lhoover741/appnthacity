@@ -16,7 +16,10 @@ from models import (
     Complaint, Application, Civilian, Vehicle, License,
     Warrant, Arrest, Incident, Evidence, TrafficStop, Call911,
     ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
-    ServerStatus, Inmate, Hearing, DispatchCall
+    ServerStatus, Inmate, Hearing, DispatchCall,
+    KnownAssociate, Business, Citation, JailBooking,
+    UseOfForceReport, OfficerNote, CaseFile,
+    AIGenerationLog, AuditLog,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +37,10 @@ from models import (
     Complaint, Application, Civilian, Vehicle, License,
     Warrant, Arrest, Incident, Evidence, TrafficStop, Call911,
     ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
-    ServerStatus, Inmate, Hearing, DispatchCall
+    ServerStatus, Inmate, Hearing, DispatchCall,
+    KnownAssociate, Business, Citation, JailBooking,
+    UseOfForceReport, OfficerNote, CaseFile,
+    AIGenerationLog, AuditLog,
 )
 
 configure_database(app)
@@ -2531,6 +2537,166 @@ def release_inmate(inmate_id):
         logger.error(f'release_inmate error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     return jsonify({'success': True, 'inmate': inmate_to_dict(inmate)})
+
+
+# ---------------------------------------------------------------------------
+# AI Civilian Generation
+# ---------------------------------------------------------------------------
+
+@app.route('/api/ai/civilian', methods=['POST'])
+def ai_generate_civilian():
+    data = request.get_json(silent=True) or {}
+
+    required = ['age', 'gender', 'race', 'personality_traits', 'criminal_history_level',
+                'gang_affiliation', 'occupation_type', 'risk_level', 'vehicle_preference', 'neighborhood']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    from ai_service import generate_civilian
+    from cad_helpers import check_name_uniqueness, create_civilian_from_ai, log_ai_generation
+
+    ai_result = generate_civilian(
+        data['age'], data['gender'], data['race'], data['personality_traits'],
+        data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
+        data['risk_level'], data['vehicle_preference'], data['neighborhood']
+    )
+
+    if 'error' in ai_result:
+        log_ai_generation('civilian', data, 'Failed', status='Error', error_message=ai_result['error'])
+        return jsonify({'success': False, 'error': ai_result['error']}), 500
+
+    # Check name uniqueness — regenerate once if duplicate
+    first_name = ai_result.get('first_name', '')
+    last_name = ai_result.get('last_name', '')
+
+    if not check_name_uniqueness(first_name, last_name):
+        logger.warning(f'Duplicate name detected: {first_name} {last_name}, regenerating...')
+        ai_result = generate_civilian(
+            data['age'], data['gender'], data['race'], data['personality_traits'],
+            data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
+            data['risk_level'], data['vehicle_preference'], data['neighborhood']
+        )
+        if 'error' in ai_result:
+            log_ai_generation('civilian', data, 'Failed', status='Error', error_message=ai_result['error'])
+            return jsonify({'success': False, 'error': ai_result['error']}), 500
+
+    try:
+        civilian = create_civilian_from_ai(ai_result)
+        log_ai_generation('civilian', data, f'Created {civilian.civilian_id}', status='Success')
+
+        return jsonify({
+            'success': True,
+            'civilian_id': civilian.civilian_id,
+            'name': civilian.full_name,
+            'data': {
+                'first_name': civilian.first_name,
+                'last_name': civilian.last_name,
+                'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else None,
+                'phone_number': civilian.phone_number,
+                'address': civilian.address,
+                'occupation': civilian.occupation,
+                'biography': civilian.biography,
+                'criminal_background': civilian.criminal_background,
+                'warrant_risk': civilian.warrant_risk,
+                'parole_status': civilian.parole_status,
+                'probation_status': civilian.probation_status,
+                'mental_state_notes': civilian.mental_state_notes,
+                'officer_safety_notes': civilian.officer_safety_notes,
+            }
+        })
+    except Exception as e:
+        logger.error(f'Civilian creation failed: {e}')
+        log_ai_generation('civilian', data, 'Failed', status='Error', error_message=str(e))
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Civilian CRUD
+# ---------------------------------------------------------------------------
+
+@app.route('/api/civilians', methods=['GET'])
+def get_civilians():
+    civilians = Civilian.query.order_by(Civilian.created_at.desc()).all()
+    result = [{
+        'civilian_id': c.civilian_id,
+        'name': c.full_name or f'{c.first_name or ""} {c.last_name or ""}'.strip(),
+        'age': c.age,
+        'gender': c.gender,
+        'occupation': c.occupation,
+        'risk_level': c.risk_level,
+        'warrant_risk': c.warrant_risk,
+        'parole_status': c.parole_status,
+        'probation_status': c.probation_status,
+        'ai_generated': c.ai_generated,
+    } for c in civilians]
+    return jsonify({'success': True, 'civilians': result, 'total': len(result)})
+
+
+@app.route('/api/civilian/search', methods=['POST'])
+def search_civilians():
+    data = request.get_json(silent=True) or {}
+    query = data.get('query', '').strip().lower()
+
+    if not query or len(query) < 2:
+        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
+
+    civilians = Civilian.query.filter(
+        (Civilian.first_name.ilike(f'%{query}%')) |
+        (Civilian.last_name.ilike(f'%{query}%')) |
+        (Civilian.full_name.ilike(f'%{query}%')) |
+        (Civilian.phone_number.ilike(f'%{query}%')) |
+        (Civilian.address.ilike(f'%{query}%'))
+    ).limit(20).all()
+
+    result = [{
+        'civilian_id': c.civilian_id,
+        'name': c.full_name or f'{c.first_name or ""} {c.last_name or ""}'.strip(),
+        'phone': c.phone_number or c.phone or '',
+        'address': c.address or '',
+        'risk_level': c.risk_level,
+    } for c in civilians]
+
+    return jsonify({'success': True, 'results': result, 'total': len(result)})
+
+
+@app.route('/api/civilian/<civilian_id>', methods=['GET'])
+def get_civilian(civilian_id):
+    c = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    if not c:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'civilian': {
+            'civilian_id': c.civilian_id,
+            'first_name': c.first_name,
+            'last_name': c.last_name,
+            'full_name': c.full_name or f'{c.first_name or ""} {c.last_name or ""}'.strip(),
+            'date_of_birth': c.date_of_birth.isoformat() if c.date_of_birth else (c.dob or None),
+            'age': c.age,
+            'gender': c.gender,
+            'race': c.race,
+            'phone_number': c.phone_number or c.phone or '',
+            'address': c.address,
+            'occupation': c.occupation,
+            'gang_affiliation': c.gang_affiliation,
+            'risk_level': c.risk_level,
+            'warrant_risk': c.warrant_risk,
+            'parole_status': c.parole_status,
+            'probation_status': c.probation_status,
+            'weapon_permit': c.weapon_permit,
+            'driver_license_status': c.driver_license_status,
+            'biography': c.biography,
+            'criminal_background': c.criminal_background,
+            'mental_state_notes': c.mental_state_notes,
+            'officer_safety_notes': c.officer_safety_notes,
+            'last_known_location': c.last_known_location,
+            'notes': c.notes,
+            'ai_generated': c.ai_generated,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+        }
+    })
 
 
 @app.route('/', defaults={'path': ''})
