@@ -9,6 +9,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_migrate import Migrate
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from security_service import require_auth, require_role, hash_password, verify_password
+from performance_service import cache, paginate_query
 
 # Import database and models FIRST
 from database import db, configure_database
@@ -44,6 +48,16 @@ from models import (
 )
 
 configure_database(app)
+
+# Initialize rate limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Initialize cache
+cache.init_app(app)
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
@@ -3126,6 +3140,161 @@ def release_vehicle_route(plate):
     except Exception as e:
         logger.error(f'Failed to release vehicle: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Security: hash admin password on startup
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def setup_admin():
+    """Setup admin user if not exists."""
+    if not session.get('admin_setup_done'):
+        admin_password = os.environ.get('ADMIN_PASSWORD', 'admin')
+        session['admin_password_hash'] = hash_password(admin_password)
+        session['admin_setup_done'] = True
+
+
+# ---------------------------------------------------------------------------
+# Auth Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/auth/login', methods=['POST'])
+@limiter.limit("5 per minute")
+def login():
+    """Login endpoint with rate limiting."""
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '')
+    password = data.get('password', '')
+
+    # Simple admin authentication
+    if username == 'admin' and verify_password(session.get('admin_password_hash', ''), password):
+        session['user_id'] = 'admin'
+        session['role'] = 'admin'
+        session.permanent = True
+        return jsonify({'success': True, 'message': 'Logged in as admin'})
+
+    return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """Logout endpoint."""
+    session.clear()
+    return jsonify({'success': True, 'message': 'Logged out'})
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    """Get authentication status."""
+    return jsonify({
+        'success': True,
+        'authenticated': 'user_id' in session,
+        'role': session.get('role', 'viewer'),
+        'user_id': session.get('user_id'),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Paginated / Statistics / Health Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/civilians/paginated', methods=['GET'])
+@require_auth
+def get_civilians_paginated():
+    """Get paginated list of civilians."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
+    query = Civilian.query.order_by(Civilian.created_at.desc())
+    result = paginate_query(query, page, per_page)
+
+    civilians = [{
+        'civilian_id': c.civilian_id,
+        'name': c.full_name,
+        'age': c.age,
+        'risk_level': c.risk_level,
+    } for c in result['items']]
+
+    return jsonify({
+        'success': True,
+        'civilians': civilians,
+        'pagination': {
+            'page': result['page'],
+            'per_page': result['per_page'],
+            'total': result['total'],
+            'pages': result['pages'],
+        }
+    })
+
+
+@app.route('/api/system/statistics', methods=['GET'])
+@require_auth
+@cache.cached(timeout=300)
+def get_system_statistics():
+    """Get system statistics with caching."""
+    from performance_service import get_statistics
+
+    stats = get_statistics(db)
+    return jsonify({'success': True, 'statistics': stats})
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint."""
+    return jsonify({
+        'success': True,
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Admin-only Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/admin/users', methods=['GET'])
+@require_auth
+@require_role('admin')
+def get_users():
+    """Get all users (admin only)."""
+    return jsonify({
+        'success': True,
+        'users': [
+            {'user_id': 'admin', 'role': 'admin', 'status': 'active'}
+        ]
+    })
+
+
+@app.route('/api/admin/audit-logs', methods=['GET'])
+@require_auth
+@require_role('admin', 'supervisor')
+def get_audit_logs():
+    """Get audit logs (admin/supervisor only)."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+
+    query = AuditLog.query.order_by(AuditLog.created_at.desc())
+    result = paginate_query(query, page, per_page)
+
+    logs = [{
+        'log_id': log.log_id,
+        'officer_name': log.officer_name,
+        'action': log.action,
+        'record_type': log.record_type,
+        'created_at': log.created_at.isoformat() if log.created_at else None,
+    } for log in result['items']]
+
+    return jsonify({
+        'success': True,
+        'logs': logs,
+        'pagination': {
+            'page': result['page'],
+            'per_page': result['per_page'],
+            'total': result['total'],
+            'pages': result['pages'],
+        }
+    })
 
 
 @app.route('/', defaults={'path': ''})
