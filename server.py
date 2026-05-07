@@ -9,6 +9,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_migrate import Migrate
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from security_service import require_auth, require_role, hash_password, verify_password
+from performance_service import cache, paginate_query
 
 # Import database and models FIRST
 from database import db, configure_database
@@ -44,6 +48,16 @@ from models import (
 )
 
 configure_database(app)
+
+# Initialize rate limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Initialize cache
+cache.init_app(app)
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
