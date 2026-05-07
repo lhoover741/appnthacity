@@ -9,6 +9,15 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session
 
+# Import database and models FIRST
+from database import db, configure_database
+from models import (
+    Complaint, Application, Civilian, Vehicle, License,
+    Warrant, Arrest, Incident, Evidence, TrafficStop, Call911,
+    ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
+    ServerStatus, Inmate, Hearing, DispatchCall
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -223,7 +232,7 @@ def license_to_dict(l):
         'notes': l.notes or '',
     }
 
-
+  
 def warrant_to_dict(w):
     return {
         'id': w.warrant_id,
@@ -2079,12 +2088,171 @@ def post_cad_data():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({'success': False, 'error': 'Invalid payload'}), 400
-    allowed_keys = {'civilians', 'vehicles', 'licenses', 'warrants', 'arrests',
-                    'incidents', 'evidence', 'trafficStops', 'calls911', 'officers', 'activityLog'}
-    cleaned = {k: v for k, v in data.items() if k in allowed_keys}
-    existing = load_cad_data()
-    existing.update(cleaned)
-    save_cad_data(existing)
+
+    try:
+        # Civilians
+        if 'civilians' in data:
+            for c in data['civilians']:
+                civ_id = c.get('id') or c.get('civilian_id')
+                if not civ_id:
+                    continue
+                obj = Civilian.query.filter_by(civilian_id=civ_id).first()
+                if obj:
+                    obj.first_name = c.get('firstName', obj.first_name)
+                    obj.last_name = c.get('lastName', obj.last_name)
+                    obj.dob = c.get('dob', obj.dob)
+                    obj.phone = c.get('phone', obj.phone)
+                    obj.address = c.get('address', obj.address)
+                else:
+                    db.session.add(Civilian(civilian_id=civ_id, first_name=c.get('firstName', ''), last_name=c.get('lastName', ''), dob=c.get('dob', ''), phone=c.get('phone', ''), address=c.get('address', '')))
+
+        # Vehicles
+        if 'vehicles' in data:
+            for v in data['vehicles']:
+                plate = v.get('plate')
+                if not plate:
+                    continue
+                obj = Vehicle.query.filter_by(plate=plate).first()
+                if obj:
+                    obj.owner_name = v.get('ownerName', obj.owner_name)
+                    obj.model = v.get('model', obj.model)
+                    obj.color = v.get('color', obj.color)
+                    obj.registration_status = v.get('registrationStatus', obj.registration_status)
+                else:
+                    db.session.add(Vehicle(plate=plate, owner_name=v.get('ownerName', ''), model=v.get('model', ''), color=v.get('color', ''), registration_status=v.get('registrationStatus', 'Valid')))
+
+        # Licenses
+        if 'licenses' in data:
+            for l in data['licenses']:
+                lic_id = l.get('id')
+                if not lic_id:
+                    continue
+                obj = License.query.filter_by(license_id=lic_id).first()
+                if obj:
+                    obj.owner_name = l.get('ownerName', obj.owner_name)
+                    obj.license_type = l.get('licenseType', obj.license_type)
+                    obj.status = l.get('status', obj.status)
+                else:
+                    db.session.add(License(license_id=lic_id, owner_name=l.get('ownerName', ''), license_type=l.get('licenseType', ''), status=l.get('status', 'Valid')))
+
+        # Warrants
+        if 'warrants' in data:
+            for w in data['warrants']:
+                w_id = w.get('id')
+                if not w_id:
+                    continue
+                obj = Warrant.query.filter_by(warrant_id=w_id).first()
+                if obj:
+                    obj.warrant_name = w.get('warrantName', obj.warrant_name)
+                    obj.warrant_charges = w.get('warrantCharges', obj.warrant_charges)
+                    obj.warrant_status = w.get('warrantStatus', obj.warrant_status)
+                    obj.warrant_issuer = w.get('warrantIssuer', obj.warrant_issuer)
+                    obj.warrant_notes = w.get('warrantNotes', obj.warrant_notes)
+                    obj.expiration_date = w.get('expirationDate', obj.expiration_date)
+                    obj.updated_at = datetime.utcnow()
+                else:
+                    db.session.add(Warrant(warrant_id=w_id, warrant_name=w.get('warrantName', ''), warrant_charges=w.get('warrantCharges', ''), warrant_status=w.get('warrantStatus', 'Active'), warrant_issuer=w.get('warrantIssuer', ''), warrant_notes=w.get('warrantNotes', ''), expiration_date=w.get('expirationDate', '')))
+
+        # Arrests
+        if 'arrests' in data:
+            for a in data['arrests']:
+                a_id = a.get('id')
+                if not a_id:
+                    continue
+                obj = Arrest.query.filter_by(arrest_id=a_id).first()
+                if obj:
+                    obj.suspect_name = a.get('suspectName', obj.suspect_name)
+                    obj.charges = a.get('charges', obj.charges)
+                    obj.arresting_officer = a.get('arrestingOfficer', obj.arresting_officer)
+                    obj.arrest_location = a.get('arrestLocation', obj.arrest_location)
+                    obj.penalty = a.get('penalty', obj.penalty)
+                    obj.narrative = a.get('narrative', obj.narrative)
+                    obj.status = a.get('status', obj.status)
+                    obj.updated_at = datetime.utcnow()
+                else:
+                    db.session.add(Arrest(arrest_id=a_id, suspect_name=a.get('suspectName', ''), charges=a.get('charges', ''), arresting_officer=a.get('arrestingOfficer', ''), arrest_location=a.get('arrestLocation', ''), penalty=a.get('penalty', ''), narrative=a.get('narrative', ''), status=a.get('status', 'Active')))
+
+        # Incidents
+        if 'incidents' in data:
+            for i in data['incidents']:
+                i_id = i.get('id')
+                if not i_id:
+                    continue
+                obj = Incident.query.filter_by(incident_id=i_id).first()
+                if obj:
+                    obj.incident_type = i.get('incidentType', obj.incident_type)
+                    obj.location = i.get('location', obj.location)
+                    obj.description = i.get('description', obj.description)
+                    obj.status = i.get('status', obj.status)
+                    obj.updated_at = datetime.utcnow()
+                else:
+                    db.session.add(Incident(incident_id=i_id, incident_type=i.get('incidentType', ''), location=i.get('location', ''), description=i.get('description', ''), status=i.get('status', 'Open')))
+
+        # Evidence
+        if 'evidence' in data:
+            for e in data['evidence']:
+                e_id = e.get('id')
+                if not e_id:
+                    continue
+                obj = Evidence.query.filter_by(evidence_id=e_id).first()
+                if obj:
+                    obj.case_number = e.get('caseNumber', obj.case_number)
+                    obj.evidence_description = e.get('evidenceDescription', obj.evidence_description)
+                    obj.status = e.get('status', obj.status)
+                else:
+                    db.session.add(Evidence(evidence_id=e_id, case_number=e.get('caseNumber', ''), evidence_description=e.get('evidenceDescription', ''), status=e.get('status', 'Active')))
+
+        # Traffic Stops
+        if 'trafficStops' in data:
+            for t in data['trafficStops']:
+                t_id = t.get('id')
+                if not t_id:
+                    continue
+                obj = TrafficStop.query.filter_by(stop_id=t_id).first()
+                if obj:
+                    obj.driver_name = t.get('driverName', obj.driver_name)
+                    obj.plate = t.get('plate', obj.plate)
+                    obj.reason = t.get('reason', obj.reason)
+                    obj.outcome = t.get('outcome', obj.outcome)
+                    obj.officer = t.get('officer', obj.officer)
+                else:
+                    db.session.add(TrafficStop(stop_id=t_id, driver_name=t.get('driverName', ''), plate=t.get('plate', ''), reason=t.get('reason', ''), outcome=t.get('outcome', ''), officer=t.get('officer', '')))
+
+        # 911 Calls
+        if 'calls911' in data:
+            for c in data['calls911']:
+                c_id = c.get('id')
+                if not c_id:
+                    continue
+                obj = Call911.query.filter_by(call_id=c_id).first()
+                if obj:
+                    obj.caller_name = c.get('callerName', obj.caller_name)
+                    obj.location = c.get('location', obj.location)
+                    obj.description = c.get('description', obj.description)
+                    obj.incident_type = c.get('incidentType', obj.incident_type)
+                    obj.priority = c.get('priority', obj.priority)
+                    obj.assigned_unit = c.get('assignedUnit', obj.assigned_unit)
+                    obj.status = c.get('status', obj.status)
+                    obj.updated_at = datetime.utcnow()
+                else:
+                    db.session.add(Call911(call_id=c_id, caller_name=c.get('callerName', ''), location=c.get('location', ''), description=c.get('description', ''), incident_type=c.get('incidentType', ''), priority=c.get('priority', 'Medium'), assigned_unit=c.get('assignedUnit', ''), status=c.get('status', 'New')))
+
+        # Activity Log
+        if 'activityLog' in data:
+            for a in data['activityLog']:
+                a_id = a.get('id')
+                if not a_id:
+                    continue
+                obj = ActivityLog.query.filter_by(log_id=a_id).first()
+                if not obj:
+                    db.session.add(ActivityLog(log_id=a_id, action=a.get('action', ''), officer=a.get('officer', ''), details=a.get('details', '')))
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'post_cad_data DB error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
     return jsonify({'success': True})
 
 
@@ -2093,15 +2261,11 @@ def get_criminal_record():
     name = request.args.get('name', '').strip().lower()
     if not name or len(name) < 2:
         return jsonify({'success': False, 'error': 'Name must be at least 2 characters'}), 400
-    data = load_cad_data()
 
-    def nm(val):
-        return name in (val or '').lower()
-
-    warrants    = [w for w in data.get('warrants',     []) if nm(w.get('warrantName')) or nm(w.get('suspectName'))]
-    arrests     = [a for a in data.get('arrests',      []) if nm(a.get('suspectName'))]
-    traffic     = [t for t in data.get('trafficStops', []) if nm(t.get('driverName'))]
-    evidence    = [e for e in data.get('evidence',     []) if nm(e.get('caseNumber')) or nm(e.get('evidenceDescription')) or nm(e.get('description'))]
+    warrants = [{'id': w.warrant_id, 'warrantName': w.warrant_name or '', 'warrantCharges': w.warrant_charges or '', 'warrantStatus': w.warrant_status or 'Active'} for w in Warrant.query.all() if name in (w.warrant_name or '').lower()]
+    arrests = [{'id': a.arrest_id, 'suspectName': a.suspect_name or '', 'charges': a.charges or '', 'penalty': a.penalty or '', 'status': a.status or 'Active'} for a in Arrest.query.all() if name in (a.suspect_name or '').lower()]
+    traffic = [{'id': t.stop_id, 'driverName': t.driver_name or '', 'plate': t.plate or '', 'reason': t.reason or ''} for t in TrafficStop.query.all() if name in (t.driver_name or '').lower()]
+    evidence = [{'id': e.evidence_id, 'caseNumber': e.case_number or '', 'evidenceDescription': e.evidence_description or '', 'status': e.status or 'Active'} for e in Evidence.query.all() if name in (e.case_number or '').lower() or name in (e.evidence_description or '').lower()]
 
     return jsonify({
         'success':     True,
