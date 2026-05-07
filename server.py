@@ -2963,6 +2963,171 @@ def panic_button():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# DMV/Records Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/dmv/license/<license_id>', methods=['GET'])
+def get_license(license_id):
+    """Get license information."""
+    from dmv_service import get_license_by_id
+
+    license = get_license_by_id(license_id)
+    if not license:
+        return jsonify({'success': False, 'error': 'License not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'license': {
+            'license_id': license.license_id,
+            'owner_name': license.owner_name,
+            'license_type': license.license_type,
+            'status': license.status,
+            'issued_date': license.issued_date,
+            'expiry_date': license.expiry_date,
+            'notes': license.notes,
+        }
+    })
+
+@app.route('/api/dmv/license/civilian/<civilian_id>', methods=['GET'])
+def check_civilian_license(civilian_id):
+    """Check license status for a civilian."""
+    from dmv_service import check_license_status
+
+    result = check_license_status(civilian_id)
+    return jsonify({'success': True, 'data': result})
+
+@app.route('/api/dmv/license/<license_id>/suspend', methods=['POST'])
+def suspend_license_route(license_id):
+    """Suspend a driver's license."""
+    data = request.get_json(silent=True) or {}
+    reason = data.get('reason', 'No reason provided')
+
+    from dmv_service import suspend_license
+    from cad_helpers import log_audit
+
+    try:
+        license = suspend_license(license_id, reason)
+        if not license:
+            return jsonify({'success': False, 'error': 'License not found'}), 404
+
+        log_audit('dmv', 'suspend_license', 'License', license_id)
+        return jsonify({'success': True, 'message': 'License suspended'})
+    except Exception as e:
+        logger.error(f'Failed to suspend license: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/license/<license_id>/revoke', methods=['POST'])
+def revoke_license_route(license_id):
+    """Revoke a driver's license."""
+    data = request.get_json(silent=True) or {}
+    reason = data.get('reason', 'No reason provided')
+
+    from dmv_service import revoke_license
+    from cad_helpers import log_audit
+
+    try:
+        license = revoke_license(license_id, reason)
+        if not license:
+            return jsonify({'success': False, 'error': 'License not found'}), 404
+
+        log_audit('dmv', 'revoke_license', 'License', license_id)
+        return jsonify({'success': True, 'message': 'License revoked'})
+    except Exception as e:
+        logger.error(f'Failed to revoke license: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/plate/<plate>', methods=['GET'])
+def lookup_plate(plate):
+    """Look up vehicle by license plate."""
+    from dmv_service import lookup_vehicle_by_plate
+
+    vehicle = lookup_vehicle_by_plate(plate)
+    if not vehicle:
+        return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+    return jsonify({'success': True, 'vehicle': vehicle})
+
+@app.route('/api/dmv/vehicle/owner/<civilian_id>', methods=['GET'])
+def lookup_owner_vehicles(civilian_id):
+    """Look up all vehicles owned by a civilian."""
+    from dmv_service import lookup_vehicles_by_owner
+
+    vehicles = lookup_vehicles_by_owner(civilian_id)
+    return jsonify({'success': True, 'vehicles': vehicles, 'total': len(vehicles)})
+
+@app.route('/api/dmv/vehicle/stolen/<plate>', methods=['POST'])
+def flag_stolen(plate):
+    """Flag a vehicle as stolen."""
+    from dmv_service import flag_stolen_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = flag_stolen_vehicle(plate)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'flag_stolen', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle flagged as stolen'})
+    except Exception as e:
+        logger.error(f'Failed to flag stolen vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/recovered/<plate>', methods=['POST'])
+def recover_vehicle(plate):
+    """Mark a stolen vehicle as recovered."""
+    from dmv_service import recover_stolen_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = recover_stolen_vehicle(plate)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'recover_vehicle', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle marked as recovered'})
+    except Exception as e:
+        logger.error(f'Failed to recover vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/impound/<plate>', methods=['POST'])
+def impound_vehicle_route(plate):
+    """Impound a vehicle."""
+    data = request.get_json(silent=True) or {}
+    reason = data.get('reason', 'No reason provided')
+
+    from dmv_service import impound_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = impound_vehicle(plate, reason)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'impound_vehicle', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle impounded'})
+    except Exception as e:
+        logger.error(f'Failed to impound vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/dmv/vehicle/release/<plate>', methods=['POST'])
+def release_vehicle_route(plate):
+    """Release an impounded vehicle."""
+    from dmv_service import release_impounded_vehicle
+    from cad_helpers import log_audit
+
+    try:
+        vehicle = release_impounded_vehicle(plate)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('dmv', 'release_vehicle', 'Vehicle', plate)
+        return jsonify({'success': True, 'message': 'Vehicle released from impound'})
+    except Exception as e:
+        logger.error(f'Failed to release vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
