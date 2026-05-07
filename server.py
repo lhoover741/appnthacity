@@ -3143,158 +3143,77 @@ def release_vehicle_route(plate):
 
 
 # ---------------------------------------------------------------------------
-# Security: hash admin password on startup
+# World Realism Routes
 # ---------------------------------------------------------------------------
 
-@app.before_request
-def setup_admin():
-    """Setup admin user if not exists."""
-    if not session.get('admin_setup_done'):
-        admin_password = os.environ.get('ADMIN_PASSWORD', 'admin')
-        session['admin_password_hash'] = hash_password(admin_password)
-        session['admin_setup_done'] = True
+@app.route('/api/world/address', methods=['GET'])
+def generate_address_route():
+    """Generate a random address."""
+    from world_realism_service import generate_address
 
+    neighborhood = request.args.get('neighborhood')
+    address = generate_address(neighborhood)
 
-# ---------------------------------------------------------------------------
-# Auth Routes
-# ---------------------------------------------------------------------------
+    return jsonify({'success': True, 'address': address})
 
-@app.route('/api/auth/login', methods=['POST'])
-@limiter.limit("5 per minute")
-def login():
-    """Login endpoint with rate limiting."""
-    data = request.get_json(silent=True) or {}
-    username = data.get('username', '')
-    password = data.get('password', '')
+@app.route('/api/world/plate', methods=['GET'])
+def generate_plate_route():
+    """Generate a random license plate."""
+    from world_realism_service import generate_plate
 
-    # Simple admin authentication
-    if username == 'admin' and verify_password(session.get('admin_password_hash', ''), password):
-        session['user_id'] = 'admin'
-        session['role'] = 'admin'
-        session.permanent = True
-        return jsonify({'success': True, 'message': 'Logged in as admin'})
+    plate = generate_plate()
+    return jsonify({'success': True, 'plate': plate})
 
-    return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+@app.route('/api/world/vehicle', methods=['GET'])
+def generate_vehicle_route():
+    """Generate a random vehicle."""
+    from world_realism_service import generate_vehicle
 
+    vehicle = generate_vehicle()
+    return jsonify({'success': True, 'vehicle': vehicle})
 
-@app.route('/api/auth/logout', methods=['POST'])
-def logout():
-    """Logout endpoint."""
-    session.clear()
-    return jsonify({'success': True, 'message': 'Logged out'})
+@app.route('/api/world/business', methods=['GET'])
+def generate_business_route():
+    """Generate a random business."""
+    from world_realism_service import generate_business
 
+    neighborhood = request.args.get('neighborhood')
+    business = generate_business(neighborhood)
 
-@app.route('/api/auth/status', methods=['GET'])
-def auth_status():
-    """Get authentication status."""
-    return jsonify({
-        'success': True,
-        'authenticated': 'user_id' in session,
-        'role': session.get('role', 'viewer'),
-        'user_id': session.get('user_id'),
-    })
+    return jsonify({'success': True, 'business': business})
 
+@app.route('/api/world/name', methods=['GET'])
+def generate_name_route():
+    """Generate a random name."""
+    from world_realism_service import generate_name
 
-# ---------------------------------------------------------------------------
-# Paginated / Statistics / Health Routes
-# ---------------------------------------------------------------------------
+    gender = request.args.get('gender', 'random')
+    name = generate_name(gender)
 
-@app.route('/api/civilians/paginated', methods=['GET'])
-@require_auth
-def get_civilians_paginated():
-    """Get paginated list of civilians."""
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)
+    return jsonify({'success': True, 'name': name})
 
-    query = Civilian.query.order_by(Civilian.created_at.desc())
-    result = paginate_query(query, page, per_page)
+@app.route('/api/world/rp-history', methods=['GET'])
+def generate_rp_history_route():
+    """Generate a random RP history."""
+    from world_realism_service import generate_rp_history
 
-    civilians = [{
-        'civilian_id': c.civilian_id,
-        'name': c.full_name,
-        'age': c.age,
-        'risk_level': c.risk_level,
-    } for c in result['items']]
+    history = generate_rp_history()
+    return jsonify({'success': True, 'history': history})
 
-    return jsonify({
-        'success': True,
-        'civilians': civilians,
-        'pagination': {
-            'page': result['page'],
-            'per_page': result['per_page'],
-            'total': result['total'],
-            'pages': result['pages'],
-        }
-    })
+@app.route('/api/world/call', methods=['GET'])
+def generate_call_route():
+    """Generate a random dispatch call."""
+    from world_realism_service import generate_dispatch_call
 
+    call = generate_dispatch_call()
+    return jsonify({'success': True, 'call': call})
 
-@app.route('/api/system/statistics', methods=['GET'])
-@require_auth
-@cache.cached(timeout=300)
-def get_system_statistics():
-    """Get system statistics with caching."""
-    from performance_service import get_statistics
+@app.route('/api/world/neighborhoods', methods=['GET'])
+def get_neighborhoods():
+    """Get list of all neighborhoods."""
+    from world_realism_service import NEIGHBORHOODS
 
-    stats = get_statistics(db)
-    return jsonify({'success': True, 'statistics': stats})
-
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        'success': True,
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
-    })
-
-
-# ---------------------------------------------------------------------------
-# Admin-only Routes
-# ---------------------------------------------------------------------------
-
-@app.route('/api/admin/users', methods=['GET'])
-@require_auth
-@require_role('admin')
-def get_users():
-    """Get all users (admin only)."""
-    return jsonify({
-        'success': True,
-        'users': [
-            {'user_id': 'admin', 'role': 'admin', 'status': 'active'}
-        ]
-    })
-
-
-@app.route('/api/admin/audit-logs', methods=['GET'])
-@require_auth
-@require_role('admin', 'supervisor')
-def get_audit_logs():
-    """Get audit logs (admin/supervisor only)."""
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 50, type=int)
-
-    query = AuditLog.query.order_by(AuditLog.created_at.desc())
-    result = paginate_query(query, page, per_page)
-
-    logs = [{
-        'log_id': log.log_id,
-        'officer_name': log.officer_name,
-        'action': log.action,
-        'record_type': log.record_type,
-        'created_at': log.created_at.isoformat() if log.created_at else None,
-    } for log in result['items']]
-
-    return jsonify({
-        'success': True,
-        'logs': logs,
-        'pagination': {
-            'page': result['page'],
-            'per_page': result['per_page'],
-            'total': result['total'],
-            'pages': result['pages'],
-        }
-    })
+    return jsonify({'success': True, 'neighborhoods': NEIGHBORHOODS})
 
 
 @app.route('/', defaults={'path': ''})
