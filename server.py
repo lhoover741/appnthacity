@@ -2699,6 +2699,154 @@ def get_civilian(civilian_id):
     })
 
 
+# ---------------------------------------------------------------------------
+# Dispatch CAD Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/dispatch/calls', methods=['GET'])
+def get_dispatch_calls():
+    """Get active dispatch calls."""
+    from dispatch_service import get_active_calls
+
+    calls = get_active_calls()
+    return jsonify({'success': True, 'calls': calls, 'total': len(calls)})
+
+
+@app.route('/api/dispatch/calls', methods=['POST'])
+def create_dispatch_call_route():
+    """Create a new dispatch call."""
+    data = request.get_json(silent=True) or {}
+
+    required = ['caller_name', 'location', 'call_type', 'description']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    from dispatch_service import create_dispatch_call as create_call
+    from cad_helpers import log_audit
+
+    try:
+        call = create_call(
+            data['caller_name'],
+            data['location'],
+            data['call_type'],
+            data['description'],
+            data.get('priority', 'Medium')
+        )
+
+        log_audit('dispatch', 'create_call', 'DispatchCall', call.call_id)
+
+        return jsonify({
+            'success': True,
+            'call_id': call.call_id,
+            'message': 'Dispatch call created'
+        })
+    except Exception as e:
+        logger.error(f'Failed to create dispatch call: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatch/calls/<call_id>', methods=['PUT'])
+def update_dispatch_call(call_id):
+    """Update dispatch call status or assignment."""
+    data = request.get_json(silent=True) or {}
+
+    from dispatch_service import assign_units_to_call, close_dispatch_call
+    from cad_helpers import log_audit
+
+    try:
+        call = None
+
+        if 'units' in data:
+            call = assign_units_to_call(call_id, data['units'])
+            log_audit('dispatch', 'assign_units', 'DispatchCall', call_id)
+
+        if 'resolution' in data:
+            call = close_dispatch_call(call_id, data['resolution'])
+            log_audit('dispatch', 'close_call', 'DispatchCall', call_id)
+
+        if not call:
+            return jsonify({'success': False, 'error': 'Call not found'}), 404
+
+        return jsonify({'success': True, 'message': 'Call updated'})
+    except Exception as e:
+        logger.error(f'Failed to update dispatch call: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatch/officer-status', methods=['GET'])
+def get_all_officer_status():
+    """Get all officer statuses."""
+    sessions = OfficerSession.query.all()
+
+    result = [{
+        'callsign': s.callsign,
+        'officer_name': s.officer_name,
+        'department': s.department,
+        'status': s.status,
+        'logged_in_at': s.logged_in_at.isoformat() if s.logged_in_at else None,
+    } for s in sessions]
+
+    return jsonify({'success': True, 'officers': result, 'total': len(result)})
+
+
+@app.route('/api/dispatch/officer-status/<callsign>', methods=['PUT'])
+def update_officer_status_route(callsign):
+    """Update officer status."""
+    data = request.get_json(silent=True) or {}
+    new_status = data.get('status')
+
+    if not new_status:
+        return jsonify({'success': False, 'error': 'Status required'}), 400
+
+    from dispatch_service import update_officer_status
+    from cad_helpers import log_audit
+
+    try:
+        officer_session = update_officer_status(callsign, new_status)
+        if not officer_session:
+            return jsonify({'success': False, 'error': 'Officer not found'}), 404
+
+        log_audit('dispatch', 'update_status', 'OfficerSession', callsign)
+
+        return jsonify({'success': True, 'message': 'Status updated'})
+    except Exception as e:
+        logger.error(f'Failed to update officer status: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatch/panic', methods=['POST'])
+def panic_button():
+    """Officer panic button - creates urgent dispatch call."""
+    data = request.get_json(silent=True) or {}
+
+    callsign = data.get('callsign', 'Unknown')
+    location = data.get('location', 'Unknown')
+
+    from dispatch_service import create_dispatch_call as create_call
+    from cad_helpers import log_audit
+
+    try:
+        call = create_call(
+            f'Officer {callsign} - PANIC BUTTON',
+            location,
+            'Officer Needs Help',
+            f'OFFICER PANIC BUTTON ACTIVATED - {callsign} at {location}',
+            'Critical'
+        )
+
+        log_audit('dispatch', 'panic_button', 'DispatchCall', call.call_id)
+
+        return jsonify({
+            'success': True,
+            'call_id': call.call_id,
+            'message': 'PANIC BUTTON ACTIVATED - All units respond'
+        })
+    except Exception as e:
+        logger.error(f'Panic button failed: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):

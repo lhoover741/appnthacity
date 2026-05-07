@@ -340,7 +340,9 @@ class DispatchCall(db.Model):
     description = db.Column(db.Text)
     priority = db.Column(db.String(64), default='Normal')
     status = db.Column(db.String(64), default='Open')
+    assigned_unit = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
 
 
 class KnownAssociate(db.Model):
