@@ -27,6 +27,7 @@ RADIO_LOG_FILE = 'radio_log.json'
 CAD_DATA_FILE = 'cad_data.json'
 ALERTS_FILE = 'alerts_data.json'
 OFFICER_SESSIONS_FILE = 'officer_sessions.json'
+JAIL_FILE = 'jail_data.json'
 
 DEFAULT_OFFICERS = [
     {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
@@ -113,6 +114,18 @@ def load_bolos():
 def save_bolos(bolos):
     with open(BOLOS_FILE, 'w') as f:
         json.dump(bolos, f, indent=2)
+
+
+def load_jail():
+    if os.path.exists(JAIL_FILE):
+        with open(JAIL_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_jail(inmates):
+    with open(JAIL_FILE, 'w') as f:
+        json.dump(inmates, f, indent=2)
 
 
 def send_bolo_discord(bolo):
@@ -1750,6 +1763,70 @@ def delete_hearing(hearing_id):
     data['hearings'] = new_list
     save_cad_data(data)
     return jsonify({'success': True})
+
+
+@app.route('/api/jail/inmates', methods=['GET'])
+def get_inmates():
+    inmates = load_jail()
+    inmates_sorted = sorted(inmates, key=lambda i: i.get('bookedAt', ''), reverse=True)
+    return jsonify({'success': True, 'inmates': inmates_sorted})
+
+
+@app.route('/api/jail/inmates', methods=['POST'])
+def book_inmate():
+    body = request.get_json(silent=True) or {}
+    for field in ('suspectName', 'charges', 'bookedBy'):
+        if not body.get(field):
+            return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+    inmates = load_jail()
+    ts = int(datetime.utcnow().timestamp() * 1000)
+    rand = secrets.token_hex(4)
+    inmate = {
+        'id':              f'inmate-{ts}-{rand}',
+        'suspectName':     body.get('suspectName', '').strip(),
+        'charges':         body.get('charges', '').strip(),
+        'penalty':         body.get('penalty', '').strip(),
+        'cell':            body.get('cell', '').strip(),
+        'bookedBy':        body.get('bookedBy', '').strip(),
+        'arrestId':        body.get('arrestId', ''),
+        'estimatedRelease': body.get('estimatedRelease', ''),
+        'notes':           body.get('notes', '').strip(),
+        'status':          'In Custody',
+        'bookedAt':        datetime.utcnow().isoformat() + 'Z',
+    }
+    inmates.insert(0, inmate)
+    save_jail(inmates)
+    return jsonify({'success': True, 'inmate': inmate})
+
+
+@app.route('/api/jail/inmates/<inmate_id>', methods=['PUT'])
+def update_inmate(inmate_id):
+    body = request.get_json(silent=True) or {}
+    inmates = load_jail()
+    for inmate in inmates:
+        if inmate.get('id') == inmate_id:
+            for field in ('estimatedRelease', 'cell', 'notes', 'penalty', 'status'):
+                if field in body:
+                    inmate[field] = body[field]
+            inmate['updatedAt'] = datetime.utcnow().isoformat() + 'Z'
+            save_jail(inmates)
+            return jsonify({'success': True, 'inmate': inmate})
+    return jsonify({'success': False, 'error': 'Inmate not found'}), 404
+
+
+@app.route('/api/jail/inmates/<inmate_id>/release', methods=['POST'])
+def release_inmate(inmate_id):
+    body = request.get_json(silent=True) or {}
+    inmates = load_jail()
+    for inmate in inmates:
+        if inmate.get('id') == inmate_id:
+            inmate['status']        = 'Released'
+            inmate['releasedAt']    = datetime.utcnow().isoformat() + 'Z'
+            inmate['releasedBy']    = body.get('releasedBy', 'Officer').strip()
+            inmate['releaseReason'] = body.get('releaseReason', '').strip()
+            save_jail(inmates)
+            return jsonify({'success': True, 'inmate': inmate})
+    return jsonify({'success': False, 'error': 'Inmate not found'}), 404
 
 
 @app.route('/', defaults={'path': ''})
