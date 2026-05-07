@@ -8,6 +8,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session
+from flask_migrate import Migrate
 
 # Import database and models FIRST
 from database import db, configure_database
@@ -38,14 +39,19 @@ from models import (
 
 configure_database(app)
 
+# Initialize Flask-Migrate
+migrate = Migrate(app, db)
+
+# Create all tables in app context
 with app.app_context():
     db.create_all()
     logger.info('Database tables verified/created.')
 
-    # Run database migrations
+    # Run Alembic migrations
     try:
-        from migrations import run_migrations
-        run_migrations()
+        from flask_migrate import upgrade
+        upgrade()
+        logger.info('Database migrations completed.')
     except Exception as e:
         logger.error(f'Migration error: {e}')
 
