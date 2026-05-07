@@ -67,27 +67,35 @@ def create_civilian_from_ai(ai_data):
         address=ai_data.get('address', ''),
         occupation=ai_data.get('occupation', ''),
         biography=ai_data.get('biography', ''),
-        criminal_background=ai_data.get('criminal_background', ''),
         # Support both legacy key (mental_state_notes) and new key (mental_state)
         mental_state_notes=ai_data.get('mental_state_notes') or ai_data.get('mental_state', ''),
-        officer_safety_notes=ai_data.get('officer_safety_notes', ''),
-        warrant_risk=ai_data.get('warrant_risk', 'Low'),
-        parole_status=ai_data.get('parole_status', 'None'),
-        probation_status=ai_data.get('probation_status', 'None'),
-        gang_affiliation=ai_data.get('gang_affiliation', ''),
         race=ai_data.get('ethnicity') or ai_data.get('race', ''),
         age=ai_data.get('age'),
         gender=ai_data.get('gender', ''),
-        # Advanced character engine fields
+        # Advanced character engine fields (non-criminal)
         nickname=ai_data.get('nickname', ''),
         aliases=_json_field(ai_data.get('aliases')),
         employment_history=ai_data.get('employment_history', ''),
-        gang_rank=ai_data.get('gang_rank', ''),
         habits=_json_field(ai_data.get('habits')),
         social_behavior=ai_data.get('social_behavior', ''),
-        weapon_access=ai_data.get('weapon_access', 'None'),
-        violence_history=ai_data.get('violence_history', 'None'),
         ai_generated=True,
+
+        # CLEAN RECORD ENFORCEMENT — hardcoded, never read from ai_data
+        criminal_background='Clean record',
+        gang_affiliation='None',
+        gang_rank='None',
+        parole_status='None',
+        probation_status='None',
+        warrant_risk='None',
+        risk_level='Low',
+        officer_safety_notes='No known issues. Clean background.',
+        violence_history='None',
+        weapon_access='None',
+        addiction_status='None',
+        addiction_severity='None',
+        weapon_permit=False,
+        insurance_status='Valid',
+        driver_license_status='Valid',
     )
 
     try:
