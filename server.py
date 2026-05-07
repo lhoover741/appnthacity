@@ -2963,6 +2963,162 @@ def panic_button():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# Criminal Database Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/criminal/charges/<civilian_id>', methods=['GET'])
+def get_charges(civilian_id):
+    """Get all charges for a civilian."""
+    from criminal_db_service import get_civilian_charges
+
+    charges = get_civilian_charges(civilian_id)
+    return jsonify({'success': True, 'charges': charges, 'total': len(charges)})
+
+
+@app.route('/api/criminal/warrants/<civilian_id>', methods=['GET'])
+def get_warrants(civilian_id):
+    """Get all active warrants for a civilian."""
+    from criminal_db_service import get_civilian_warrants
+
+    warrants = get_civilian_warrants(civilian_id)
+    return jsonify({'success': True, 'warrants': warrants, 'total': len(warrants)})
+
+
+@app.route('/api/criminal/bolos/<civilian_id>', methods=['GET'])
+def get_bolos(civilian_id):
+    """Get all BOLOs for a civilian."""
+    from criminal_db_service import get_civilian_bolos
+
+    bolos = get_civilian_bolos(civilian_id)
+    return jsonify({'success': True, 'bolos': bolos, 'total': len(bolos)})
+
+
+@app.route('/api/criminal/bolos/search', methods=['POST'])
+def search_bolos_route():
+    """Search BOLO archive."""
+    data = request.get_json(silent=True) or {}
+    query = data.get('query', '').strip()
+
+    if not query or len(query) < 2:
+        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
+
+    from criminal_db_service import search_bolos
+
+    bolos = search_bolos(query)
+    return jsonify({'success': True, 'results': bolos, 'total': len(bolos)})
+
+
+@app.route('/api/criminal/warrants/search', methods=['POST'])
+def search_warrants_route():
+    """Search warrant archive."""
+    data = request.get_json(silent=True) or {}
+    query = data.get('query', '').strip()
+
+    if not query or len(query) < 2:
+        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
+
+    from criminal_db_service import search_warrants
+
+    warrants = search_warrants(query)
+    return jsonify({'success': True, 'results': warrants, 'total': len(warrants)})
+
+
+@app.route('/api/criminal/evidence/<evidence_id>', methods=['GET'])
+def get_evidence_custody(evidence_id):
+    """Get chain of custody for evidence."""
+    from criminal_db_service import get_evidence_chain_of_custody
+
+    evidence = get_evidence_chain_of_custody(evidence_id)
+    if not evidence:
+        return jsonify({'success': False, 'error': 'Evidence not found'}), 404
+
+    return jsonify({'success': True, 'evidence': evidence})
+
+
+@app.route('/api/criminal/evidence/<evidence_id>/transfer', methods=['POST'])
+def transfer_evidence_route(evidence_id):
+    """Transfer evidence custody."""
+    data = request.get_json(silent=True) or {}
+    from_officer = data.get('from_officer', 'Unknown')
+    to_officer = data.get('to_officer', 'Unknown')
+    reason = data.get('reason', 'No reason provided')
+
+    from criminal_db_service import transfer_evidence
+    from cad_helpers import log_audit
+
+    try:
+        evidence = transfer_evidence(evidence_id, from_officer, to_officer, reason)
+        if not evidence:
+            return jsonify({'success': False, 'error': 'Evidence not found'}), 404
+
+        log_audit('criminal', 'transfer_evidence', 'Evidence', evidence_id)
+        return jsonify({'success': True, 'message': 'Evidence transferred'})
+    except Exception as e:
+        logger.error(f'Failed to transfer evidence: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/criminal/gang/<gang_name>', methods=['GET'])
+def get_gang_members_route(gang_name):
+    """Get all known members of a gang."""
+    from criminal_db_service import get_gang_members
+
+    members = get_gang_members(gang_name)
+    return jsonify({'success': True, 'members': members, 'total': len(members)})
+
+
+@app.route('/api/criminal/gang-stats', methods=['GET'])
+def get_gang_stats():
+    """Get gang statistics."""
+    from criminal_db_service import get_gang_statistics
+
+    stats = get_gang_statistics()
+    return jsonify({'success': True, 'gangs': stats})
+
+
+@app.route('/api/criminal/bolo/<bolo_id>/archive', methods=['POST'])
+def archive_bolo_route(bolo_id):
+    """Archive a BOLO."""
+    data = request.get_json(silent=True) or {}
+    resolution = data.get('resolution', 'No resolution provided')
+
+    from criminal_db_service import archive_bolo
+    from cad_helpers import log_audit
+
+    try:
+        bolo = archive_bolo(bolo_id, resolution)
+        if not bolo:
+            return jsonify({'success': False, 'error': 'BOLO not found'}), 404
+
+        log_audit('criminal', 'archive_bolo', 'Bolo', bolo_id)
+        return jsonify({'success': True, 'message': 'BOLO archived'})
+    except Exception as e:
+        logger.error(f'Failed to archive BOLO: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/criminal/warrant/<warrant_id>/archive', methods=['POST'])
+def archive_warrant_route(warrant_id):
+    """Archive a warrant."""
+    data = request.get_json(silent=True) or {}
+    resolution = data.get('resolution', 'No resolution provided')
+
+    from criminal_db_service import archive_warrant
+    from cad_helpers import log_audit
+
+    try:
+        warrant = archive_warrant(warrant_id, resolution)
+        if not warrant:
+            return jsonify({'success': False, 'error': 'Warrant not found'}), 404
+
+        log_audit('criminal', 'archive_warrant', 'Warrant', warrant_id)
+        return jsonify({'success': True, 'message': 'Warrant archived'})
+    except Exception as e:
+        logger.error(f'Failed to archive warrant: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
