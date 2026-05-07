@@ -47,12 +47,31 @@ class Civilian(db.Model):
     civilian_id = db.Column(db.String(64), unique=True, nullable=False)
     first_name = db.Column(db.String(255))
     last_name = db.Column(db.String(255))
-    dob = db.Column(db.String(64))
+    full_name = db.Column(db.String(255))
+    date_of_birth = db.Column(db.Date)
+    age = db.Column(db.Integer)
     gender = db.Column(db.String(64))
-    phone = db.Column(db.String(64))
+    race = db.Column(db.String(255))
+    phone_number = db.Column(db.String(64))
     address = db.Column(db.Text)
     occupation = db.Column(db.String(255))
+    gang_affiliation = db.Column(db.String(255))
+    risk_level = db.Column(db.String(64), default='Low')
+    parole_status = db.Column(db.String(64), default='None')
+    probation_status = db.Column(db.String(64), default='None')
+    weapon_permit = db.Column(db.Boolean, default=False)
+    driver_license_status = db.Column(db.String(64), default='Valid')
     notes = db.Column(db.Text)
+    ai_generated = db.Column(db.Boolean, default=False)
+    last_known_location = db.Column(db.String(255))
+    biography = db.Column(db.Text)
+    criminal_background = db.Column(db.Text)
+    mental_state_notes = db.Column(db.Text)
+    officer_safety_notes = db.Column(db.Text)
+    warrant_risk = db.Column(db.String(64), default='Low')
+    # Legacy fields kept for backward compatibility
+    dob = db.Column(db.String(64))
+    phone = db.Column(db.String(64))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime)
 
@@ -61,11 +80,21 @@ class Vehicle(db.Model):
     __tablename__ = 'vehicles'
 
     id = db.Column(db.Integer, primary_key=True)
+    vehicle_id = db.Column(db.String(64), unique=True, nullable=True)
+    owner_civilian_id = db.Column(db.String(64))
     plate = db.Column(db.String(64), unique=True, nullable=False)
-    owner_name = db.Column(db.String(255))
+    vin = db.Column(db.String(255))
+    make = db.Column(db.String(255))
     model = db.Column(db.String(255))
     color = db.Column(db.String(255))
     registration_status = db.Column(db.String(64), default='Valid')
+    insurance_status = db.Column(db.String(64), default='Valid')
+    stolen_flag = db.Column(db.Boolean, default=False)
+    impound_status = db.Column(db.String(64), default='None')
+    bolo_link = db.Column(db.String(64))
+    notes = db.Column(db.Text)
+    # Legacy field kept for backward compatibility
+    owner_name = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime)
 
@@ -311,4 +340,154 @@ class DispatchCall(db.Model):
     description = db.Column(db.Text)
     priority = db.Column(db.String(64), default='Normal')
     status = db.Column(db.String(64), default='Open')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class KnownAssociate(db.Model):
+    __tablename__ = 'known_associates'
+
+    id = db.Column(db.Integer, primary_key=True)
+    associate_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64), nullable=False)
+    associated_civilian_id = db.Column(db.String(64), nullable=False)
+    relationship_type = db.Column(db.String(255))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Business(db.Model):
+    __tablename__ = 'businesses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    business_id = db.Column(db.String(64), unique=True, nullable=False)
+    owner_civilian_id = db.Column(db.String(64))
+    business_name = db.Column(db.String(255), nullable=False)
+    business_type = db.Column(db.String(255))
+    license_status = db.Column(db.String(64), default='Active')
+    address = db.Column(db.Text)
+    employees = db.Column(db.Integer, default=0)
+    inspection_notes = db.Column(db.Text)
+    legal_flags = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class Citation(db.Model):
+    __tablename__ = 'citations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    citation_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64), nullable=False)
+    issuing_officer = db.Column(db.String(255))
+    violation = db.Column(db.String(255))
+    location = db.Column(db.String(255))
+    fine_amount = db.Column(db.Float)
+    status = db.Column(db.String(64), default='Issued')
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class JailBooking(db.Model):
+    __tablename__ = 'jail_bookings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64), nullable=False)
+    arrest_id = db.Column(db.String(64))
+    charges = db.Column(db.Text)
+    booking_officer = db.Column(db.String(255))
+    cell_assignment = db.Column(db.String(64))
+    bond_amount = db.Column(db.Float)
+    sentence_length = db.Column(db.String(255))
+    status = db.Column(db.String(64), default='Booked')
+    release_date = db.Column(db.DateTime)
+    released_by = db.Column(db.String(255))
+    release_reason = db.Column(db.Text)
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class UseOfForceReport(db.Model):
+    __tablename__ = 'use_of_force_reports'
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.String(64), unique=True, nullable=False)
+    officer_name = db.Column(db.String(255))
+    badge_number = db.Column(db.String(64))
+    subject_name = db.Column(db.String(255))
+    location = db.Column(db.String(255))
+    force_type = db.Column(db.String(255))
+    weapon_observed = db.Column(db.String(255))
+    injuries_observed = db.Column(db.Text)
+    charges = db.Column(db.Text)
+    narrative = db.Column(db.Text)
+    supervisor_review = db.Column(db.Text)
+    status = db.Column(db.String(64), default='Pending')
+    ai_generated = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class OfficerNote(db.Model):
+    __tablename__ = 'officer_notes'
+
+    id = db.Column(db.Integer, primary_key=True)
+    note_id = db.Column(db.String(64), unique=True, nullable=False)
+    officer_name = db.Column(db.String(255))
+    civilian_id = db.Column(db.String(64))
+    note_type = db.Column(db.String(64))
+    content = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class CaseFile(db.Model):
+    __tablename__ = 'case_files'
+
+    id = db.Column(db.Integer, primary_key=True)
+    case_id = db.Column(db.String(64), unique=True, nullable=False)
+    defendant_civilian_id = db.Column(db.String(64))
+    charges = db.Column(db.Text)
+    evidence_ids = db.Column(db.Text)
+    arrest_id = db.Column(db.String(64))
+    assigned_judge = db.Column(db.String(255))
+    prosecutor_notes = db.Column(db.Text)
+    defense_notes = db.Column(db.Text)
+    court_date = db.Column(db.DateTime)
+    status = db.Column(db.String(64), default='Open')
+    outcome = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class AIGenerationLog(db.Model):
+    __tablename__ = 'ai_generation_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    log_id = db.Column(db.String(64), unique=True, nullable=False)
+    generation_type = db.Column(db.String(64))
+    input_params = db.Column(db.Text)
+    output_summary = db.Column(db.Text)
+    tokens_used = db.Column(db.Integer)
+    cost = db.Column(db.Float)
+    status = db.Column(db.String(64), default='Success')
+    error_message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class AuditLog(db.Model):
+    __tablename__ = 'audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    log_id = db.Column(db.String(64), unique=True, nullable=False)
+    officer_name = db.Column(db.String(255))
+    action = db.Column(db.String(255))
+    record_type = db.Column(db.String(64))
+    record_id = db.Column(db.String(64))
+    before_state = db.Column(db.Text)
+    after_state = db.Column(db.Text)
+    ip_address = db.Column(db.String(64))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
