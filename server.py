@@ -3364,6 +3364,128 @@ def create_employment_route():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# Advanced Civilian Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/civilian/<civilian_id>/enhance', methods=['POST'])
+@admin_required
+def enhance_civilian_route(civilian_id):
+    """Add advanced data to civilian."""
+    from advanced_civilian_service import enhance_civilian_with_advanced_data
+    from cad_helpers import log_audit
+
+    try:
+        civilian = enhance_civilian_with_advanced_data(civilian_id)
+        if not civilian:
+            return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+        log_audit('civilian', 'enhance_civilian', 'Civilian', civilian_id)
+        return jsonify({'success': True, 'message': 'Civilian enhanced with advanced data'})
+    except Exception as e:
+        logger.error(f'Failed to enhance civilian: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/civilian/<civilian_id>/full-profile', methods=['GET'])
+def get_full_profile_route(civilian_id):
+    """Get complete civilian profile."""
+    from advanced_civilian_service import get_civilian_full_profile
+
+    profile = get_civilian_full_profile(civilian_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({'success': True, 'profile': profile})
+
+
+@app.route('/api/civilian/<civilian_id>/safety-assessment', methods=['GET'])
+def safety_assessment_route(civilian_id):
+    """Get officer safety assessment."""
+    from advanced_civilian_service import generate_officer_safety_assessment
+
+    assessment = generate_officer_safety_assessment(civilian_id)
+    if not assessment:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({'success': True, 'assessment': assessment})
+
+
+@app.route('/api/civilian/<civilian_id>/medical-info', methods=['GET'])
+def get_medical_info_route(civilian_id):
+    """Get medical information for civilian."""
+    from advanced_civilian_service import get_civilian_full_profile
+
+    profile = get_civilian_full_profile(civilian_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'medical': {
+            'conditions': profile['medical']['conditions'],
+            'medications': profile['medical']['medications'],
+            'allergies': profile['medical']['allergies'],
+            'emergency_contact': profile['emergency_contact'],
+        },
+    })
+
+
+@app.route('/api/civilian/<civilian_id>/driving-record', methods=['GET'])
+def get_driving_record_route(civilian_id):
+    """Get driving record for civilian."""
+    from advanced_civilian_service import get_civilian_full_profile
+
+    profile = get_civilian_full_profile(civilian_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'driving_record': {
+            'violations': profile['driving_history'],
+            'insurance_status': profile['insurance_status'],
+            'license_status': profile.get('driver_license_status', 'Valid'),
+        },
+    })
+
+
+@app.route('/api/civilian/<civilian_id>/employment-history', methods=['GET'])
+def get_employment_route(civilian_id):
+    """Get employment history for civilian."""
+    from advanced_civilian_service import get_civilian_full_profile
+
+    profile = get_civilian_full_profile(civilian_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'employment': {
+            'current': profile['occupation'],
+            'history': profile['employment_history'],
+        },
+    })
+
+
+@app.route('/api/civilian/<civilian_id>/substance-abuse', methods=['GET'])
+def get_substance_abuse_route(civilian_id):
+    """Get substance abuse information."""
+    from advanced_civilian_service import get_civilian_full_profile
+
+    profile = get_civilian_full_profile(civilian_id)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'substance_abuse': {
+            'type': profile['addiction']['type'],
+            'severity': profile['addiction']['severity'],
+        },
+    })
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):

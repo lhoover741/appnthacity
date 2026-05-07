@@ -78,6 +78,18 @@ class Civilian(db.Model):
     social_behavior = db.Column(db.Text)
     weapon_access = db.Column(db.String(64), default='None')
     violence_history = db.Column(db.String(64), default='None')
+    # Advanced civilian profile fields
+    addiction_status = db.Column(db.String(255))  # None, Alcohol, Drugs, Both
+    addiction_severity = db.Column(db.String(64))  # None, Mild, Moderate, Severe
+    weapon_permit_type = db.Column(db.String(255))  # Handgun, Rifle, Shotgun, etc.
+    driving_history = db.Column(db.Text)  # JSON array of violations
+    insurance_status = db.Column(db.String(64), default='Valid')  # Valid, Lapsed, None
+    emergency_contact_name = db.Column(db.String(255))
+    emergency_contact_phone = db.Column(db.String(64))
+    emergency_contact_relationship = db.Column(db.String(64))
+    medical_conditions = db.Column(db.Text)  # JSON array
+    medications = db.Column(db.Text)  # JSON array
+    allergies = db.Column(db.Text)  # JSON array
     # Legacy fields kept for backward compatibility
     dob = db.Column(db.String(64))
     phone = db.Column(db.String(64))
