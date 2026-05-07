@@ -13,7 +13,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='.', static_url_path='')
-app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
+_flask_secret = os.environ.get('FLASK_SECRET')
+if not _flask_secret:
+    logger.warning('FLASK_SECRET env var not set — admin sessions will not persist across restarts.')
+    _flask_secret = secrets.token_hex(32)
+app.secret_key = _flask_secret
 
 COMPLAINTS_FILE = 'complaints_data.json'
 APPLICATIONS_FILE = 'applications_data.json'
@@ -21,14 +25,22 @@ SERVER_STATUS_FILE = 'server_status.json'
 BOLOS_FILE = 'bolos_data.json'
 RADIO_LOG_FILE = 'radio_log.json'
 CAD_DATA_FILE = 'cad_data.json'
+ALERTS_FILE = 'alerts_data.json'
+OFFICER_SESSIONS_FILE = 'officer_sessions.json'
+JAIL_FILE = 'jail_data.json'
 
-DEFAULT_STATUS = {
-    'cityStatus': 'ACTIVE',
-    'playerCount': 0,
-    'maxPlayers': 32,
-    'customMessage': '24/7 dispatch channel live',
-    'lastUpdated': None
-}
+DEFAULT_OFFICERS = [
+    {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
+    {'id': '2L-12',  'name': 'Patrol Unit',     'status': 'En Route',  'department': 'LSPD'},
+    {'id': '3L-22',  'name': 'Traffic Unit',    'status': 'On Scene',  'department': 'Traffic Division'},
+    {'id': 'D-04',   'name': 'Dispatch',        'status': 'Active',    'department': 'Dispatch'},
+    {'id': 'K9-02',  'name': 'K9 Unit',         'status': 'Available', 'department': 'K9 Unit'},
+    {'id': 'GU-01',  'name': 'Gang Unit 1',     'status': 'Available', 'department': 'Gang Enforcement'},
+    {'id': 'GU-02',  'name': 'Gang Unit 2',     'status': 'Available', 'department': 'Gang Enforcement'},
+    {'id': 'BCSO-1', 'name': 'BCSO Deputy 1',   'status': 'Available', 'department': 'BCSO'},
+    {'id': 'BCSO-2', 'name': 'BCSO Deputy 2',   'status': 'Off Duty',  'department': 'BCSO'},
+    {'id': 'SWT-1',  'name': 'SWAT Unit',       'status': 'Off Duty',  'department': 'SWAT'},
+]
 
 DEFAULT_CAD_DATA = {
     'civilians': [],
@@ -40,33 +52,56 @@ DEFAULT_CAD_DATA = {
     'evidence': [],
     'trafficStops': [],
     'calls911': [],
-    'officers': [
-        {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available', 'lastUpdate': datetime.now().isoformat()},
-        {'id': '2L-12', 'name': 'Patrol Unit', 'status': 'En Route', 'lastUpdate': datetime.now().isoformat()},
-        {'id': '3L-22', 'name': 'Traffic Unit', 'status': 'On Scene', 'lastUpdate': datetime.now().isoformat()},
-        {'id': 'D-04', 'name': 'Dispatch', 'status': 'Active', 'lastUpdate': datetime.now().isoformat()},
-        {'id': 'K9-02', 'name': 'K9 Unit', 'status': 'Available', 'lastUpdate': datetime.now().isoformat()}
-    ],
-    'activityLog': []
+    'officers': DEFAULT_OFFICERS,
+    'activityLog': [],
 }
+
+
+def load_officer_sessions():
+    if os.path.exists(OFFICER_SESSIONS_FILE):
+        with open(OFFICER_SESSIONS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def save_officer_sessions(sessions):
+    with open(OFFICER_SESSIONS_FILE, 'w') as f:
+        json.dump(sessions, f, indent=2)
+
+
+def load_alerts():
+    if os.path.exists(ALERTS_FILE):
+        with open(ALERTS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_alerts(alerts):
+    with open(ALERTS_FILE, 'w') as f:
+        json.dump(alerts[-100:], f, indent=2)
 
 
 def load_cad_data():
     if os.path.exists(CAD_DATA_FILE):
         with open(CAD_DATA_FILE, 'r') as f:
-            saved = json.load(f)
-        cad = {**DEFAULT_CAD_DATA, **saved}
-        for key, default_value in DEFAULT_CAD_DATA.items():
-            cad.setdefault(key, default_value)
-        return cad
+            stored = json.load(f)
+        data = dict(DEFAULT_CAD_DATA)
+        data.update(stored)
+        return data
     return dict(DEFAULT_CAD_DATA)
 
 
-def save_cad_data(cad):
-    cad_data = {**DEFAULT_CAD_DATA}
-    cad_data.update({k: cad.get(k, v) for k, v in DEFAULT_CAD_DATA.items()})
+def save_cad_data(data):
     with open(CAD_DATA_FILE, 'w') as f:
-        json.dump(cad_data, f, indent=2)
+        json.dump(data, f, indent=2)
+
+DEFAULT_STATUS = {
+    'cityStatus': 'ACTIVE',
+    'playerCount': 0,
+    'maxPlayers': 32,
+    'customMessage': '24/7 dispatch channel live',
+    'lastUpdated': None
+}
 
 
 def load_bolos():
@@ -79,6 +114,59 @@ def load_bolos():
 def save_bolos(bolos):
     with open(BOLOS_FILE, 'w') as f:
         json.dump(bolos, f, indent=2)
+
+
+def load_jail():
+    if os.path.exists(JAIL_FILE):
+        with open(JAIL_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_jail(inmates):
+    with open(JAIL_FILE, 'w') as f:
+        json.dump(inmates, f, indent=2)
+
+
+def send_bolo_discord(bolo):
+    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+    if not webhook_url or 'placeholder' in webhook_url:
+        return False
+    threat_colors = {'High': 15158332, 'Medium': 16744272, 'Low': 5763719}
+    color = threat_colors.get(bolo.get('threatLevel', 'Medium'), 16744272)
+    fields = [
+        {"name": "BOLO ID",      "value": f"`{bolo['id']}`",               "inline": True},
+        {"name": "Threat Level", "value": bolo.get('threatLevel', '—'),    "inline": True},
+        {"name": "Issued By",    "value": bolo.get('issuedBy', '—'),       "inline": True},
+        {"name": "Last Seen",    "value": bolo.get('lastLocation', '—'),   "inline": True},
+    ]
+    if bolo.get('vehicle'):
+        fields.append({"name": "Vehicle",  "value": bolo['vehicle'],  "inline": True})
+    if bolo.get('charges'):
+        fields.append({"name": "Charges",  "value": bolo['charges'],  "inline": False})
+    auto_tag = ' *(auto-generated)*' if bolo.get('autoGenerated') else ''
+    payload = {
+        "username":   "NThaCityRP BOLO Board",
+        "avatar_url": "https://cdn.discordapp.com/embed/avatars/0.png",
+        "embeds": [{
+            "title":       f"🔍 BOLO ISSUED — {bolo.get('suspectName', 'Unknown')}{auto_tag}",
+            "description": bolo.get('description', ''),
+            "color":       color,
+            "fields":      fields,
+            "footer":      {"text": f"NThaCityRP LSPD • {bolo.get('issuedAt', '')[:10]}"},
+        }]
+    }
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            webhook_url, data=data,
+            headers={'Content-Type': 'application/json'}, method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status in (200, 204)
+    except Exception as e:
+        logger.error(f'BOLO Discord webhook failed: {e}')
+    return False
 
 
 def create_bolo(suspect_name, description, last_location, charges, officer, threat_level='High', vehicle=''):
@@ -98,6 +186,7 @@ def create_bolo(suspect_name, description, last_location, charges, officer, thre
     }
     bolos.insert(0, bolo)
     save_bolos(bolos)
+    send_bolo_discord(bolo)
     return bolo
 
 
@@ -463,7 +552,7 @@ def admin_required(f):
 def admin_login():
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
-    admin_password = os.environ.get('ADMIN_PASSWORD', 'nthatcityrp2024')
+    admin_password = os.environ.get('ADMIN_PASSWORD', '')
     if password == admin_password:
         session['admin_logged_in'] = True
         return jsonify({'success': True})
@@ -700,22 +789,6 @@ def update_server_status():
     return jsonify({'success': True, 'status': status})
 
 
-@app.route('/api/cad', methods=['GET'])
-def get_cad_data():
-    return jsonify(load_cad_data())
-
-
-@app.route('/api/cad', methods=['POST'])
-def save_cad_data_route():
-    data = request.get_json(silent=True) or {}
-    cad = load_cad_data()
-    for key in DEFAULT_CAD_DATA:
-        if key in data:
-            cad[key] = data[key]
-    save_cad_data(cad)
-    return jsonify({'success': True})
-
-
 @app.route('/api/bolos', methods=['GET'])
 def get_bolos():
     return jsonify(load_bolos())
@@ -742,6 +815,7 @@ def post_bolo():
     }
     bolos.insert(0, bolo)
     save_bolos(bolos)
+    send_bolo_discord(bolo)
     return jsonify({'success': True, 'bolo': bolo})
 
 
@@ -923,174 +997,6 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'BOLO generation failed. Try again.'}), 500
 
 
-@app.route('/api/ai/generate-call', methods=['POST'])
-def ai_generate_call():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
-
-    data = request.get_json(silent=True) or {}
-    call_type = data.get('callType', 'Suspicious activity').strip()
-
-    system_msg = """You are an AI-powered CAD call generator for NThaCityRP, a GTA V roleplay server set in Los Santos.
-Use only GTA V locations and names. Keep output realistic for LSPD dispatch.
-Respond with a single JSON object only."""
-
-    user_msg = f"""Generate a 911 call scenario for NThaCityRP.
-Respond with ONLY a valid JSON object with these exact keys:
-- "callType": one of ["Robbery", "Assault", "Suspicious activity", "Traffic accident", "Shots fired", "Domestic disturbance", "Drug activity", "Pursuit", "Hostage situation", "Noise complaint"]
-- "priority": one of ["Critical", "High", "Medium", "Low"]
-- "location": a GTA V street and area (e.g. "Grove Street, Davis")
-- "caller": a short dispatcher-friendly caller name or description
-- "description": one paragraph describing the incident and what the caller reported
-- "dispatchNotes": one or two sentences for responding officers
-- "transcript": an array of speaker lines with objects containing "speaker" and "line"
-
-Requested call type: {call_type}
-Respond only with the JSON object. No markdown, no extra text."""
-
-    try:
-        payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
-            'messages': [
-                {'role': 'system', 'content': system_msg},
-                {'role': 'user', 'content': user_msg}
-            ],
-            'max_tokens': 300,
-            'temperature': 0.65,
-            'response_format': {'type': 'json_object'}
-        }).encode('utf-8')
-
-        req = urllib.request.Request(
-            'https://openrouter.ai/api/v1/chat/completions',
-            data=payload,
-            headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
-                'X-Title': 'NThaCityRP Police CAD'
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            ai_json = json.loads(result['choices'][0]['message']['content'])
-            return jsonify({'success': True, 'call': ai_json})
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        logger.error(f'OpenRouter generate-call error: {e.code} {body}')
-        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
-    except Exception as e:
-        logger.error(f'AI call generation failed: {e}')
-        return jsonify({'success': False, 'error': 'Call generation failed. Try again.'}), 500
-
-
-@app.route('/api/ai/incident-summary', methods=['POST'])
-def ai_incident_summary():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
-
-    data = request.get_json(silent=True) or {}
-    notes = data.get('notes', '').strip()
-    if not notes:
-        return jsonify({'success': False, 'error': 'Notes are required.'}), 400
-
-    system_msg = """You are an AI-assisted incident summarizer for NThaCityRP. Produce a short dispatch-ready summary that can be posted to Discord."""
-    user_msg = f"""Summarize the following incident notes into one concise paragraph suitable for a dispatch summary. Use GTA V location language if referenced.
-
-Notes:
-{notes}
-
-Respond only with a JSON object containing exactly one key:
-- "summary": the summary text
-
-No markdown, no extra text."""
-
-    try:
-        payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
-            'messages': [
-                {'role': 'system', 'content': system_msg},
-                {'role': 'user', 'content': user_msg}
-            ],
-            'max_tokens': 200,
-            'temperature': 0.5,
-            'response_format': {'type': 'json_object'}
-        }).encode('utf-8')
-
-        req = urllib.request.Request(
-            'https://openrouter.ai/api/v1/chat/completions',
-            data=payload,
-            headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
-                'X-Title': 'NThaCityRP Incident Summary'
-            },
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            ai_json = json.loads(result['choices'][0]['message']['content'])
-            return jsonify({'success': True, 'summary': ai_json.get('summary', '')})
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        logger.error(f'OpenRouter incident-summary error: {e.code} {body}')
-        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
-    except Exception as e:
-        logger.error(f'AI incident summary failed: {e}')
-        return jsonify({'success': False, 'error': 'Summary generation failed. Try again.'}), 500
-
-
-@app.route('/api/ai/suspect-match', methods=['POST'])
-def ai_suspect_match():
-    data = request.get_json(silent=True) or {}
-    description = data.get('description', '').strip().lower()
-    civilians = data.get('civilians', [])
-
-    if not description:
-        return jsonify({'success': False, 'error': 'Description is required.'}), 400
-    if not civilians:
-        return jsonify({'success': True, 'matches': [], 'note': 'No civilian registry records available for matching.'})
-
-    matches = []
-    for civ in civilians:
-        score = 0
-        reason_parts = []
-        text = ' '.join(str(civ.get(k, '')).lower() for k in ['firstName', 'lastName', 'discord', 'address', 'occupation', 'vehicleMake', 'vehicleModel', 'plate', 'driverLicense'])
-        if civ.get('firstName') and civ.get('firstName').lower() in description:
-            score += 2
-            reason_parts.append('first name match')
-        if civ.get('lastName') and civ.get('lastName').lower() in description:
-            score += 2
-            reason_parts.append('last name match')
-        for keyword in ['black', 'blue', 'white', 'red', 'blonde', 'tall', 'short', 'tattoo', 'scar', 'beard', 'hoodie', 'jacket', 'truck', 'biker']:
-            if keyword in text and keyword in description:
-                score += 1
-                reason_parts.append(f'{keyword} referenced')
-        if civ.get('plate') and civ.get('plate').lower() in description:
-            score += 3
-            reason_parts.append('plate match')
-
-        if score > 0:
-            confidence = 'Low'
-            if score >= 5:
-                confidence = 'High'
-            elif score >= 3:
-                confidence = 'Medium'
-            matches.append({
-                'name': f"{civ.get('firstName', '')} {civ.get('lastName', '')}".strip() or civ.get('discord', 'Unknown'),
-                'confidence': confidence,
-                'reason': ', '.join(reason_parts) or 'Description similarity detected.'
-            })
-
-    matches.sort(key=lambda m: {'High': 3, 'Medium': 2, 'Low': 1}.get(m['confidence'], 0), reverse=True)
-    if not matches:
-        return jsonify({'success': True, 'matches': [], 'note': 'No strong suspect matches found in current records.'})
-    return jsonify({'success': True, 'matches': matches})
-
-
 @app.route('/api/ai/police-report', methods=['POST'])
 def ai_police_report():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
@@ -1126,17 +1032,15 @@ Officer Notes: {notes if notes else 'None provided'}
 
 Respond only with the JSON object. No markdown, no extra text."""
 
-    prompt = [
-        {'role': 'system', 'content': system_msg},
-        {'role': 'user', 'content': user_msg}
-    ]
-
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': prompt,
-            'max_tokens': 500,
-            'temperature': 0.7,
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user',   'content': user_msg}
+            ],
+            'max_tokens': 600,
+            'temperature': 0.6,
             'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
@@ -1151,7 +1055,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             },
             method='POST'
         )
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             ai_json = json.loads(result['choices'][0]['message']['content'])
             suspect_fled = ai_json.get('suspectFled', False)
@@ -1239,15 +1143,13 @@ Description: {description if description else 'No description provided'}
 
 Respond only with the JSON object. No markdown, no extra text."""
 
-    prompt = [
-        {'role': 'system', 'content': system_msg},
-        {'role': 'user', 'content': user_msg}
-    ]
-
     try:
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': prompt,
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
             'max_tokens': 200,
             'temperature': 0.4,
             'response_format': {'type': 'json_object'}
@@ -1315,14 +1217,12 @@ Respond only with the JSON object. No markdown, no extra text."""
     expiration_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
 
     try:
-        prompt = [
-            {'role': 'system', 'content': system_msg},
-            {'role': 'user', 'content': user_msg}
-        ]
-
         payload = json.dumps({
             'model': 'openai/gpt-4o-mini',
-            'messages': prompt,
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
             'max_tokens': 300,
             'temperature': 0.7,
             'response_format': {'type': 'json_object'}
@@ -1355,6 +1255,579 @@ Respond only with the JSON object. No markdown, no extra text."""
     except Exception as e:
         logger.error(f'AI warrant generation failed: {e}')
         return jsonify({'success': False, 'error': 'Warrant generation failed. Try again.'}), 500
+
+
+@app.route('/api/ai/generate-call', methods=['POST'])
+def ai_generate_call():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    call_type = data.get('callType', '').strip()
+
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system for NThaCityRP, a GTA V roleplay server set in Los Santos.
+CALL GENERATION MODE: Generate fully realistic GTA V emergency calls.
+LOCATION RULES (CRITICAL): ALL locations must be real GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Rockford Hills, Sandy Shores, Paleto Bay, Route 68, Senora Freeway, Great Ocean Highway, Legion Square, Pillbox Hill Medical Center, Maze Bank Arena, LSIA, La Mesa, Cypress Flats, etc.
+DISPATCH LOGIC: Assign LSPD units (LSPD-1A23, LSPD-2B04) for city calls, BCSO (BCSO-3C11) for county/highway, K9-01/K9-02, AIR-1 for helicopter. Escalate priority based on severity.
+Generate realistic caller names (first + last). The transcript must feel like a real 911 call — dispatcher asks clarifying questions, caller may be panicked or calm depending on incident. No real-world references."""
+
+    type_hint = f" The call type should be: {call_type}." if call_type else " Pick a random realistic incident type."
+
+    user_msg = f"""Generate a complete GTA V 911 emergency call for an LSPD dispatch session.{type_hint}
+
+Respond with ONLY a valid JSON object with these exact keys:
+- "callType": the incident type (e.g. "Shots Fired", "Traffic Accident", "Armed Robbery", "Domestic Disturbance", "Pursuit", "Suspicious Person", "Drug Activity", "Assault in Progress")
+- "caller": realistic full name of the caller
+- "location": specific GTA V street, area, or landmark (e.g. "Forum Drive & Covenant Ave, Davis" or "Route 68 near Harmony")
+- "description": 2-3 sentences of what the caller describes to dispatch
+- "dispatchNotes": 1-2 sentences of internal dispatcher notes (unit recommendation, hazards, backup needed)
+- "priority": one of "Critical", "High", "Medium", "Low"
+- "assignedUnit": LSPD/BCSO unit designation (e.g. "LSPD-1A23", "BCSO-2B11", "AIR-1", "K9-02")
+- "transcript": an array of 6-10 objects, each with "speaker" ("Dispatch" or "Caller") and "line" (the spoken dialogue). Make it realistic — dispatcher confirms location, caller may be scared or urgent, dispatcher gives instructions and confirms unit en route.
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 800,
+            'temperature': 0.9,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'call': ai_json})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter generate-call error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI call generation failed: {e}')
+        return jsonify({'success': False, 'error': 'Call generation failed. Try again.'}), 500
+
+
+@app.route('/api/ai/incident-summary', methods=['POST'])
+def ai_incident_summary():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    notes = data.get('notes', '').strip()
+
+    if not notes:
+        return jsonify({'success': False, 'error': 'No CAD notes provided.'}), 400
+
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system and report-writing assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
+LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, etc. Convert any vague or real-world locations to the closest GTA V equivalent.
+OUTPUT: Generate Discord-formatted (#criminal-files channel) summaries. Use INCIDENT REPORT MODE structure. Professional law enforcement tone only."""
+
+    user_msg = f"""An officer has provided raw CAD notes. Generate a clean Discord-formatted incident summary for the #criminal-files channel.
+
+Rules:
+- Use **bold** for all section labels
+- Use a `code block` only for case/report numbers if present
+- Max 200 words
+- Sections (include if data available): **Incident Type**, **Location** (GTA V formatted), **Date/Time**, **Officers Involved**, **Unit(s)**, **Suspect(s)**, **Charges**, **Outcome**, **Notes**
+- End with: ―――――――――――――――――――――
+- Raw Discord markdown only — no wrapper blocks
+
+Raw CAD Notes:
+{notes}
+
+Respond with ONLY a valid JSON object with one key:
+- "summary": the full Discord-formatted incident summary string"""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 500,
+            'temperature': 0.4,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'summary': ai_json.get('summary', '')})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter incident summary error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI incident summary failed: {e}')
+        return jsonify({'success': False, 'error': 'Summary failed. Try again.'}), 500
+
+
+@app.route('/api/ai/suspect-match', methods=['POST'])
+def ai_suspect_match():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    description = data.get('description', '').strip()
+    civilians = data.get('civilians', [])
+
+    if not description:
+        return jsonify({'success': False, 'error': 'No description provided.'}), 400
+
+    if not civilians:
+        return jsonify({'success': True, 'matches': [], 'note': 'No civilians registered in the system yet.'})
+
+    civ_list = '\n'.join([
+        f"- Name: {c.get('firstName','?')} {c.get('lastName','?')} | DOB: {c.get('dob','?')} | Gender: {c.get('gender','?')} | Occupation: {c.get('occupation','?')} | Notes: {c.get('notes','')}"
+        for c in civilians[:50]
+    ])
+
+    system_msg = """You are an AI-powered suspect identification assistant for NThaCityRP, a GTA V roleplay server set in Los Santos.
+You help LSPD officers cross-reference physical suspect descriptions against the civilian registry. Be precise and analytical. Only match civilians where there is genuine physical basis. Maintain professional law enforcement tone."""
+
+    user_msg = f"""An LSPD officer has provided a physical description of a suspect spotted in Los Santos. Cross-reference the registered civilian database and return the top matches.
+
+Respond with ONLY a valid JSON object with one key:
+- "matches": array of up to 3 objects, each with:
+  - "name": full civilian name
+  - "confidence": "High", "Medium", or "Low"
+  - "reason": one short sentence (max 15 words) citing specific matching physical traits
+
+If no civilians reasonably match, return an empty matches array.
+
+Suspect Description: {description}
+
+Registered Civilians:
+{civ_list}
+
+Respond only with the JSON object. No markdown, no extra text."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user', 'content': user_msg}
+            ],
+            'max_tokens': 300,
+            'temperature': 0.3,
+            'response_format': {'type': 'json_object'}
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            ai_json = json.loads(result['choices'][0]['message']['content'])
+            return jsonify({'success': True, 'matches': ai_json.get('matches', [])})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter suspect match error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI suspect match failed: {e}')
+        return jsonify({'success': False, 'error': 'Match failed. Try again.'}), 500
+
+
+@app.route('/api/officer-status', methods=['PATCH'])
+def patch_officer_status():
+    data = request.get_json(silent=True) or {}
+    officer_id = data.get('id', '').strip()
+    new_status = data.get('status', '').strip()
+    valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty']
+    if not officer_id or new_status not in valid_statuses:
+        return jsonify({'success': False, 'error': 'invalid id or status'}), 400
+    cad = load_cad_data()
+    updated = False
+    for officer in cad.get('officers', []):
+        if officer['id'] == officer_id:
+            officer['status'] = new_status
+            officer['lastUpdate'] = datetime.now().isoformat()
+            updated = True
+            break
+    if not updated:
+        cad.setdefault('officers', []).append({
+            'id': officer_id,
+            'name': data.get('name', officer_id),
+            'status': new_status,
+            'department': data.get('department', ''),
+            'lastUpdate': datetime.now().isoformat(),
+        })
+    save_cad_data(cad)
+    logger.info(f"Officer status update: {officer_id} → {new_status}")
+    return jsonify({'success': True})
+
+
+@app.route('/api/officer-sessions', methods=['GET'])
+def get_officer_sessions():
+    return jsonify({'sessions': load_officer_sessions()})
+
+
+@app.route('/api/officer-session', methods=['POST'])
+def post_officer_session():
+    data = request.get_json(silent=True) or {}
+    callsign = data.get('callsign', '').strip()
+    name = data.get('name', '').strip()
+    department = data.get('department', 'LSPD').strip()
+    if not callsign:
+        return jsonify({'success': False, 'error': 'callsign required'}), 400
+    sessions = load_officer_sessions()
+    sessions[callsign] = {
+        'callsign': callsign,
+        'name': name,
+        'department': department,
+        'loggedInAt': datetime.now().isoformat(),
+        'status': 'On Duty',
+    }
+    save_officer_sessions(sessions)
+    logger.info(f"Officer login: {callsign} ({name}) — {department}")
+    return jsonify({'success': True})
+
+
+@app.route('/api/officer-session/<callsign>', methods=['DELETE'])
+def delete_officer_session(callsign):
+    sessions = load_officer_sessions()
+    sessions.pop(callsign, None)
+    save_officer_sessions(sessions)
+    logger.info(f"Officer end shift: {callsign}")
+    return jsonify({'success': True})
+
+
+@app.route('/api/alerts', methods=['GET'])
+def get_alerts():
+    since = request.args.get('since', '')
+    alerts = load_alerts()
+    if since:
+        alerts = [a for a in alerts if a.get('issuedAt', '') > since]
+    return jsonify({'alerts': alerts[-20:]})
+
+
+@app.route('/api/alert', methods=['POST'])
+def post_alert():
+    data = request.get_json(silent=True) or {}
+    alert_type = data.get('type', '').strip()
+    message = data.get('message', '').strip()
+    issued_by = data.get('issuedBy', 'Dispatch').strip()
+    valid_types = ['PANIC', 'BOLO', 'ALL UNITS', 'CODE RED']
+    if not alert_type or not message:
+        return jsonify({'success': False, 'error': 'type and message are required'}), 400
+    if alert_type not in valid_types:
+        return jsonify({'success': False, 'error': f'Invalid type. Must be one of: {", ".join(valid_types)}'}), 400
+    alerts = load_alerts()
+    alert = {
+        'id': f"ALERT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(alerts)+1:04d}",
+        'type': alert_type,
+        'message': message,
+        'issuedBy': issued_by,
+        'issuedAt': datetime.now().isoformat(),
+    }
+    alerts.append(alert)
+    save_alerts(alerts)
+    logger.info(f"Alert broadcast: {alert['id']} — {alert_type} by {issued_by}")
+    return jsonify({'success': True, 'alert': alert})
+
+
+@app.route('/api/cad/data', methods=['GET'])
+def get_cad_data():
+    return jsonify(load_cad_data())
+
+
+@app.route('/api/cad/data', methods=['POST'])
+def post_cad_data():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Invalid payload'}), 400
+    allowed_keys = {'civilians', 'vehicles', 'licenses', 'warrants', 'arrests',
+                    'incidents', 'evidence', 'trafficStops', 'calls911', 'officers', 'activityLog'}
+    cleaned = {k: v for k, v in data.items() if k in allowed_keys}
+    existing = load_cad_data()
+    existing.update(cleaned)
+    save_cad_data(existing)
+    return jsonify({'success': True})
+
+
+@app.route('/api/cad/criminal-record', methods=['GET'])
+def get_criminal_record():
+    name = request.args.get('name', '').strip().lower()
+    if not name or len(name) < 2:
+        return jsonify({'success': False, 'error': 'Name must be at least 2 characters'}), 400
+    data = load_cad_data()
+
+    def nm(val):
+        return name in (val or '').lower()
+
+    warrants    = [w for w in data.get('warrants',     []) if nm(w.get('warrantName')) or nm(w.get('suspectName'))]
+    arrests     = [a for a in data.get('arrests',      []) if nm(a.get('suspectName'))]
+    traffic     = [t for t in data.get('trafficStops', []) if nm(t.get('driverName'))]
+    evidence    = [e for e in data.get('evidence',     []) if nm(e.get('caseNumber')) or nm(e.get('evidenceDescription')) or nm(e.get('description'))]
+
+    return jsonify({
+        'success':     True,
+        'warrants':    warrants,
+        'arrests':     arrests,
+        'trafficStops': traffic,
+        'evidence':    evidence,
+    })
+
+
+@app.route('/api/ai/shift-summary', methods=['POST'])
+def ai_shift_summary():
+    api_key = os.environ.get('OPENROUTER_API_KEY', '')
+    if not api_key:
+        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+
+    data     = request.get_json(silent=True) or {}
+    officer  = data.get('officer',    'Unknown')
+    callsign = data.get('callsign',   '')
+    dept     = data.get('department', '')
+    started  = data.get('shiftStart', 'Unknown')
+    calls    = data.get('calls',        [])
+    arrests  = data.get('arrests',      [])
+    warrants = data.get('warrants',     [])
+    traffic  = data.get('trafficStops', [])
+
+    def fmt_calls(lst):
+        lines = [f"- [{c.get('priority','?')}] {c.get('incidentType','Unknown')} @ {c.get('location','?')} — {c.get('status','?')}" for c in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    def fmt_arrests(lst):
+        lines = [f"- {a.get('suspectName','?')}: {a.get('charges','?')} | Penalty: {a.get('penalty','?')}" for a in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    def fmt_warrants(lst):
+        lines = [f"- {w.get('warrantName', w.get('suspectName','?'))}: {w.get('warrantCharges', w.get('charges','?'))} ({w.get('warrantStatus', w.get('status','Active'))})" for w in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    def fmt_traffic(lst):
+        lines = [f"- {t.get('driverName','?')} ({t.get('trafficPlate', t.get('plate','?'))}): {t.get('trafficReason', t.get('reason','?'))} → {t.get('trafficOutcome', t.get('outcome','?'))}" for t in lst[:8]]
+        return '\n'.join(lines) if lines else 'None'
+
+    system_msg = (
+        "You are an AI report-writing assistant for NThaCityRP, a GTA V roleplay server set in Los Santos. "
+        "Write professional law enforcement shift summaries for Discord posting. Use GTA V location and street names. "
+        "Keep it RP-immersive, third-person, professional tone. No real-world city references."
+    )
+
+    user_msg = f"""Generate a Discord-ready end-of-shift summary for this officer. Use Discord markdown (bold with **, bullets with •). No # headers.
+
+Officer: {officer} ({callsign}) — {dept}
+Shift Started: {started}
+
+Calls Handled ({len(calls)} total):
+{fmt_calls(calls)}
+
+Arrests Made ({len(arrests)} total):
+{fmt_arrests(arrests)}
+
+Warrants Issued ({len(warrants)} total):
+{fmt_warrants(warrants)}
+
+Traffic Stops ({len(traffic)} total):
+{fmt_traffic(traffic)}
+
+Structure: one opening sentence → **Calls** section → **Arrests** section → **Warrants** section → **Traffic Stops** section → professional closing line. Under 300 words. Plain Discord text only, no JSON."""
+
+    try:
+        payload = json.dumps({
+            'model': 'openai/gpt-4o-mini',
+            'messages': [
+                {'role': 'system', 'content': system_msg},
+                {'role': 'user',   'content': user_msg}
+            ],
+            'max_tokens': 500,
+            'temperature': 0.6,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            'https://openrouter.ai/api/v1/chat/completions',
+            data=payload,
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+                'HTTP-Referer': 'https://nthacityrp.com',
+                'X-Title': 'NThaCityRP Police CAD'
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            result  = json.loads(resp.read().decode('utf-8'))
+            summary = result['choices'][0]['message']['content']
+            return jsonify({'success': True, 'summary': summary})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        logger.error(f'OpenRouter shift-summary error: {e.code} {body}')
+        return jsonify({'success': False, 'error': f'OpenRouter error {e.code}.'}), 502
+    except Exception as e:
+        logger.error(f'AI shift summary failed: {e}')
+        return jsonify({'success': False, 'error': 'Shift summary failed. Try again.'}), 500
+
+
+@app.route('/api/court/hearings', methods=['GET'])
+def get_hearings():
+    data = load_cad_data()
+    hearings = sorted(data.get('hearings', []), key=lambda h: h.get('scheduledAt', ''), reverse=True)
+    return jsonify({'success': True, 'hearings': hearings})
+
+
+@app.route('/api/court/hearings', methods=['POST'])
+def create_hearing():
+    body = request.get_json(silent=True) or {}
+    for field in ('suspectName', 'charges', 'hearingType', 'scheduledAt', 'filingOfficer'):
+        if not body.get(field):
+            return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+    data = load_cad_data()
+    if 'hearings' not in data:
+        data['hearings'] = []
+    ts = int(datetime.utcnow().timestamp() * 1000)
+    rand = secrets.token_hex(5)
+    hearing = {
+        'id':            f'hearing-{ts}-{rand}',
+        'suspectName':   body.get('suspectName', '').strip(),
+        'charges':       body.get('charges', '').strip(),
+        'hearingType':   body.get('hearingType', 'Arraignment'),
+        'scheduledAt':   body.get('scheduledAt', ''),
+        'judge':         body.get('judge', '').strip(),
+        'notes':         body.get('notes', '').strip(),
+        'arrestId':      body.get('arrestId', ''),
+        'filingOfficer': body.get('filingOfficer', '').strip(),
+        'outcome':       '',
+        'status':        'Scheduled',
+        'createdAt':     datetime.utcnow().isoformat() + 'Z',
+    }
+    data['hearings'].append(hearing)
+    save_cad_data(data)
+    return jsonify({'success': True, 'hearing': hearing})
+
+
+@app.route('/api/court/hearings/<hearing_id>', methods=['PUT'])
+def update_hearing(hearing_id):
+    body = request.get_json(silent=True) or {}
+    data = load_cad_data()
+    for h in data.get('hearings', []):
+        if h.get('id') == hearing_id:
+            for field in ('outcome', 'status', 'judge', 'notes', 'scheduledAt'):
+                if field in body:
+                    h[field] = body[field]
+            h['updatedAt'] = datetime.utcnow().isoformat() + 'Z'
+            save_cad_data(data)
+            return jsonify({'success': True, 'hearing': h})
+    return jsonify({'success': False, 'error': 'Hearing not found'}), 404
+
+
+@app.route('/api/court/hearings/<hearing_id>', methods=['DELETE'])
+def delete_hearing(hearing_id):
+    data = load_cad_data()
+    hearings = data.get('hearings', [])
+    new_list = [h for h in hearings if h.get('id') != hearing_id]
+    if len(new_list) == len(hearings):
+        return jsonify({'success': False, 'error': 'Hearing not found'}), 404
+    data['hearings'] = new_list
+    save_cad_data(data)
+    return jsonify({'success': True})
+
+
+@app.route('/api/jail/inmates', methods=['GET'])
+def get_inmates():
+    inmates = load_jail()
+    inmates_sorted = sorted(inmates, key=lambda i: i.get('bookedAt', ''), reverse=True)
+    return jsonify({'success': True, 'inmates': inmates_sorted})
+
+
+@app.route('/api/jail/inmates', methods=['POST'])
+def book_inmate():
+    body = request.get_json(silent=True) or {}
+    for field in ('suspectName', 'charges', 'bookedBy'):
+        if not body.get(field):
+            return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+    inmates = load_jail()
+    ts = int(datetime.utcnow().timestamp() * 1000)
+    rand = secrets.token_hex(4)
+    inmate = {
+        'id':              f'inmate-{ts}-{rand}',
+        'suspectName':     body.get('suspectName', '').strip(),
+        'charges':         body.get('charges', '').strip(),
+        'penalty':         body.get('penalty', '').strip(),
+        'cell':            body.get('cell', '').strip(),
+        'bookedBy':        body.get('bookedBy', '').strip(),
+        'arrestId':        body.get('arrestId', ''),
+        'estimatedRelease': body.get('estimatedRelease', ''),
+        'notes':           body.get('notes', '').strip(),
+        'status':          'In Custody',
+        'bookedAt':        datetime.utcnow().isoformat() + 'Z',
+    }
+    inmates.insert(0, inmate)
+    save_jail(inmates)
+    return jsonify({'success': True, 'inmate': inmate})
+
+
+@app.route('/api/jail/inmates/<inmate_id>', methods=['PUT'])
+def update_inmate(inmate_id):
+    body = request.get_json(silent=True) or {}
+    inmates = load_jail()
+    for inmate in inmates:
+        if inmate.get('id') == inmate_id:
+            for field in ('estimatedRelease', 'cell', 'notes', 'penalty', 'status'):
+                if field in body:
+                    inmate[field] = body[field]
+            inmate['updatedAt'] = datetime.utcnow().isoformat() + 'Z'
+            save_jail(inmates)
+            return jsonify({'success': True, 'inmate': inmate})
+    return jsonify({'success': False, 'error': 'Inmate not found'}), 404
+
+
+@app.route('/api/jail/inmates/<inmate_id>/release', methods=['POST'])
+def release_inmate(inmate_id):
+    body = request.get_json(silent=True) or {}
+    inmates = load_jail()
+    for inmate in inmates:
+        if inmate.get('id') == inmate_id:
+            inmate['status']        = 'Released'
+            inmate['releasedAt']    = datetime.utcnow().isoformat() + 'Z'
+            inmate['releasedBy']    = body.get('releasedBy', 'Officer').strip()
+            inmate['releaseReason'] = body.get('releaseReason', '').strip()
+            save_jail(inmates)
+            return jsonify({'success': True, 'inmate': inmate})
+    return jsonify({'success': False, 'error': 'Inmate not found'}), 404
+
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
