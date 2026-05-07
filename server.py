@@ -3583,6 +3583,142 @@ def search_cases_route():
     return jsonify({'success': True, 'cases': cases, 'total': len(cases)})
 
 
+# ---------------------------------------------------------------------------
+# Immersion Features Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/immersion/alerts', methods=['GET'])
+def get_alerts_route():
+    """Get active MDT alerts."""
+    from immersion_service import get_active_alerts
+
+    officer_id = request.args.get('officer_id')
+    limit = request.args.get('limit', 20, type=int)
+
+    alerts = get_active_alerts(officer_id, limit)
+    return jsonify({'success': True, 'alerts': alerts, 'total': len(alerts)})
+
+
+@app.route('/api/immersion/warrant-hit/<plate>', methods=['GET'])
+def warrant_hit_alert_route(plate):
+    """Check for warrant hit on plate."""
+    from immersion_service import generate_warrant_hit_alert
+
+    alert = generate_warrant_hit_alert(plate)
+    if not alert:
+        return jsonify({'success': True, 'alert': None})
+
+    return jsonify({'success': True, 'alert': alert})
+
+
+@app.route('/api/immersion/stolen-vehicle/<plate>', methods=['GET'])
+def stolen_vehicle_alert_route(plate):
+    """Check for stolen vehicle alert."""
+    from immersion_service import generate_stolen_vehicle_alert
+
+    alert = generate_stolen_vehicle_alert(plate)
+    if not alert:
+        return jsonify({'success': True, 'alert': None})
+
+    return jsonify({'success': True, 'alert': alert})
+
+
+@app.route('/api/immersion/bolo-match/<civilian_id>', methods=['GET'])
+def bolo_match_alert_route(civilian_id):
+    """Check for BOLO match."""
+    from immersion_service import generate_bolo_match_alert
+
+    alert = generate_bolo_match_alert(civilian_id)
+    if not alert:
+        return jsonify({'success': True, 'alert': None})
+
+    return jsonify({'success': True, 'alert': alert})
+
+
+@app.route('/api/immersion/safety-warning/<civilian_id>', methods=['GET'])
+def safety_warning_route(civilian_id):
+    """Get officer safety warning."""
+    data = request.get_json(silent=True) or {}
+    officer_id = data.get('officer_id', 'dispatch')
+
+    from immersion_service import generate_safety_warning_alert
+
+    alert = generate_safety_warning_alert(civilian_id, officer_id)
+    if not alert:
+        return jsonify({'success': True, 'alert': None})
+
+    return jsonify({'success': True, 'alert': alert})
+
+
+@app.route('/api/immersion/dispatch-audio/<call_id>', methods=['GET'])
+def dispatch_audio_route(call_id):
+    """Get dispatch audio log for call."""
+    from immersion_service import generate_dispatch_audio_log
+
+    log = generate_dispatch_audio_log(call_id)
+    if not log:
+        return jsonify({'success': False, 'error': 'Call not found'}), 404
+
+    return jsonify({'success': True, 'audio_log': log})
+
+
+@app.route('/api/immersion/audio-logs', methods=['GET'])
+def audio_logs_route():
+    """Get recent dispatch audio logs."""
+    from immersion_service import get_dispatch_audio_logs
+
+    limit = request.args.get('limit', 20, type=int)
+    logs = get_dispatch_audio_logs(limit)
+
+    return jsonify({'success': True, 'logs': logs, 'total': len(logs)})
+
+
+@app.route('/api/immersion/incident-timeline/<call_id>', methods=['GET'])
+def incident_timeline_route(call_id):
+    """Get incident timeline."""
+    from immersion_service import get_incident_timeline
+
+    timeline = get_incident_timeline(call_id)
+    if not timeline:
+        return jsonify({'success': False, 'error': 'Call not found'}), 404
+
+    return jsonify({'success': True, 'timeline': timeline})
+
+
+@app.route('/api/immersion/mdt-dashboard', methods=['GET'])
+def mdt_dashboard_route():
+    """Get complete MDT dashboard data."""
+    from immersion_service import get_active_alerts, get_dispatch_audio_logs
+
+    officer_id = request.args.get('officer_id')
+
+    alerts = get_active_alerts(officer_id, 10)
+    audio_logs = get_dispatch_audio_logs(5)
+
+    # Get active calls
+    active_calls = DispatchCall.query.filter(
+        DispatchCall.status.in_(['New', 'Assigned', 'En Route', 'On Scene'])
+    ).order_by(DispatchCall.created_at.desc()).limit(10).all()
+
+    calls_data = [{
+        'call_id': c.call_id,
+        'location': c.location,
+        'priority': c.priority,
+        'status': c.status,
+        'description': (c.description or '')[:100],
+    } for c in active_calls]
+
+    return jsonify({
+        'success': True,
+        'dashboard': {
+            'alerts': alerts,
+            'audio_logs': audio_logs,
+            'active_calls': calls_data,
+            'timestamp': datetime.utcnow().isoformat(),
+        }
+    })
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
