@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NThaCityRP CAD/MDT</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e27;
+            color: #00ff00;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: #1a1f3a;
+            border: 2px solid #00ff00;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            margin-bottom: 10px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #00ff00;
+            flex-wrap: wrap;
+        }
+
+        .tab-button {
+            background: #1a1f3a;
+            color: #00ff00;
+            border: 2px solid #00ff00;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            transition: all 0.3s;
+        }
+
+        .tab-button:hover {
+            background: #00ff00;
+            color: #0a0e27;
+        }
+
+        .tab-button.active {
+            background: #00ff00;
+            color: #0a0e27;
+        }
+
+        .tab-content {
+            display: none;
+            background: #1a1f3a;
+            border: 2px solid #00ff00;
+            padding: 20px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            background: #0a0e27;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 10px;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            box-shadow: 0 0 10px #00ff00;
+        }
+
+        button {
+            background: #00ff00;
+            color: #0a0e27;
+            border: none;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            transition: all 0.3s;
+            margin-right: 10px;
+        }
+
+        button:hover {
+            background: #00cc00;
+            box-shadow: 0 0 10px #00ff00;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .spinner {
+            display: none;
+            border: 3px solid #00ff00;
+            border-top: 3px solid transparent;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 2px solid;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background: #0a2a0a;
+            border-color: #00ff00;
+            color: #00ff00;
+        }
+
+        .alert-error {
+            background: #2a0a0a;
+            border-color: #ff0000;
+            color: #ff0000;
+        }
+
+        .alert-info {
+            background: #0a0a2a;
+            border-color: #0099ff;
+            color: #0099ff;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: #0a0e27;
+            border: 1px solid #00ff00;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            color: #00ff00;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-decoration: underline;
+        }
+
+        .card-content {
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+
+        .login-panel {
+            max-width: 400px;
+            margin: 40px auto;
+            background: #1a1f3a;
+            border: 2px solid #00ff00;
+            padding: 30px;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: #0099ff;
+            text-decoration: none;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+
+        .back-link:hover {
+            color: #00ff00;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚔 NThaCityRP CAD/MDT System</h1>
+            <p>Police Computer Aided Dispatch &amp; Mobile Data Terminal</p>
+            <a href="index.html" class="back-link" style="display:inline-block;margin-top:10px;">← Back to Hub</a>
+        </header>
+
+        <!-- Login Panel (shown when not authenticated) -->
+        <div id="login-panel" class="login-panel" style="display:none;">
+            <h2 style="margin-bottom:20px;">🔐 Admin Login Required</h2>
+            <div id="login-alert"></div>
+            <div class="form-group">
+                <label>Admin Password</label>
+                <input type="password" id="admin-password" placeholder="Enter admin password...">
+            </div>
+            <button onclick="adminLogin()">Login</button>
+        </div>
+
+        <!-- Main CAD UI (shown when authenticated) -->
+        <div id="cad-panel" style="display:none;">
+            <div class="tabs">
+                <button class="tab-button active" onclick="switchTab('civilian-gen', event)">Generate Civilian</button>
+                <button class="tab-button" onclick="switchTab('civilian-search', event)">Search Civilians</button>
+                <button class="tab-button" onclick="switchTab('dispatch', event)">Dispatch</button>
+                <button class="tab-button" onclick="switchTab('alerts', event)">Alerts</button>
+                <button onclick="adminLogout()" style="margin-left:auto;background:#2a0a0a;color:#ff4444;border:1px solid #ff4444;">Logout</button>
+            </div>
+
+            <!-- Civilian Generation Tab -->
+            <div id="civilian-gen" class="tab-content active">
+                <h2>🤖 AI Civilian Generator</h2>
+                <p style="margin-bottom: 20px; color: #0099ff;">Generate realistic civilians with complete backgrounds, employment history, and profiles.</p>
+
+                <div id="gen-alert"></div>
+
+                <div class="button-group">
+                    <button onclick="generateCivilian()" id="gen-btn">Generate AI Civilian</button>
+                    <button onclick="clearForm()">Clear Form</button>
+                </div>
+
+                <div class="spinner" id="spinner"></div>
+
+                <div class="grid">
+                    <div>
+                        <h3 style="color: #00ff00; margin-bottom: 15px;">Basic Information</h3>
+
+                        <div class="form-group">
+                            <label>First Name</label>
+                            <input type="text" id="first_name" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Last Name</label>
+                            <input type="text" id="last_name" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Age</label>
+                            <input type="number" id="age" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Gender</label>
+                            <input type="text" id="gender" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Race/Ethnicity</label>
+                            <input type="text" id="race" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Date of Birth</label>
+                            <input type="date" id="date_of_birth" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Phone Number</label>
+                            <input type="tel" id="phone_number" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Address</label>
+                            <textarea id="address" readonly rows="2"></textarea>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 style="color: #00ff00; margin-bottom: 15px;">Profile Information</h3>
+
+                        <div class="form-group">
+                            <label>Occupation</label>
+                            <input type="text" id="occupation" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Gang Affiliation</label>
+                            <input type="text" id="gang_affiliation" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Risk Level</label>
+                            <input type="text" id="risk_level" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Addiction Status</label>
+                            <input type="text" id="addiction_status" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Weapon Permit</label>
+                            <input type="text" id="weapon_permit" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Insurance Status</label>
+                            <input type="text" id="insurance_status" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Emergency Contact</label>
+                            <input type="text" id="emergency_contact_name" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Emergency Contact Phone</label>
+                            <input type="tel" id="emergency_contact_phone" readonly>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <h3 style="color: #00ff00; margin-bottom: 15px;">Biography</h3>
+                    <textarea id="biography" readonly rows="4" style="width: 100%;"></textarea>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <p id="civilian-id-display" style="color:#0099ff;font-size:0.85em;margin-bottom:10px;"></p>
+                </div>
+            </div>
+
+            <!-- Search Tab -->
+            <div id="civilian-search" class="tab-content">
+                <h2>🔍 Search Civilians</h2>
+                <div class="form-group">
+                    <label>Search by Name, Phone, or Address</label>
+                    <input type="text" id="search-query" placeholder="Enter name or details (min 2 characters)..." onkeydown="if(event.key==='Enter') searchCivilians()">
+                </div>
+                <button onclick="searchCivilians()">Search</button>
+                <div id="search-results" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- Dispatch Tab -->
+            <div id="dispatch" class="tab-content">
+                <h2>📞 Dispatch Calls</h2>
+                <p style="color: #0099ff; margin-bottom: 20px;">Active dispatch calls and incident management.</p>
+                <button onclick="loadDispatchCalls()">Load Active Calls</button>
+                <div id="dispatch-list" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- Alerts Tab -->
+            <div id="alerts" class="tab-content">
+                <h2>⚠️ MDT Alerts</h2>
+                <p style="color: #0099ff; margin-bottom: 20px;">Real-time alerts and notifications.</p>
+                <button onclick="loadAlerts()">Load Alerts</button>
+                <div id="alerts-list" style="margin-top: 20px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---------------------------------------------------------------------------
+        // Auth
+        // ---------------------------------------------------------------------------
+
+        async function checkSession() {
+            try {
+                const res = await fetch('/api/admin/session');
+                const data = await res.json();
+                if (data.loggedIn) {
+                    showCAD();
+                } else {
+                    showLogin();
+                }
+            } catch {
+                showLogin();
+            }
+        }
+
+        function showLogin() {
+            document.getElementById('login-panel').style.display = 'block';
+            document.getElementById('cad-panel').style.display = 'none';
+        }
+
+        function showCAD() {
+            document.getElementById('login-panel').style.display = 'none';
+            document.getElementById('cad-panel').style.display = 'block';
+        }
+
+        async function adminLogin() {
+            const password = document.getElementById('admin-password').value;
+            const alertDiv = document.getElementById('login-alert');
+
+            try {
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    showCAD();
+                } else {
+                    alertDiv.innerHTML = '<div class="alert alert-error">❌ Invalid password</div>';
+                }
+            } catch (err) {
+                alertDiv.innerHTML = '<div class="alert alert-error">❌ Login failed</div>';
+            }
+        }
+
+        async function adminLogout() {
+            await fetch('/api/admin/logout', { method: 'POST' });
+            showLogin();
+        }
+
+        // Allow Enter key on password field
+        document.addEventListener('DOMContentLoaded', () => {
+            const pwField = document.getElementById('admin-password');
+            if (pwField) {
+                pwField.addEventListener('keydown', e => {
+                    if (e.key === 'Enter') adminLogin();
+                });
+            }
+            checkSession();
+        });
+
+        // ---------------------------------------------------------------------------
+        // Tab switching
+        // ---------------------------------------------------------------------------
+
+        function switchTab(tabName, event) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            if (event && event.target) event.target.classList.add('active');
+        }
+
+        // ---------------------------------------------------------------------------
+        // Alerts
+        // ---------------------------------------------------------------------------
+
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.getElementById('gen-alert');
+            alertDiv.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            setTimeout(() => { alertDiv.innerHTML = ''; }, 5000);
+        }
+
+        function showSpinner(show = true) {
+            document.getElementById('spinner').style.display = show ? 'block' : 'none';
+            document.getElementById('gen-btn').disabled = show;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Generate Civilian
+        // ---------------------------------------------------------------------------
+
+        async function generateCivilian() {
+            showSpinner(true);
+            showAlert('Generating civilian...', 'info');
+
+            try {
+                const response = await fetch('/api/ai/civilian', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to generate civilian');
+                }
+
+                const civilian = data.civilian;
+
+                document.getElementById('first_name').value = civilian.first_name || '';
+                document.getElementById('last_name').value = civilian.last_name || '';
+                document.getElementById('age').value = civilian.age || '';
+                document.getElementById('gender').value = civilian.gender || '';
+                document.getElementById('race').value = civilian.race || '';
+                document.getElementById('date_of_birth').value = civilian.date_of_birth || '';
+                document.getElementById('phone_number').value = civilian.phone_number || '';
+                document.getElementById('address').value = civilian.address || '';
+                document.getElementById('occupation').value = civilian.occupation || '';
+                document.getElementById('gang_affiliation').value = civilian.gang_affiliation || '';
+                document.getElementById('risk_level').value = civilian.risk_level || '';
+                document.getElementById('addiction_status').value = civilian.addiction_status || '';
+                document.getElementById('weapon_permit').value = civilian.weapon_permit
+                    ? (civilian.weapon_permit_type || 'Yes')
+                    : 'None';
+                document.getElementById('insurance_status').value = civilian.insurance_status || '';
+                document.getElementById('emergency_contact_name').value = civilian.emergency_contact_name || '';
+                document.getElementById('emergency_contact_phone').value = civilian.emergency_contact_phone || '';
+                document.getElementById('biography').value = civilian.biography || '';
+
+                document.getElementById('civilian-id-display').textContent =
+                    `✅ Saved to registry — ID: ${civilian.civilian_id}`;
+
+                showAlert(`✅ Generated &amp; saved: ${civilian.full_name}`, 'success');
+            } catch (error) {
+                showAlert(`❌ Error: ${error.message}`, 'error');
+                console.error('Generation error:', error);
+            } finally {
+                showSpinner(false);
+            }
+        }
+
+        function clearForm() {
+            document.querySelectorAll('#civilian-gen input[readonly], #civilian-gen textarea[readonly]').forEach(field => {
+                field.value = '';
+            });
+            document.getElementById('civilian-id-display').textContent = '';
+            document.getElementById('gen-alert').innerHTML = '';
+        }
+
+        // ---------------------------------------------------------------------------
+        // Search Civilians
+        // ---------------------------------------------------------------------------
+
+        async function searchCivilians() {
+            const query = document.getElementById('search-query').value.trim();
+            const resultsDiv = document.getElementById('search-results');
+
+            if (!query || query.length < 2) {
+                resultsDiv.innerHTML = '<p style="color:#ff4444;">Enter at least 2 characters to search.</p>';
+                return;
+            }
+
+            resultsDiv.innerHTML = '<p style="color:#0099ff;">Searching...</p>';
+
+            try {
+                const response = await fetch('/api/civilian/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query })
+                });
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Search failed');
+                }
+
+                const results = data.results || [];
+                if (results.length > 0) {
+                    resultsDiv.innerHTML = results.map(civ => `
+                        <div class="card">
+                            <div class="card-title">${civ.name || '—'}</div>
+                            <div class="card-content">
+                                <p><strong>ID:</strong> ${civ.civilian_id}</p>
+                                <p><strong>Risk:</strong> ${civ.risk_level || 'Unknown'}</p>
+                                <p><strong>Phone:</strong> ${civ.phone || '—'}</p>
+                                <p><strong>Address:</strong> ${civ.address || '—'}</p>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    resultsDiv.innerHTML = '<p style="color:#ff4444;">No civilians found.</p>';
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `<p style="color:#ff4444;">❌ Error: ${error.message}</p>`;
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // Dispatch Calls
+        // ---------------------------------------------------------------------------
+
+        async function loadDispatchCalls() {
+            const listDiv = document.getElementById('dispatch-list');
+            listDiv.innerHTML = '<p style="color:#0099ff;">Loading...</p>';
+
+            try {
+                const response = await fetch('/api/dispatch/calls');
+                const data = await response.json();
+
+                const calls = data.calls || [];
+                if (calls.length > 0) {
+                    listDiv.innerHTML = calls.map(call => `
+                        <div class="card">
+                            <div class="card-title">${call.location || 'Unknown Location'}</div>
+                            <div class="card-content">
+                                <p><strong>Priority:</strong> ${call.priority || '—'}</p>
+                                <p><strong>Status:</strong> ${call.status || '—'}</p>
+                                <p><strong>Description:</strong> ${call.description || '—'}</p>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    listDiv.innerHTML = '<p style="color:#0099ff;">No active calls.</p>';
+                }
+            } catch (error) {
+                listDiv.innerHTML = `<p style="color:#ff4444;">❌ Error loading calls: ${error.message}</p>`;
+            }
+        }
+
+        // ---------------------------------------------------------------------------
+        // MDT Alerts
+        // ---------------------------------------------------------------------------
+
+        async function loadAlerts() {
+            const listDiv = document.getElementById('alerts-list');
+            listDiv.innerHTML = '<p style="color:#0099ff;">Loading...</p>';
+
+            try {
+                const response = await fetch('/api/immersion/alerts');
+                const data = await response.json();
+
+                const alerts = data.alerts || [];
+                if (alerts.length > 0) {
+                    listDiv.innerHTML = alerts.map(alert => `
+                        <div class="card">
+                            <div class="card-title">${alert.icon || '⚠️'} ${alert.title || alert.alert_type || 'Alert'}</div>
+                            <div class="card-content">
+                                <p>${alert.message || '—'}</p>
+                                <p style="font-size:0.8em;color:#666;">${alert.timestamp || alert.issuedAt ? new Date(alert.timestamp || alert.issuedAt).toLocaleString() : ''}</p>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    listDiv.innerHTML = '<p style="color:#0099ff;">No active alerts.</p>';
+                }
+            } catch (error) {
+                listDiv.innerHTML = `<p style="color:#ff4444;">❌ Error loading alerts: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>

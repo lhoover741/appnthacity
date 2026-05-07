@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import smtplib
 import logging
 import secrets
@@ -2558,71 +2559,33 @@ def release_inmate(inmate_id):
 # ---------------------------------------------------------------------------
 
 @app.route('/api/ai/civilian', methods=['POST'])
-def ai_generate_civilian():
-    data = request.get_json(silent=True) or {}
-
-    required = ['age', 'gender', 'race', 'personality_traits', 'criminal_history_level',
-                'gang_affiliation', 'occupation_type', 'risk_level', 'vehicle_preference', 'neighborhood']
-    missing = [f for f in required if not data.get(f)]
-    if missing:
-        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
-
-    from ai_service import generate_civilian
-    from cad_helpers import check_name_uniqueness, create_civilian_from_ai, log_ai_generation
-
-    ai_result = generate_civilian(
-        data['age'], data['gender'], data['race'], data['personality_traits'],
-        data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
-        data['risk_level'], data['vehicle_preference'], data['neighborhood']
-    )
-
-    if 'error' in ai_result:
-        log_ai_generation('civilian', data, 'Failed', status='Error', error_message=ai_result['error'])
-        return jsonify({'success': False, 'error': ai_result['error']}), 500
-
-    # Check name uniqueness — regenerate once if duplicate
-    first_name = ai_result.get('first_name', '')
-    last_name = ai_result.get('last_name', '')
-
-    if not check_name_uniqueness(first_name, last_name):
-        logger.warning(f'Duplicate name detected: {first_name} {last_name}, regenerating...')
-        ai_result = generate_civilian(
-            data['age'], data['gender'], data['race'], data['personality_traits'],
-            data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
-            data['risk_level'], data['vehicle_preference'], data['neighborhood']
-        )
-        if 'error' in ai_result:
-            log_ai_generation('civilian', data, 'Failed', status='Error', error_message=ai_result['error'])
-            return jsonify({'success': False, 'error': ai_result['error']}), 500
+@admin_required
+def generate_ai_civilian():
+    """Generate and save an AI civilian."""
+    from civilian_ai_service import generate_and_save_civilian
+    from cad_helpers import log_audit
 
     try:
-        civilian = create_civilian_from_ai(ai_result)
-        log_ai_generation('civilian', data, f'Created {civilian.civilian_id}', status='Success')
+        civilian_data = generate_and_save_civilian()
+        log_audit('ai', 'generate_civilian', 'Civilian', civilian_data['civilian_id'])
 
         return jsonify({
             'success': True,
-            'civilian_id': civilian.civilian_id,
-            'name': civilian.full_name,
-            'data': {
-                'first_name': civilian.first_name,
-                'last_name': civilian.last_name,
-                'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else None,
-                'phone_number': civilian.phone_number,
-                'address': civilian.address,
-                'occupation': civilian.occupation,
-                'biography': civilian.biography,
-                'criminal_background': civilian.criminal_background,
-                'warrant_risk': civilian.warrant_risk,
-                'parole_status': civilian.parole_status,
-                'probation_status': civilian.probation_status,
-                'mental_state_notes': civilian.mental_state_notes,
-                'officer_safety_notes': civilian.officer_safety_notes,
-            }
+            'civilian': civilian_data,
+            'message': f"Generated {civilian_data['full_name']}"
         })
+    except ValueError as e:
+        logger.error(f'Duplicate prevention failed: {e}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
     except Exception as e:
-        logger.error(f'Civilian creation failed: {e}')
-        log_ai_generation('civilian', data, 'Failed', status='Error', error_message=str(e))
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f'Failed to generate civilian: {e}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 # ---------------------------------------------------------------------------
