@@ -3202,6 +3202,66 @@ def get_neighborhoods():
     return jsonify({'success': True, 'neighborhoods': NEIGHBORHOODS})
 
 
+# ---------------------------------------------------------------------------
+# Smart Dispatch Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/dispatch/generate-call', methods=['POST'])
+@admin_required
+def generate_dispatch_call_route():
+    """Generate a smart dispatch call."""
+    data = request.get_json(silent=True) or {}
+    call_type = data.get('type')
+
+    from smart_dispatch_service import generate_smart_call
+    from cad_helpers import log_audit
+
+    try:
+        call = generate_smart_call(call_type)
+        log_audit('dispatch', 'generate_call', 'DispatchCall', call['call_id'])
+        return jsonify({'success': True, 'call': call})
+    except Exception as e:
+        logger.error(f'Failed to generate call: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatch/auto-generate', methods=['POST'])
+@admin_required
+def auto_generate_calls_route():
+    """Auto-generate multiple dispatch calls."""
+    data = request.get_json(silent=True) or {}
+    count = data.get('count', 5)
+
+    from smart_dispatch_service import auto_generate_calls
+    from cad_helpers import log_audit
+
+    try:
+        calls = auto_generate_calls(count)
+        log_audit('dispatch', 'auto_generate', 'DispatchCall', f'batch_{len(calls)}')
+        return jsonify({'success': True, 'calls': calls, 'total': len(calls)})
+    except Exception as e:
+        logger.error(f'Failed to auto-generate calls: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dispatch/active-with-context', methods=['GET'])
+def get_active_calls_context():
+    """Get active calls with full context."""
+    from smart_dispatch_service import get_active_calls_with_context
+
+    calls = get_active_calls_with_context()
+    return jsonify({'success': True, 'calls': calls, 'total': len(calls)})
+
+
+@app.route('/api/dispatch/call-types', methods=['GET'])
+def get_call_types():
+    """Get available call types."""
+    from smart_dispatch_service import CALL_SCENARIOS
+
+    types = list(CALL_SCENARIOS.keys())
+    return jsonify({'success': True, 'types': types})
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
