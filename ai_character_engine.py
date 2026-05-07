@@ -69,17 +69,17 @@ def generate_character_prompt(age, gender, race, personality_traits, criminal_hi
                               gang_affiliation, occupation_type, risk_level, vehicle_preference, neighborhood):
     """Generate detailed character generation prompt."""
 
-    return f"""You are an expert GTA RP character designer. Generate a DEEPLY REALISTIC, IMMERSIVE character with complex background.
+    return f"""You are an expert GTA RP character designer. Generate a DEEPLY REALISTIC, IMMERSIVE character who is a BRAND NEW CITY RESIDENT with NO criminal history.
 
 PARAMETERS:
 - Age: {age}
 - Gender: {gender}
 - Ethnicity: {race}
 - Personality: {personality_traits}
-- Criminal History: {criminal_history_level}
-- Gang Affiliation: {gang_affiliation}
+- Criminal History: Clean record (NO criminal history - new resident)
+- Gang Affiliation: None (NO gang affiliation)
 - Occupation: {occupation_type}
-- Risk Level: {risk_level}
+- Risk Level: Low (new resident, no known issues)
 - Vehicle Preference: {vehicle_preference}
 - Neighborhood: {neighborhood}
 
@@ -91,15 +91,15 @@ CRITICAL REQUIREMENTS:
 5. Create realistic employment history
 6. Generate realistic vehicle with plate
 7. Create believable social connections
-8. Generate realistic warrants/charges if applicable
-9. Create officer safety warnings based on history
-10. Make character feel like a real person with real problems
+8. This character is a NEW RESIDENT - they have NO warrants, NO arrests, NO criminal history
+9. Officer safety notes must reflect clean background only
+10. Make character feel like a real person just starting fresh in the city
 
 Return ONLY valid JSON (no markdown, no code blocks):
 {{
   "first_name": "unique first name",
   "last_name": "unique last name",
-  "nickname": "street name or nickname",
+  "nickname": "nickname or empty string",
   "date_of_birth": "YYYY-MM-DD",
   "age": {age},
   "gender": "{gender}",
@@ -108,13 +108,13 @@ Return ONLY valid JSON (no markdown, no code blocks):
   "address": "realistic GTA address",
   "occupation": "specific job title",
   "employment_history": "2-3 previous jobs with dates",
-  "biography": "3-4 sentence detailed RP biography",
-  "criminal_background": "detailed criminal history or 'Clean record'",
+  "biography": "3-4 sentence detailed RP biography as a new city resident",
+  "criminal_background": "Clean record",
   "known_associates": ["name1", "name2", "name3"],
-  "aliases": ["alias1", "alias2"],
-  "gang_affiliation": "{gang_affiliation}",
-  "gang_rank": "member/lieutenant/captain or 'None'",
-  "mental_state": "mental health assessment",
+  "aliases": [],
+  "gang_affiliation": "None",
+  "gang_rank": "None",
+  "mental_state": "Stable",
   "habits": ["habit1", "habit2", "habit3"],
   "social_behavior": "how they interact with others",
   "vehicle_make": "vehicle make",
@@ -122,27 +122,37 @@ Return ONLY valid JSON (no markdown, no code blocks):
   "vehicle_color": "vehicle color",
   "vehicle_plate": "realistic plate format",
   "vehicle_vin": "realistic VIN",
-  "warrants": ["charge1", "charge2"],
-  "parole_status": "None/Active/Expired",
-  "probation_status": "None/Active/Expired",
-  "warrant_risk": "Low/Medium/High",
-  "officer_safety_notes": "specific safety concerns or 'No known issues'",
-  "dispatch_lookup_summary": "one-line dispatch summary",
-  "risk_factors": ["factor1", "factor2"],
-  "weapon_access": "None/Suspected/Confirmed",
-  "violence_history": "None/Minor/Moderate/Severe"
+  "warrants": [],
+  "parole_status": "None",
+  "probation_status": "None",
+  "warrant_risk": "None",
+  "officer_safety_notes": "No known issues. Clean background.",
+  "dispatch_lookup_summary": "New resident. No criminal history.",
+  "risk_factors": [],
+  "weapon_access": "None",
+  "violence_history": "None"
 }}
 
-Make this character FEEL REAL. Include contradictions, flaws, and depth. Avoid stereotypes."""
+Make this character FEEL REAL. Include contradictions, flaws, and depth. Avoid stereotypes. Remember: clean record, new to the city."""
 
 
-def generate_character(age, gender, race, personality_traits, criminal_history_level,
-                       gang_affiliation, occupation_type, risk_level, vehicle_preference, neighborhood):
-    """Generate a deeply realistic AI character."""
+def generate_character(age, gender, race, personality_traits,
+                       criminal_history_level='clean',
+                       gang_affiliation='None',
+                       occupation_type='random',
+                       risk_level='Low',
+                       vehicle_preference='random',
+                       neighborhood='random'):
+    """Generate a deeply realistic AI character with a clean record (new city resident)."""
 
     if not OPENROUTER_API_KEY:
         logger.error('OPENROUTER_API_KEY not configured')
         return {'error': 'AI service not configured'}
+
+    # Always enforce clean record regardless of what was passed in
+    criminal_history_level = 'clean'
+    gang_affiliation = 'None'
+    risk_level = 'Low'
 
     prompt = generate_character_prompt(age, gender, race, personality_traits, criminal_history_level,
                                        gang_affiliation, occupation_type, risk_level, vehicle_preference, neighborhood)
@@ -183,6 +193,26 @@ def generate_character(age, gender, race, personality_traits, criminal_history_l
                     content = content[4:]
 
             character_data = json.loads(content)
+
+            # CLEAN RECORD ENFORCEMENT — override any AI-generated criminal fields
+            character_data['criminal_background'] = 'Clean record'
+            character_data['gang_affiliation'] = 'None'
+            character_data['gang_rank'] = 'None'
+            character_data['parole_status'] = 'None'
+            character_data['probation_status'] = 'None'
+            character_data['warrant_risk'] = 'None'
+            character_data['warrants'] = []
+            character_data['risk_factors'] = []
+            character_data['officer_safety_notes'] = 'No known issues. Clean background.'
+            character_data['violence_history'] = 'None'
+            character_data['weapon_access'] = 'None'
+            character_data['risk_level'] = 'Low'
+            character_data['addiction_status'] = 'None'
+            character_data['addiction_severity'] = 'None'
+            character_data['weapon_permit'] = False
+            character_data['insurance_status'] = 'Valid'
+            character_data['driver_license_status'] = 'Valid'
+
             return character_data
         except json.JSONDecodeError as e:
             logger.error(f'Failed to parse AI response: {content[:200]}... Error: {e}')

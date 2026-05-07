@@ -26,16 +26,16 @@ def generate_ai_civilian(params):
     # Try AI generation first
     try:
         ai_result = generate_character(
-            params.get('age', 25),
+            params.get('age', random.randint(18, 70)),
             params.get('gender', 'random'),
             params.get('ethnicity', 'random'),
             params.get('personality_traits', 'realistic'),
-            params.get('criminal_history_level', 'low'),
-            params.get('gang_affiliation', 'None'),
-            params.get('occupation_type', 'random'),
-            params.get('risk_level', 'low'),
-            params.get('vehicle_preference', 'random'),
-            params.get('neighborhood', 'random'),
+            criminal_history_level='clean',  # FORCE clean record
+            gang_affiliation='None',          # FORCE no gang affiliation
+            occupation_type=params.get('occupation_type', 'random'),
+            risk_level='Low',                 # FORCE low risk
+            vehicle_preference=params.get('vehicle_preference', 'random'),
+            neighborhood=params.get('neighborhood', 'random'),
         )
 
         if 'error' not in ai_result:
@@ -43,7 +43,7 @@ def generate_ai_civilian(params):
     except Exception as e:
         logger.warning(f'AI generation failed, using fallback: {e}')
 
-    # Fallback to local generator
+    # Fallback to local generator with clean record
     name = generate_name(params.get('gender', 'random'))
 
     # Check for duplicates and regenerate if needed
@@ -66,11 +66,26 @@ def generate_ai_civilian(params):
         'phone_number': f"555-{random.randint(1000, 9999)}",
         'address': address,
         'occupation': params.get('occupation_type', 'random'),
-        'biography': f"Local resident of {params.get('neighborhood', 'the city')}",
-        'criminal_background': 'Clean record' if params.get('criminal_history_level', 'low') == 'low' else 'Prior arrests',
-        'gang_affiliation': params.get('gang_affiliation', 'None'),
-        'risk_level': params.get('risk_level', 'Low'),
-        'officer_safety_notes': 'No known issues',
+        'biography': f"New resident of {params.get('neighborhood', 'the city')}. Just arrived looking for opportunities.",
+
+        # CLEAN RECORD - NO EXCEPTIONS
+        'criminal_background': 'Clean record',
+        'gang_affiliation': 'None',
+        'gang_rank': 'None',
+        'parole_status': 'None',
+        'probation_status': 'None',
+        'warrant_risk': 'None',
+        'risk_level': 'Low',
+        'officer_safety_notes': 'No known issues. Clean background.',
+        'violence_history': 'None',
+        'weapon_access': 'None',
+        'addiction_status': 'None',
+        'addiction_severity': 'None',
+        'weapon_permit': False,
+        'insurance_status': 'Valid',
+        'driver_license_status': 'Valid',
+
+        # VEHICLE (randomized)
         'vehicle_make': vehicle['make'],
         'vehicle_model': vehicle['make'],
         'vehicle_color': vehicle['color'],
