@@ -2612,6 +2612,122 @@ def ai_generate_civilian():
 
 
 # ---------------------------------------------------------------------------
+# Advanced AI Character Engine
+# ---------------------------------------------------------------------------
+
+@app.route('/api/ai/character', methods=['POST'])
+def ai_generate_character():
+    """Generate advanced AI character with full background."""
+    data = request.get_json(silent=True) or {}
+
+    required = ['age', 'gender', 'race', 'personality_traits', 'criminal_history_level',
+                'gang_affiliation', 'occupation_type', 'risk_level', 'vehicle_preference', 'neighborhood']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    from ai_character_engine import generate_character
+    from cad_helpers import check_name_uniqueness, create_civilian_from_ai, log_ai_generation
+
+    ai_result = generate_character(
+        data['age'], data['gender'], data['race'], data['personality_traits'],
+        data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
+        data['risk_level'], data['vehicle_preference'], data['neighborhood']
+    )
+
+    if 'error' in ai_result:
+        log_ai_generation('character', data, 'Failed', status='Error', error_message=ai_result['error'])
+        return jsonify({'success': False, 'error': ai_result['error']}), 500
+
+    # Check name uniqueness
+    first_name = ai_result.get('first_name', '')
+    last_name = ai_result.get('last_name', '')
+
+    if not check_name_uniqueness(first_name, last_name):
+        logger.warning(f'Duplicate name detected: {first_name} {last_name}, regenerating...')
+        ai_result = generate_character(
+            data['age'], data['gender'], data['race'], data['personality_traits'],
+            data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
+            data['risk_level'], data['vehicle_preference'], data['neighborhood']
+        )
+        if 'error' in ai_result:
+            log_ai_generation('character', data, 'Failed', status='Error', error_message=ai_result['error'])
+            return jsonify({'success': False, 'error': ai_result['error']}), 500
+
+    try:
+        civilian = create_civilian_from_ai(ai_result)
+        log_ai_generation('character', data, f'Created {civilian.civilian_id}', status='Success')
+
+        return jsonify({
+            'success': True,
+            'civilian_id': civilian.civilian_id,
+            'name': civilian.full_name,
+            'data': {
+                'first_name': civilian.first_name,
+                'last_name': civilian.last_name,
+                'nickname': ai_result.get('nickname'),
+                'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else None,
+                'phone_number': civilian.phone_number,
+                'address': civilian.address,
+                'occupation': civilian.occupation,
+                'employment_history': ai_result.get('employment_history'),
+                'biography': civilian.biography,
+                'criminal_background': civilian.criminal_background,
+                'known_associates': ai_result.get('known_associates', []),
+                'aliases': ai_result.get('aliases', []),
+                'gang_affiliation': civilian.gang_affiliation,
+                'gang_rank': ai_result.get('gang_rank'),
+                'mental_state': ai_result.get('mental_state'),
+                'habits': ai_result.get('habits', []),
+                'social_behavior': ai_result.get('social_behavior'),
+                'vehicle': {
+                    'make': ai_result.get('vehicle_make'),
+                    'model': ai_result.get('vehicle_model'),
+                    'color': ai_result.get('vehicle_color'),
+                    'plate': ai_result.get('vehicle_plate'),
+                    'vin': ai_result.get('vehicle_vin'),
+                },
+                'warrants': ai_result.get('warrants', []),
+                'parole_status': civilian.parole_status,
+                'probation_status': civilian.probation_status,
+                'warrant_risk': civilian.warrant_risk,
+                'officer_safety_notes': civilian.officer_safety_notes,
+                'risk_factors': ai_result.get('risk_factors', []),
+                'weapon_access': ai_result.get('weapon_access'),
+                'violence_history': ai_result.get('violence_history'),
+            }
+        })
+    except Exception as e:
+        logger.error(f'Character creation failed: {e}')
+        log_ai_generation('character', data, 'Failed', status='Error', error_message=str(e))
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/narrative', methods=['POST'])
+def ai_generate_narrative():
+    """Generate AI narrative for reports."""
+    data = request.get_json(silent=True) or {}
+
+    narrative_type = data.get('type', 'arrest_narrative')
+    context = data.get('context', '')
+
+    if not context:
+        return jsonify({'success': False, 'error': 'Context required'}), 400
+
+    from ai_character_engine import generate_narrative
+    from cad_helpers import log_ai_generation
+
+    result = generate_narrative(narrative_type, context)
+
+    if 'error' in result:
+        log_ai_generation('narrative', data, 'Failed', status='Error', error_message=result['error'])
+        return jsonify({'success': False, 'error': result['error']}), 500
+
+    log_ai_generation('narrative', data, f'Generated {narrative_type}', status='Success')
+    return jsonify({'success': True, 'narrative': result})
+
+
+# ---------------------------------------------------------------------------
 # Civilian CRUD
 # ---------------------------------------------------------------------------
 

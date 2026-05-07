@@ -69,6 +69,15 @@ class Civilian(db.Model):
     mental_state_notes = db.Column(db.Text)
     officer_safety_notes = db.Column(db.Text)
     warrant_risk = db.Column(db.String(64), default='Low')
+    # Advanced character engine fields
+    nickname = db.Column(db.String(255))
+    aliases = db.Column(db.Text)  # JSON array
+    employment_history = db.Column(db.Text)
+    gang_rank = db.Column(db.String(64))
+    habits = db.Column(db.Text)  # JSON array
+    social_behavior = db.Column(db.Text)
+    weapon_access = db.Column(db.String(64), default='None')
+    violence_history = db.Column(db.String(64), default='None')
     # Legacy fields kept for backward compatibility
     dob = db.Column(db.String(64))
     phone = db.Column(db.String(64))
