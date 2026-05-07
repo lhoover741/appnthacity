@@ -3128,6 +3128,80 @@ def release_vehicle_route(plate):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# World Realism Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/world/address', methods=['GET'])
+def generate_address_route():
+    """Generate a random address."""
+    from world_realism_service import generate_address
+
+    neighborhood = request.args.get('neighborhood')
+    address = generate_address(neighborhood)
+
+    return jsonify({'success': True, 'address': address})
+
+@app.route('/api/world/plate', methods=['GET'])
+def generate_plate_route():
+    """Generate a random license plate."""
+    from world_realism_service import generate_plate
+
+    plate = generate_plate()
+    return jsonify({'success': True, 'plate': plate})
+
+@app.route('/api/world/vehicle', methods=['GET'])
+def generate_vehicle_route():
+    """Generate a random vehicle."""
+    from world_realism_service import generate_vehicle
+
+    vehicle = generate_vehicle()
+    return jsonify({'success': True, 'vehicle': vehicle})
+
+@app.route('/api/world/business', methods=['GET'])
+def generate_business_route():
+    """Generate a random business."""
+    from world_realism_service import generate_business
+
+    neighborhood = request.args.get('neighborhood')
+    business = generate_business(neighborhood)
+
+    return jsonify({'success': True, 'business': business})
+
+@app.route('/api/world/name', methods=['GET'])
+def generate_name_route():
+    """Generate a random name."""
+    from world_realism_service import generate_name
+
+    gender = request.args.get('gender', 'random')
+    name = generate_name(gender)
+
+    return jsonify({'success': True, 'name': name})
+
+@app.route('/api/world/rp-history', methods=['GET'])
+def generate_rp_history_route():
+    """Generate a random RP history."""
+    from world_realism_service import generate_rp_history
+
+    history = generate_rp_history()
+    return jsonify({'success': True, 'history': history})
+
+@app.route('/api/world/call', methods=['GET'])
+def generate_call_route():
+    """Generate a random dispatch call."""
+    from world_realism_service import generate_dispatch_call
+
+    call = generate_dispatch_call()
+    return jsonify({'success': True, 'call': call})
+
+@app.route('/api/world/neighborhoods', methods=['GET'])
+def get_neighborhoods():
+    """Get list of all neighborhoods."""
+    from world_realism_service import NEIGHBORHOODS
+
+    return jsonify({'success': True, 'neighborhoods': NEIGHBORHOODS})
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
