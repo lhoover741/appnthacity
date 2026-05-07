@@ -9,6 +9,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_migrate import Migrate
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from security_service import require_auth, require_role, hash_password, verify_password
+from performance_service import cache, paginate_query
 
 # Import database and models FIRST
 from database import db, configure_database
@@ -44,6 +48,16 @@ from models import (
 )
 
 configure_database(app)
+
+# Initialize rate limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Initialize cache
+cache.init_app(app)
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
@@ -3203,63 +3217,151 @@ def get_neighborhoods():
 
 
 # ---------------------------------------------------------------------------
-# Smart Dispatch Routes
+# Relationship Routes
 # ---------------------------------------------------------------------------
 
-@app.route('/api/dispatch/generate-call', methods=['POST'])
+@app.route('/api/relationships/link-vehicle', methods=['POST'])
 @admin_required
-def generate_dispatch_call_route():
-    """Generate a smart dispatch call."""
+def link_vehicle_route():
+    """Link civilian to vehicle."""
     data = request.get_json(silent=True) or {}
-    call_type = data.get('type')
+    civilian_id = data.get('civilian_id')
+    vehicle_id = data.get('vehicle_id')
 
-    from smart_dispatch_service import generate_smart_call
+    if not civilian_id or not vehicle_id:
+        return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+    from relationships_service import link_civilian_to_vehicle
     from cad_helpers import log_audit
 
     try:
-        call = generate_smart_call(call_type)
-        log_audit('dispatch', 'generate_call', 'DispatchCall', call['call_id'])
-        return jsonify({'success': True, 'call': call})
+        vehicle = link_civilian_to_vehicle(civilian_id, vehicle_id)
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+
+        log_audit('relationships', 'link_vehicle', 'Vehicle', vehicle_id)
+        return jsonify({'success': True, 'message': 'Vehicle linked to civilian'})
     except Exception as e:
-        logger.error(f'Failed to generate call: {e}')
+        logger.error(f'Failed to link vehicle: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/dispatch/auto-generate', methods=['POST'])
-@admin_required
-def auto_generate_calls_route():
-    """Auto-generate multiple dispatch calls."""
-    data = request.get_json(silent=True) or {}
-    count = data.get('count', 5)
+@app.route('/api/relationships/gang-crew/<gang_name>', methods=['GET'])
+def get_gang_crew_route(gang_name):
+    """Get gang crew with relationships."""
+    from relationships_service import get_gang_crew
 
-    from smart_dispatch_service import auto_generate_calls
+    crew = get_gang_crew(gang_name)
+    return jsonify({'success': True, 'crew': crew, 'total': len(crew)})
+
+
+@app.route('/api/relationships/criminal-history/<civilian_id>', methods=['GET'])
+def get_criminal_history_route(civilian_id):
+    """Get complete criminal history."""
+    from relationships_service import get_civilian_criminal_history
+
+    history = get_civilian_criminal_history(civilian_id)
+    if not history:
+        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+    return jsonify({'success': True, 'history': history})
+
+
+@app.route('/api/relationships/create-arrest', methods=['POST'])
+@admin_required
+def create_arrest_route():
+    """Create arrest and update criminal history."""
+    data = request.get_json(silent=True) or {}
+
+    required = ['civilian_id', 'charges', 'arresting_officer', 'location', 'narrative']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    from relationships_service import create_arrest_record, create_warrant_from_arrest
     from cad_helpers import log_audit
 
     try:
-        calls = auto_generate_calls(count)
-        log_audit('dispatch', 'auto_generate', 'DispatchCall', f'batch_{len(calls)}')
-        return jsonify({'success': True, 'calls': calls, 'total': len(calls)})
+        arrest = create_arrest_record(
+            data['civilian_id'],
+            data['charges'],
+            data['arresting_officer'],
+            data['location'],
+            data['narrative']
+        )
+
+        # Auto-create warrant if requested
+        if data.get('create_warrant'):
+            warrant = create_warrant_from_arrest(
+                arrest.arrest_id,
+                data['civilian_id'],
+                data['charges'],
+                data.get('probable_cause', 'Arrest warrant')
+            )
+            log_audit('relationships', 'create_warrant', 'Warrant', warrant.warrant_id)
+
+        log_audit('relationships', 'create_arrest', 'Arrest', arrest.arrest_id)
+        return jsonify({'success': True, 'arrest_id': arrest.arrest_id})
     except Exception as e:
-        logger.error(f'Failed to auto-generate calls: {e}')
+        logger.error(f'Failed to create arrest: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/dispatch/active-with-context', methods=['GET'])
-def get_active_calls_context():
-    """Get active calls with full context."""
-    from smart_dispatch_service import get_active_calls_with_context
+@app.route('/api/relationships/warrant-check/<plate>', methods=['GET'])
+def warrant_check_route(plate):
+    """Check for warrants on traffic stop."""
+    from relationships_service import check_warrant_on_traffic_stop
 
-    calls = get_active_calls_with_context()
-    return jsonify({'success': True, 'calls': calls, 'total': len(calls)})
+    result = check_warrant_on_traffic_stop(plate)
+    if not result:
+        return jsonify({'success': True, 'warrants': None})
+
+    return jsonify({'success': True, 'warrants': result})
 
 
-@app.route('/api/dispatch/call-types', methods=['GET'])
-def get_call_types():
-    """Get available call types."""
-    from smart_dispatch_service import CALL_SCENARIOS
+@app.route('/api/relationships/family', methods=['POST'])
+@admin_required
+def create_family_route():
+    """Create family relationship."""
+    data = request.get_json(silent=True) or {}
 
-    types = list(CALL_SCENARIOS.keys())
-    return jsonify({'success': True, 'types': types})
+    from relationships_service import create_family_relationship
+    from cad_helpers import log_audit
+
+    try:
+        assoc = create_family_relationship(
+            data['civilian_id1'],
+            data['civilian_id2'],
+            data.get('relationship', 'Family')
+        )
+
+        log_audit('relationships', 'create_family', 'KnownAssociate', assoc.associate_id)
+        return jsonify({'success': True, 'message': 'Family relationship created'})
+    except Exception as e:
+        logger.error(f'Failed to create family: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/relationships/employment', methods=['POST'])
+@admin_required
+def create_employment_route():
+    """Link civilian to business as employee."""
+    data = request.get_json(silent=True) or {}
+
+    from relationships_service import create_employment_relationship
+    from cad_helpers import log_audit
+
+    try:
+        assoc = create_employment_relationship(
+            data['civilian_id'],
+            data['business_id']
+        )
+
+        log_audit('relationships', 'create_employment', 'KnownAssociate', assoc.associate_id)
+        return jsonify({'success': True, 'message': 'Employment relationship created'})
+    except Exception as e:
+        logger.error(f'Failed to create employment: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/', defaults={'path': ''})
