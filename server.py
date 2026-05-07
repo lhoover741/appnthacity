@@ -3365,125 +3365,222 @@ def create_employment_route():
 
 
 # ---------------------------------------------------------------------------
-# Advanced Civilian Routes
+# Evidence Routes
 # ---------------------------------------------------------------------------
 
-@app.route('/api/civilian/<civilian_id>/enhance', methods=['POST'])
+@app.route('/api/evidence/create', methods=['POST'])
 @admin_required
-def enhance_civilian_route(civilian_id):
-    """Add advanced data to civilian."""
-    from advanced_civilian_service import enhance_civilian_with_advanced_data
+def create_evidence_route():
+    """Create evidence record."""
+    data = request.get_json(silent=True) or {}
+
+    required = ['case_id', 'arrest_id', 'evidence_type', 'description', 'collected_by', 'location_found']
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
+
+    from evidence_service import create_evidence
     from cad_helpers import log_audit
 
     try:
-        civilian = enhance_civilian_with_advanced_data(civilian_id)
-        if not civilian:
-            return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+        evidence = create_evidence(
+            data['case_id'],
+            data['arrest_id'],
+            data['evidence_type'],
+            data['description'],
+            data['collected_by'],
+            data['location_found']
+        )
 
-        log_audit('civilian', 'enhance_civilian', 'Civilian', civilian_id)
-        return jsonify({'success': True, 'message': 'Civilian enhanced with advanced data'})
+        log_audit('evidence', 'create_evidence', 'Evidence', evidence.evidence_id)
+        return jsonify({'success': True, 'evidence_id': evidence.evidence_id})
     except Exception as e:
-        logger.error(f'Failed to enhance civilian: {e}')
+        logger.error(f'Failed to create evidence: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/civilian/<civilian_id>/full-profile', methods=['GET'])
-def get_full_profile_route(civilian_id):
-    """Get complete civilian profile."""
-    from advanced_civilian_service import get_civilian_full_profile
+@app.route('/api/evidence/<evidence_id>/chain-of-custody', methods=['GET'])
+def get_evidence_custody_route(evidence_id):
+    """Get chain of custody for evidence."""
+    from evidence_service import get_evidence_chain_of_custody
 
-    profile = get_civilian_full_profile(civilian_id)
-    if not profile:
-        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+    custody = get_evidence_chain_of_custody(evidence_id)
+    if not custody:
+        return jsonify({'success': False, 'error': 'Evidence not found'}), 404
 
-    return jsonify({'success': True, 'profile': profile})
-
-
-@app.route('/api/civilian/<civilian_id>/safety-assessment', methods=['GET'])
-def safety_assessment_route(civilian_id):
-    """Get officer safety assessment."""
-    from advanced_civilian_service import generate_officer_safety_assessment
-
-    assessment = generate_officer_safety_assessment(civilian_id)
-    if not assessment:
-        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
-
-    return jsonify({'success': True, 'assessment': assessment})
+    return jsonify({'success': True, 'custody': custody})
 
 
-@app.route('/api/civilian/<civilian_id>/medical-info', methods=['GET'])
-def get_medical_info_route(civilian_id):
-    """Get medical information for civilian."""
-    from advanced_civilian_service import get_civilian_full_profile
+@app.route('/api/evidence/<evidence_id>/transfer', methods=['POST'])
+@admin_required
+def transfer_evidence_route(evidence_id):
+    """Transfer evidence custody."""
+    data = request.get_json(silent=True) or {}
 
-    profile = get_civilian_full_profile(civilian_id)
-    if not profile:
-        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+    from evidence_service import transfer_evidence_custody
+    from cad_helpers import log_audit
 
-    return jsonify({
-        'success': True,
-        'medical': {
-            'conditions': profile['medical']['conditions'],
-            'medications': profile['medical']['medications'],
-            'allergies': profile['medical']['allergies'],
-            'emergency_contact': profile['emergency_contact'],
-        },
-    })
+    try:
+        evidence = transfer_evidence_custody(
+            evidence_id,
+            data.get('from_officer', 'Unknown'),
+            data.get('to_officer', 'Unknown'),
+            data.get('reason', 'Transfer')
+        )
 
+        if not evidence:
+            return jsonify({'success': False, 'error': 'Evidence not found'}), 404
 
-@app.route('/api/civilian/<civilian_id>/driving-record', methods=['GET'])
-def get_driving_record_route(civilian_id):
-    """Get driving record for civilian."""
-    from advanced_civilian_service import get_civilian_full_profile
-
-    profile = get_civilian_full_profile(civilian_id)
-    if not profile:
-        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
-
-    return jsonify({
-        'success': True,
-        'driving_record': {
-            'violations': profile['driving_history'],
-            'insurance_status': profile['insurance_status'],
-            'license_status': profile.get('driver_license_status', 'Valid'),
-        },
-    })
+        log_audit('evidence', 'transfer_evidence', 'Evidence', evidence_id)
+        return jsonify({'success': True, 'message': 'Evidence transferred'})
+    except Exception as e:
+        logger.error(f'Failed to transfer evidence: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/civilian/<civilian_id>/employment-history', methods=['GET'])
-def get_employment_route(civilian_id):
-    """Get employment history for civilian."""
-    from advanced_civilian_service import get_civilian_full_profile
+@app.route('/api/evidence/<evidence_id>/release', methods=['POST'])
+@admin_required
+def release_evidence_route(evidence_id):
+    """Release evidence from storage."""
+    data = request.get_json(silent=True) or {}
 
-    profile = get_civilian_full_profile(civilian_id)
-    if not profile:
-        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+    from evidence_service import release_evidence
+    from cad_helpers import log_audit
 
-    return jsonify({
-        'success': True,
-        'employment': {
-            'current': profile['occupation'],
-            'history': profile['employment_history'],
-        },
-    })
+    try:
+        evidence = release_evidence(evidence_id, data.get('reason', 'Case closed'))
+        if not evidence:
+            return jsonify({'success': False, 'error': 'Evidence not found'}), 404
+
+        log_audit('evidence', 'release_evidence', 'Evidence', evidence_id)
+        return jsonify({'success': True, 'message': 'Evidence released'})
+    except Exception as e:
+        logger.error(f'Failed to release evidence: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/civilian/<civilian_id>/substance-abuse', methods=['GET'])
-def get_substance_abuse_route(civilian_id):
-    """Get substance abuse information."""
-    from advanced_civilian_service import get_civilian_full_profile
+# ---------------------------------------------------------------------------
+# Court Routes
+# ---------------------------------------------------------------------------
 
-    profile = get_civilian_full_profile(civilian_id)
-    if not profile:
-        return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+@app.route('/api/court/case/create', methods=['POST'])
+@admin_required
+def create_case_route():
+    """Create case from arrest."""
+    data = request.get_json(silent=True) or {}
 
-    return jsonify({
-        'success': True,
-        'substance_abuse': {
-            'type': profile['addiction']['type'],
-            'severity': profile['addiction']['severity'],
-        },
-    })
+    from court_service import create_case_from_arrest
+    from cad_helpers import log_audit
+
+    try:
+        case = create_case_from_arrest(
+            data.get('arrest_id'),
+            data.get('civilian_id'),
+            data.get('charges')
+        )
+
+        log_audit('court', 'create_case', 'CaseFile', case.case_id)
+        return jsonify({'success': True, 'case_id': case.case_id})
+    except Exception as e:
+        logger.error(f'Failed to create case: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/court/case/<case_id>', methods=['GET'])
+def get_case_route(case_id):
+    """Get case summary."""
+    from court_service import get_case_summary
+
+    summary = get_case_summary(case_id)
+    if not summary:
+        return jsonify({'success': False, 'error': 'Case not found'}), 404
+
+    return jsonify({'success': True, 'case': summary})
+
+
+@app.route('/api/court/case/<case_id>/assign-judge', methods=['POST'])
+@admin_required
+def assign_judge_route(case_id):
+    """Assign judge to case."""
+    data = request.get_json(silent=True) or {}
+
+    from court_service import assign_judge
+    from cad_helpers import log_audit
+
+    try:
+        case = assign_judge(case_id, data.get('judge_name', 'Judge TBD'))
+        if not case:
+            return jsonify({'success': False, 'error': 'Case not found'}), 404
+
+        log_audit('court', 'assign_judge', 'CaseFile', case_id)
+        return jsonify({'success': True, 'message': 'Judge assigned'})
+    except Exception as e:
+        logger.error(f'Failed to assign judge: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/court/case/<case_id>/prosecutor-notes', methods=['POST'])
+@admin_required
+def prosecutor_notes_route(case_id):
+    """Add prosecutor notes."""
+    data = request.get_json(silent=True) or {}
+
+    from court_service import add_prosecutor_notes
+    from cad_helpers import log_audit
+
+    try:
+        case = add_prosecutor_notes(case_id, data.get('notes', ''))
+        if not case:
+            return jsonify({'success': False, 'error': 'Case not found'}), 404
+
+        log_audit('court', 'prosecutor_notes', 'CaseFile', case_id)
+        return jsonify({'success': True, 'message': 'Notes added'})
+    except Exception as e:
+        logger.error(f'Failed to add notes: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/court/case/<case_id>/close', methods=['POST'])
+@admin_required
+def close_case_route(case_id):
+    """Close case with verdict and sentencing."""
+    data = request.get_json(silent=True) or {}
+
+    from court_service import close_case
+    from cad_helpers import log_audit
+
+    try:
+        case = close_case(
+            case_id,
+            data.get('outcome', 'Guilty'),
+            data.get('sentence_type', 'Probation'),
+            data.get('sentence_length', '1 year'),
+            data.get('notes', '')
+        )
+
+        if not case:
+            return jsonify({'success': False, 'error': 'Case not found'}), 404
+
+        log_audit('court', 'close_case', 'CaseFile', case_id)
+        return jsonify({'success': True, 'message': 'Case closed'})
+    except Exception as e:
+        logger.error(f'Failed to close case: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/court/cases/search', methods=['POST'])
+def search_cases_route():
+    """Search cases."""
+    data = request.get_json(silent=True) or {}
+    query = data.get('query', '').strip()
+
+    if not query or len(query) < 2:
+        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
+
+    from court_service import search_cases
+
+    cases = search_cases(query)
+    return jsonify({'success': True, 'cases': cases, 'total': len(cases)})
 
 
 @app.route('/', defaults={'path': ''})
