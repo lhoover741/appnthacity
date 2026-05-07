@@ -1645,6 +1645,70 @@ Structure: one opening sentence → **Calls** section → **Arrests** section �
         return jsonify({'success': False, 'error': 'Shift summary failed. Try again.'}), 500
 
 
+@app.route('/api/court/hearings', methods=['GET'])
+def get_hearings():
+    data = load_cad_data()
+    hearings = sorted(data.get('hearings', []), key=lambda h: h.get('scheduledAt', ''), reverse=True)
+    return jsonify({'success': True, 'hearings': hearings})
+
+
+@app.route('/api/court/hearings', methods=['POST'])
+def create_hearing():
+    body = request.get_json(silent=True) or {}
+    for field in ('suspectName', 'charges', 'hearingType', 'scheduledAt', 'filingOfficer'):
+        if not body.get(field):
+            return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+    data = load_cad_data()
+    if 'hearings' not in data:
+        data['hearings'] = []
+    ts = int(datetime.utcnow().timestamp() * 1000)
+    rand = secrets.token_hex(5)
+    hearing = {
+        'id':            f'hearing-{ts}-{rand}',
+        'suspectName':   body.get('suspectName', '').strip(),
+        'charges':       body.get('charges', '').strip(),
+        'hearingType':   body.get('hearingType', 'Arraignment'),
+        'scheduledAt':   body.get('scheduledAt', ''),
+        'judge':         body.get('judge', '').strip(),
+        'notes':         body.get('notes', '').strip(),
+        'arrestId':      body.get('arrestId', ''),
+        'filingOfficer': body.get('filingOfficer', '').strip(),
+        'outcome':       '',
+        'status':        'Scheduled',
+        'createdAt':     datetime.utcnow().isoformat() + 'Z',
+    }
+    data['hearings'].append(hearing)
+    save_cad_data(data)
+    return jsonify({'success': True, 'hearing': hearing})
+
+
+@app.route('/api/court/hearings/<hearing_id>', methods=['PUT'])
+def update_hearing(hearing_id):
+    body = request.get_json(silent=True) or {}
+    data = load_cad_data()
+    for h in data.get('hearings', []):
+        if h.get('id') == hearing_id:
+            for field in ('outcome', 'status', 'judge', 'notes', 'scheduledAt'):
+                if field in body:
+                    h[field] = body[field]
+            h['updatedAt'] = datetime.utcnow().isoformat() + 'Z'
+            save_cad_data(data)
+            return jsonify({'success': True, 'hearing': h})
+    return jsonify({'success': False, 'error': 'Hearing not found'}), 404
+
+
+@app.route('/api/court/hearings/<hearing_id>', methods=['DELETE'])
+def delete_hearing(hearing_id):
+    data = load_cad_data()
+    hearings = data.get('hearings', [])
+    new_list = [h for h in hearings if h.get('id') != hearing_id]
+    if len(new_list) == len(hearings):
+        return jsonify({'success': False, 'error': 'Hearing not found'}), 404
+    data['hearings'] = new_list
+    save_cad_data(data)
+    return jsonify({'success': True})
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):

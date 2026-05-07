@@ -743,6 +743,75 @@
       </div>
     </section>
 
+    <section class="container section">
+      <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:14px;padding:24px 28px;">
+        <div style="margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h2 style="margin-bottom:4px;">⚖️ Court Hearings</h2>
+            <p style="margin:0;color:var(--muted);font-size:0.88rem;">Schedule arraignments, bail hearings, sentencings, and dismissals. Track outcomes per arrest.</p>
+          </div>
+          <button id="court-schedule-toggle" class="button button-primary" style="font-size:0.85rem;padding:9px 18px;">+ Schedule Hearing</button>
+        </div>
+
+        <div id="court-schedule-form" style="display:none;background:#111;border:1px solid #2a2a2a;border-radius:10px;padding:20px;margin-bottom:20px;">
+          <h3 style="margin:0 0 16px;font-size:1rem;">Schedule a Hearing</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+            <div>
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Suspect Name *</label>
+              <input id="court-suspect" type="text" placeholder="John Smith" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;" />
+            </div>
+            <div>
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Hearing Type *</label>
+              <select id="court-type" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;">
+                <option>Arraignment</option>
+                <option>Bail Hearing</option>
+                <option>Sentencing</option>
+                <option>Dismissal</option>
+                <option>Trial</option>
+                <option>Appeal</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Date &amp; Time *</label>
+              <input id="court-datetime" type="datetime-local" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;" />
+            </div>
+            <div>
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Charges *</label>
+              <input id="court-charges" type="text" placeholder="e.g. Armed Robbery, Assault" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;" />
+            </div>
+            <div>
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Presiding Judge</label>
+              <input id="court-judge" type="text" placeholder="Judge name (optional)" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;" />
+            </div>
+            <div>
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Filing Officer *</label>
+              <input id="court-officer" type="text" placeholder="Officer name / callsign" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;" />
+            </div>
+            <div style="grid-column:1/-1;">
+              <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:5px;">Notes</label>
+              <textarea id="court-notes" rows="2" placeholder="Additional notes, conditions, etc." style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:9px 12px;color:#fff;font-size:0.88rem;outline:none;resize:vertical;"></textarea>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:14px;">
+            <button id="court-submit-btn" class="button button-primary" style="font-size:0.85rem;padding:9px 22px;">Schedule</button>
+            <button id="court-cancel-btn" style="font-size:0.85rem;padding:9px 18px;background:transparent;border:1px solid #333;border-radius:8px;color:#aaa;cursor:pointer;">Cancel</button>
+          </div>
+          <p id="court-form-status" style="margin:10px 0 0;font-size:0.83rem;"></p>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+          <button class="court-filter-btn badge filter-btn active-filter" data-status="all" style="font-size:0.75rem;">All</button>
+          <button class="court-filter-btn badge filter-btn" data-status="Scheduled" style="font-size:0.75rem;">Scheduled</button>
+          <button class="court-filter-btn badge filter-btn" data-status="Completed" style="font-size:0.75rem;">Completed</button>
+          <button class="court-filter-btn badge filter-btn" data-status="Continued" style="font-size:0.75rem;">Continued</button>
+          <button class="court-filter-btn badge filter-btn" data-status="Dismissed" style="font-size:0.75rem;">Dismissed</button>
+        </div>
+        <div id="court-hearings-list">
+          <p style="color:var(--muted);font-size:0.85rem;">Loading hearings…</p>
+        </div>
+      </div>
+    </section>
+
     <section class="container section content-grid">
       <article class="card rule-card">
         <h2>Police rules</h2>
@@ -1690,6 +1759,194 @@
         this.disabled = false;
       }
     });
+
+    /* ── COURT HEARINGS ── */
+    let _courtFilter = 'all';
+    let _courtHearings = [];
+
+    async function loadCourtHearings() {
+      const list = document.getElementById('court-hearings-list');
+      try {
+        const res = await fetch('/api/court/hearings');
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+        _courtHearings = json.hearings || [];
+        renderCourtHearings();
+      } catch (err) {
+        if (list) list.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Failed to load hearings: ${err.message}</p>`;
+      }
+    }
+
+    function renderCourtHearings() {
+      const list = document.getElementById('court-hearings-list');
+      if (!list) return;
+      const filtered = _courtFilter === 'all' ? _courtHearings : _courtHearings.filter(h => (h.status || 'Scheduled') === _courtFilter);
+      if (!filtered.length) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No hearings found.</p>';
+        return;
+      }
+      const sc = { Scheduled:'#4c9af5', Completed:'#4caf82', Continued:'#f5a623', Dismissed:'#aaa', Cancelled:'#e05252' };
+      const oc = { Guilty:'#e05252', 'Not Guilty':'#4caf82', Dismissed:'#aaa', Continued:'#f5a623', 'No Contest':'#f5a623' };
+      list.innerHTML = filtered.map(h => {
+        const col = sc[h.status || 'Scheduled'] || '#4c9af5';
+        const outcol = h.outcome ? (oc[h.outcome] || '#fff') : null;
+        const dt = h.scheduledAt ? new Date(h.scheduledAt).toLocaleString() : '—';
+        return `<div data-hearing-id="${h.id}" style="background:#0a0a0a;border:1px solid #222;border-left:3px solid ${col};border-radius:10px;padding:14px 16px;margin-bottom:10px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                <strong style="font-size:0.95rem;">${h.suspectName || '—'}</strong>
+                <span style="background:${col}20;color:${col};border:1px solid ${col}44;border-radius:4px;font-size:0.68rem;padding:2px 7px;text-transform:uppercase;letter-spacing:.06em;">${h.status || 'Scheduled'}</span>
+                <span style="background:#1a1a1a;color:#aaa;border:1px solid #2a2a2a;border-radius:4px;font-size:0.68rem;padding:2px 7px;">${h.hearingType || 'Arraignment'}</span>
+                ${h.outcome ? `<span style="background:${outcol}20;color:${outcol};border:1px solid ${outcol}44;border-radius:4px;font-size:0.68rem;padding:2px 7px;">⚖️ ${h.outcome}</span>` : ''}
+              </div>
+              <p style="margin:0 0 4px;font-size:0.83rem;color:#ccc;">${h.charges || '—'}</p>
+              <p style="margin:0;font-size:0.78rem;color:#777;">🗓 ${dt}${h.judge ? ` · Judge: ${h.judge}` : ''} · Filed by ${h.filingOfficer || '—'}</p>
+              ${h.notes ? `<p style="margin:6px 0 0;font-size:0.78rem;color:#888;font-style:italic;">${h.notes}</p>` : ''}
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
+              <button onclick="toggleOutcomePanel('${h.id}')" style="font-size:0.75rem;padding:6px 12px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#ccc;cursor:pointer;">Update</button>
+              <button onclick="deleteHearing('${h.id}')" style="font-size:0.75rem;padding:6px 10px;background:#e0525215;border:1px solid #e0525230;border-radius:6px;color:#e05252;cursor:pointer;">✕</button>
+            </div>
+          </div>
+          <div id="outcome-panel-${h.id}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <select id="outcome-select-${h.id}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
+                <option value="">— Select outcome —</option>
+                <option>Guilty</option>
+                <option>Not Guilty</option>
+                <option>Dismissed</option>
+                <option>Continued</option>
+                <option>No Contest</option>
+              </select>
+              <select id="status-select-${h.id}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
+                <option value="Scheduled">Scheduled</option>
+                <option value="Completed">Completed</option>
+                <option value="Continued">Continued</option>
+                <option value="Dismissed">Dismissed</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+              <button onclick="saveOutcome('${h.id}')" style="font-size:0.8rem;padding:6px 14px;background:rgba(76,154,245,0.15);border:1px solid rgba(76,154,245,0.4);border-radius:6px;color:#4c9af5;cursor:pointer;">Save</button>
+              <button onclick="toggleOutcomePanel('${h.id}')" style="font-size:0.8rem;padding:6px 10px;background:transparent;border:1px solid #2a2a2a;border-radius:6px;color:#888;cursor:pointer;">Cancel</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function toggleOutcomePanel(id) {
+      const panel = document.getElementById(`outcome-panel-${id}`);
+      if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async function saveOutcome(id) {
+      const outcome = document.getElementById(`outcome-select-${id}`).value;
+      const status  = document.getElementById(`status-select-${id}`).value;
+      try {
+        const res = await fetch(`/api/court/hearings/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ outcome, status })
+        });
+        const json = await res.json();
+        if (json.success) {
+          const idx = _courtHearings.findIndex(h => h.id === id);
+          if (idx !== -1) { _courtHearings[idx].outcome = outcome; _courtHearings[idx].status = status; }
+          renderCourtHearings();
+          typeof showToast === 'function' && showToast('Hearing updated.', 'success');
+        } else {
+          typeof showToast === 'function' && showToast(json.error || 'Update failed.', 'error');
+        }
+      } catch {
+        typeof showToast === 'function' && showToast('Network error.', 'error');
+      }
+    }
+
+    async function deleteHearing(id) {
+      if (!confirm('Delete this hearing record?')) return;
+      try {
+        const res = await fetch(`/api/court/hearings/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          _courtHearings = _courtHearings.filter(h => h.id !== id);
+          renderCourtHearings();
+          typeof showToast === 'function' && showToast('Hearing deleted.', 'success');
+        }
+      } catch {
+        typeof showToast === 'function' && showToast('Network error.', 'error');
+      }
+    }
+
+    document.querySelectorAll('.court-filter-btn').forEach(btn => {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.court-filter-btn').forEach(b => b.classList.remove('active-filter'));
+        this.classList.add('active-filter');
+        _courtFilter = this.dataset.status;
+        renderCourtHearings();
+      });
+    });
+
+    document.getElementById('court-schedule-toggle').addEventListener('click', function () {
+      const form = document.getElementById('court-schedule-form');
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
+      if (form.style.display === 'block') {
+        const officer = typeof getOfficerSession === 'function' ? getOfficerSession() : null;
+        if (officer) document.getElementById('court-officer').value = `${officer.name} (${officer.callsign})`;
+      }
+    });
+
+    document.getElementById('court-cancel-btn').addEventListener('click', function () {
+      document.getElementById('court-schedule-form').style.display = 'none';
+      document.getElementById('court-form-status').textContent = '';
+    });
+
+    document.getElementById('court-submit-btn').addEventListener('click', async function () {
+      const suspect  = document.getElementById('court-suspect').value.trim();
+      const type     = document.getElementById('court-type').value;
+      const datetime = document.getElementById('court-datetime').value;
+      const charges  = document.getElementById('court-charges').value.trim();
+      const judge    = document.getElementById('court-judge').value.trim();
+      const officer  = document.getElementById('court-officer').value.trim();
+      const notes    = document.getElementById('court-notes').value.trim();
+      const statusEl = document.getElementById('court-form-status');
+      if (!suspect || !datetime || !charges || !officer) {
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Please fill in all required fields (suspect, date/time, charges, filing officer).';
+        return;
+      }
+      this.disabled = true;
+      statusEl.style.color = 'var(--muted)';
+      statusEl.textContent = 'Scheduling…';
+      try {
+        const res = await fetch('/api/court/hearings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ suspectName: suspect, hearingType: type, scheduledAt: datetime, charges, judge, filingOfficer: officer, notes })
+        });
+        const json = await res.json();
+        if (json.success) {
+          _courtHearings.unshift(json.hearing);
+          _courtFilter = 'all';
+          document.querySelectorAll('.court-filter-btn').forEach(b => b.classList.toggle('active-filter', b.dataset.status === 'all'));
+          renderCourtHearings();
+          document.getElementById('court-schedule-form').style.display = 'none';
+          ['court-suspect','court-charges','court-judge','court-notes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+          document.getElementById('court-datetime').value = '';
+          statusEl.textContent = '';
+          typeof showToast === 'function' && showToast('Hearing scheduled.', 'success');
+        } else {
+          statusEl.style.color = 'var(--accent)';
+          statusEl.textContent = json.error || 'Scheduling failed.';
+        }
+      } catch {
+        statusEl.style.color = 'var(--accent)';
+        statusEl.textContent = 'Network error. Try again.';
+      } finally {
+        this.disabled = false;
+      }
+    });
+
+    loadCourtHearings();
   </script>
 
   <!-- Booking card modal -->
