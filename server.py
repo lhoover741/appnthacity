@@ -63,18 +63,13 @@ cache.init_app(app)
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
 
-# Create all tables in app context
+# Initialize database on startup
 with app.app_context():
-    db.create_all()
-    logger.info('Database tables verified/created.')
-
-    # Run Alembic migrations
     try:
-        from flask_migrate import upgrade
-        upgrade()
-        logger.info('Database migrations completed.')
+        db.create_all()
+        logger.info('✓ Database tables verified on startup')
     except Exception as e:
-        logger.error(f'Migration error: {e}')
+        logger.error(f'Database initialization error: {e}')
 
 DEFAULT_OFFICERS = [
     {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
