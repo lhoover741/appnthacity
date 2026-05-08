@@ -12,6 +12,7 @@ from flask import Flask, request, jsonify, send_from_directory, session
 from flask_migrate import Migrate
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from sqlalchemy import text
 from security_service import require_auth, require_role, hash_password, verify_password
 from performance_service import cache, paginate_query
 
@@ -157,13 +158,61 @@ def application_to_dict(a):
 
 
 def session_to_dict(s):
+    officer_name = s.officer_name or ''
     return {
         'callsign': s.callsign,
-        'name': s.officer_name or '',
+        'name': officer_name,
+        'officerName': officer_name,
         'department': s.department or 'LSPD',
         'loggedInAt': s.logged_in_at.isoformat() if s.logged_in_at else None,
+        'updatedAt': s.updated_at.isoformat() if s.updated_at else None,
         'status': s.status or 'On Duty',
     }
+
+
+def officer_session_response(s):
+    return {
+        'callsign': s.callsign,
+        'officerName': s.officer_name or '',
+        'department': s.department or '',
+        'status': s.status or 'On Duty',
+    }
+
+
+def ensure_officer_sessions_schema():
+    """Safely add any missing officer session columns before CAD login queries."""
+    if db.engine.dialect.name != 'postgresql':
+        db.create_all()
+        return
+
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS officer_sessions (
+            id SERIAL PRIMARY KEY,
+            callsign VARCHAR(64) UNIQUE NOT NULL,
+            officer_name VARCHAR(255),
+            department VARCHAR(255) DEFAULT 'LSPD',
+            status VARCHAR(64) DEFAULT 'On Duty',
+            logged_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS id SERIAL",
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS callsign VARCHAR(64)",
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS officer_name VARCHAR(255)",
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS department VARCHAR(255) DEFAULT 'LSPD'",
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS status VARCHAR(64) DEFAULT 'On Duty'",
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS logged_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE officer_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    ]
+
+    try:
+        with db.engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+    except Exception as e:
+        logger.error(f'officer_sessions schema sync failed: {e}')
+        raise
 
 
 def alert_to_dict(a):
@@ -2154,6 +2203,11 @@ def patch_officer_status():
     valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty', 'Active', 'On Duty']
     if not officer_id or new_status not in valid_statuses:
         return jsonify({'success': False, 'error': 'invalid id or status'}), 400
+    try:
+        ensure_officer_sessions_schema()
+    except Exception as e:
+        logger.error(f'patch_officer_status schema error: {e}')
+        return jsonify({'success': False, 'error': 'Unable to update officer status.'}), 500
     s = OfficerSession.query.filter_by(callsign=officer_id).first()
     if s is None:
         s = OfficerSession(
@@ -2176,56 +2230,103 @@ def patch_officer_status():
 
 @app.route('/api/officer-sessions', methods=['GET'])
 def get_officer_sessions():
-    sessions = OfficerSession.query.all()
+    try:
+        ensure_officer_sessions_schema()
+        sessions = OfficerSession.query.all()
+    except Exception as e:
+        logger.error(f'get_officer_sessions error: {e}')
+        return jsonify({'success': False, 'error': 'Unable to load officer sessions.'}), 500
     result = {s.callsign: session_to_dict(s) for s in sessions}
-    return jsonify({'sessions': result})
+    return jsonify({'success': True, 'sessions': result})
+
+
+@app.route('/api/officer-sessions/active', methods=['GET'])
+def get_active_officer_sessions():
+    try:
+        ensure_officer_sessions_schema()
+        sessions = OfficerSession.query.filter_by(status='On Duty').order_by(OfficerSession.updated_at.desc()).all()
+    except Exception as e:
+        logger.error(f'get_active_officer_sessions error: {e}')
+        return jsonify({'success': False, 'error': 'Unable to load active officer sessions.'}), 500
+    return jsonify({'success': True, 'sessions': [session_to_dict(s) for s in sessions]})
 
 
 @app.route('/api/officer-session', methods=['POST'])
 def post_officer_session():
     data = request.get_json(silent=True) or {}
-    callsign = data.get('callsign', '').strip()
-    name = data.get('name', '').strip()
-    department = data.get('department', '').strip()
+    callsign = (data.get('callsign') or '').strip()
+    name = (data.get('officer_name') or data.get('officerName') or data.get('name') or '').strip()
+    department = (data.get('department') or '').strip()
     if not callsign:
-        return jsonify({'success': False, 'error': 'callsign required'}), 400
+        return jsonify({'success': False, 'error': 'Callsign is required.'}), 400
     if not name:
-        return jsonify({'success': False, 'error': 'officer name required'}), 400
+        return jsonify({'success': False, 'error': 'Officer name is required.'}), 400
     if not department:
-        return jsonify({'success': False, 'error': 'department required'}), 400
-    s = OfficerSession.query.filter_by(callsign=callsign).first()
-    if s is not None and (s.status or '').strip().lower() == 'on duty':
-        return jsonify({'success': False, 'error': 'Callsign already in use.'}), 409
-    if s is None:
-        s = OfficerSession(callsign=callsign)
-        db.session.add(s)
-    s.officer_name = name
-    s.department = department
-    s.status = 'On Duty'
-    s.logged_in_at = datetime.utcnow()
-    s.updated_at = datetime.utcnow()
+        return jsonify({'success': False, 'error': 'Department is required.'}), 400
+
     try:
+        ensure_officer_sessions_schema()
+        s = OfficerSession.query.filter_by(callsign=callsign).first()
+        if s is not None and (s.status or '').strip().lower() == 'on duty':
+            return jsonify({'success': False, 'error': 'Callsign already in use.'}), 409
+        now = datetime.utcnow()
+        if s is None:
+            s = OfficerSession(callsign=callsign)
+            db.session.add(s)
+        s.officer_name = name
+        s.department = department
+        s.status = 'On Duty'
+        s.logged_in_at = now
+        s.updated_at = now
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         logger.error(f'post_officer_session error: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Unable to start officer session.'}), 500
+
     logger.info(f"Officer login: {callsign} ({name}) — {department}")
+    return jsonify({'success': True, 'session': officer_session_response(s)})
+
+
+@app.route('/api/officer-sessions/end', methods=['POST'])
+def end_officer_session():
+    data = request.get_json(silent=True) or {}
+    callsign = (data.get('callsign') or '').strip()
+    if not callsign:
+        return jsonify({'success': False, 'error': 'Callsign is required.'}), 400
+    try:
+        ensure_officer_sessions_schema()
+        s = OfficerSession.query.filter_by(callsign=callsign).first()
+        if s:
+            s.status = 'Off Duty'
+            s.updated_at = datetime.utcnow()
+            db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'end_officer_session error: {e}')
+        return jsonify({'success': False, 'error': 'Unable to end officer session.'}), 500
+    logger.info(f"Officer end shift: {callsign}")
     return jsonify({'success': True})
 
 
 @app.route('/api/officer-session/<callsign>', methods=['DELETE'])
 def delete_officer_session(callsign):
-    s = OfficerSession.query.filter_by(callsign=callsign).first()
-    if s:
-        try:
+    # Backward-compatible endpoint for older Police/CAD clients.
+    return end_officer_session_for_callsign(callsign)
+
+
+def end_officer_session_for_callsign(callsign):
+    try:
+        ensure_officer_sessions_schema()
+        s = OfficerSession.query.filter_by(callsign=callsign).first()
+        if s:
             s.status = 'Off Duty'
             s.updated_at = datetime.utcnow()
             db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            logger.error(f'delete_officer_session error: {e}')
-            return jsonify({'success': False, 'error': str(e)}), 500
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'delete_officer_session error: {e}')
+        return jsonify({'success': False, 'error': 'Unable to end officer session.'}), 500
     logger.info(f"Officer end shift: {callsign}")
     return jsonify({'success': True})
 
