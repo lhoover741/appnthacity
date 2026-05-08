@@ -2414,60 +2414,79 @@
       <div class="officer-login-top">
         <div class="officer-login-badge">🚔</div>
         <h2 class="officer-login-title">NThaCityRP CAD System</h2>
-        <p class="officer-login-sub">Select your unit to begin your shift.</p>
+        <p class="officer-login-sub">Select a preset unit or choose Custom Unit before entering CAD.</p>
       </div>
+
+      <div id="officer-login-alert" class="officer-login-alert" role="alert" aria-live="polite"></div>
 
       <div class="officer-login-tabs">
-        <button class="officer-tab active" id="tab-btn-select" onclick="switchOfficerTab('select')">Select Unit</button>
-        <button class="officer-tab" id="tab-btn-custom" onclick="switchOfficerTab('custom')">Custom Unit</button>
+        <button type="button" class="officer-tab active" id="tab-btn-select" onclick="switchOfficerMode('preset')">Preset Units</button>
+        <button type="button" class="officer-tab" id="tab-btn-custom" onclick="switchOfficerMode('custom')">Custom Unit</button>
       </div>
 
-      <div id="officer-tab-select" class="officer-tab-panel">
-        <div class="officer-unit-grid" id="officer-unit-grid"></div>
-      </div>
+      <div class="officer-unit-grid" id="officer-unit-grid"></div>
 
-      <div id="officer-tab-custom" class="officer-tab-panel" style="display:none;">
-        <div class="system-form officer-custom-form">
-          <label>Callsign <input id="custom-callsign" type="text" placeholder="e.g. LSPD-4B21" /></label>
-          <label>Officer Name <input id="custom-name" type="text" placeholder="e.g. J. Martinez" /></label>
-          <label>Department
-            <select id="custom-dept">
-              <option value="LSPD">LSPD</option>
-              <option value="BCSO">BCSO</option>
-              <option value="Gang Enforcement">Gang Enforcement</option>
-              <option value="Traffic Division">Traffic Division</option>
-              <option value="K9 Unit">K9 Unit</option>
-              <option value="SWAT">SWAT</option>
-              <option value="Dispatch">Dispatch</option>
-              <option value="EMS">EMS</option>
-            </select>
-          </label>
-          <button class="button button-primary" style="width:100%;margin-top:4px;" onclick="loginCustomOfficer()">Log In to CAD</button>
-          <div id="custom-login-err" style="font-size:0.82rem;color:var(--accent);margin-top:4px;display:none;"></div>
-        </div>
+      <div class="system-form officer-custom-form" id="officer-login-form">
+        <label id="login-callsign-wrap">Callsign / Unit
+          <input id="login-callsign" type="text" placeholder="Select a unit" readonly />
+          <span class="field-error" id="login-callsign-error">Callsign is required.</span>
+        </label>
+        <label id="login-name-wrap">Officer Name
+          <input id="login-officer-name" type="text" placeholder="e.g. J. Martinez" autocomplete="name" />
+          <span class="field-error" id="login-name-error">Officer name is required.</span>
+        </label>
+        <label id="login-dept-wrap">Department
+          <select id="login-dept">
+            <option value="">Select department</option>
+            <option value="LSPD">LSPD</option>
+            <option value="BCSO">BCSO</option>
+            <option value="Gang Enforcement">Gang Enforcement</option>
+            <option value="Traffic Division">Traffic Division</option>
+            <option value="K9 Unit">K9 Unit</option>
+            <option value="SWAT">SWAT</option>
+            <option value="Dispatch">Dispatch</option>
+            <option value="EMS">EMS</option>
+          </select>
+          <span class="field-error" id="login-dept-error">Department is required.</span>
+        </label>
+        <button id="officer-login-btn" class="button button-primary" type="button" style="width:100%;margin-top:4px;" onclick="submitOfficerLogin()" disabled>Log In to CAD</button>
       </div>
     </div>
   </div>
 
   <script>
     // ── Officer login overlay ──
+    const OFFICER_SESSION_KEY = 'NThaCityOfficer';
     const PREDEFINED_UNITS = [
-      { callsign: '1L-01',  name: 'Chief Unit',     department: 'LSPD',             icon: '⭐' },
-      { callsign: '2L-12',  name: 'Patrol Unit',    department: 'LSPD',             icon: '👮' },
-      { callsign: '3L-22',  name: 'Traffic Unit',   department: 'Traffic Division', icon: '🚗' },
-      { callsign: 'D-04',   name: 'Dispatch',       department: 'Dispatch',         icon: '📡' },
-      { callsign: 'K9-02',  name: 'K9 Unit',        department: 'K9 Unit',          icon: '🐕' },
-      { callsign: 'GU-01',  name: 'Gang Unit 1',    department: 'Gang Enforcement', icon: '🔫' },
-      { callsign: 'GU-02',  name: 'Gang Unit 2',    department: 'Gang Enforcement', icon: '🔫' },
-      { callsign: 'BCSO-1', name: 'BCSO Deputy 1',  department: 'BCSO',             icon: '🤠' },
-      { callsign: 'BCSO-2', name: 'BCSO Deputy 2',  department: 'BCSO',             icon: '🤠' },
-      { callsign: 'SWT-1',  name: 'SWAT Unit',      department: 'SWAT',             icon: '🛡️' },
+      { callsign: '1L-01',  name: 'Chief Unit',    department: 'LSPD',             icon: '⭐' },
+      { callsign: '2L-12',  name: 'Patrol Unit',   department: 'LSPD',             icon: '👮' },
+      { callsign: '3L-22',  name: 'Traffic Unit',  department: 'Traffic Division', icon: '🚗' },
+      { callsign: 'D-04',   name: 'Dispatch',      department: 'Dispatch',         icon: '📡' },
+      { callsign: 'K9-02',  name: 'K9 Unit',       department: 'K9 Unit',          icon: '🐕' },
+      { callsign: 'GU-01',  name: 'Gang Unit',     department: 'Gang Enforcement', icon: '🔫' },
+      { callsign: 'GU-02',  name: 'Gang Unit 2',   department: 'Gang Enforcement', icon: '🔫' },
+      { callsign: 'BCSO-1', name: 'BCSO Deputy 1', department: 'BCSO',             icon: '🤠' },
+      { callsign: 'BCSO-2', name: 'BCSO Deputy 2', department: 'BCSO',             icon: '🤠' },
+      { callsign: 'SWT-1',  name: 'SWAT Unit',     department: 'SWAT',             icon: '🛡️' },
     ];
+    let selectedUnit = null;
+    let officerLoginMode = 'preset';
+
+    function officerLoginEls() {
+      return {
+        overlay: document.getElementById('officer-login-overlay'),
+        alert: document.getElementById('officer-login-alert'),
+        callsign: document.getElementById('login-callsign'),
+        name: document.getElementById('login-officer-name'),
+        dept: document.getElementById('login-dept'),
+        loginBtn: document.getElementById('officer-login-btn'),
+      };
+    }
 
     function buildUnitGrid() {
       const grid = document.getElementById('officer-unit-grid');
       grid.innerHTML = PREDEFINED_UNITS.map(u => `
-        <button class="officer-unit-card" onclick="loginUnit('${u.callsign}','${u.name}','${u.department}')">
+        <button type="button" class="officer-unit-card" data-callsign="${u.callsign}" onclick="selectPresetUnit('${u.callsign}')">
           <span class="unit-icon">${u.icon}</span>
           <span class="unit-callsign">${u.callsign}</span>
           <span class="unit-name">${u.name}</span>
@@ -2476,47 +2495,172 @@
       `).join('');
     }
 
-    function switchOfficerTab(tab) {
-      document.getElementById('officer-tab-select').style.display = tab === 'select' ? 'block' : 'none';
-      document.getElementById('officer-tab-custom').style.display  = tab === 'custom'  ? 'block' : 'none';
-      document.getElementById('tab-btn-select').classList.toggle('active', tab === 'select');
-      document.getElementById('tab-btn-custom').classList.toggle('active', tab === 'custom');
+    function setOfficerLoginAlert(message) {
+      const { alert } = officerLoginEls();
+      alert.textContent = message || '';
+      alert.style.display = message ? 'block' : 'none';
     }
 
-    function loginUnit(callsign, name, department) {
-      if (typeof officerLogin === 'function') {
-        officerLogin(callsign, name, department);
+    function switchOfficerMode(mode) {
+      officerLoginMode = mode;
+      const { callsign, dept } = officerLoginEls();
+      document.getElementById('tab-btn-select').classList.toggle('active', mode === 'preset');
+      document.getElementById('tab-btn-custom').classList.toggle('active', mode === 'custom');
+      document.getElementById('officer-unit-grid').classList.toggle('custom-active', mode === 'custom');
+      if (mode === 'custom') {
+        selectedUnit = null;
+        callsign.value = '';
+        callsign.placeholder = 'e.g. LSPD-4B21';
+        callsign.readOnly = false;
+        document.querySelectorAll('.officer-unit-card').forEach(btn => btn.classList.remove('selected'));
+      } else {
+        callsign.placeholder = 'Select a unit';
+        callsign.readOnly = true;
       }
+      dept.disabled = false;
+      setOfficerLoginAlert('');
+      validateOfficerLoginForm(true);
     }
 
-    function loginCustomOfficer() {
-      const callsign = document.getElementById('custom-callsign').value.trim();
-      const name     = document.getElementById('custom-name').value.trim();
-      const dept     = document.getElementById('custom-dept').value;
-      const errEl    = document.getElementById('custom-login-err');
-      if (!callsign || !name) {
-        errEl.textContent = 'Callsign and officer name are required.';
-        errEl.style.display = 'block';
+    function selectPresetUnit(callsign) {
+      const unit = PREDEFINED_UNITS.find(u => u.callsign === callsign);
+      if (!unit) return;
+      switchOfficerMode('preset');
+      selectedUnit = unit;
+      const els = officerLoginEls();
+      els.callsign.value = unit.callsign;
+      els.dept.value = unit.department;
+      document.querySelectorAll('.officer-unit-card').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.callsign === unit.callsign);
+      });
+      validateOfficerLoginForm(true);
+    }
+
+    function validateOfficerLoginForm(markTouched = false) {
+      const { callsign, name, dept, loginBtn } = officerLoginEls();
+      const callsignValid = callsign.value.trim().length > 0;
+      const nameValid = name.value.trim().length > 0;
+      const deptValid = dept.value.trim().length > 0;
+      const isValid = callsignValid && nameValid && deptValid;
+      [
+        ['login-callsign-wrap', callsignValid],
+        ['login-name-wrap', nameValid],
+        ['login-dept-wrap', deptValid],
+      ].forEach(([id, valid]) => {
+        const field = document.getElementById(id);
+        if (field) field.classList.toggle('invalid', markTouched && !valid);
+      });
+      loginBtn.disabled = !isValid;
+      return isValid;
+    }
+
+    function renderOfficerHeader(officer) {
+      const dashboard = document.getElementById('my-dashboard-section');
+      const label = document.getElementById('my-officer-label');
+      if (!officer || !officer.callsign) {
+        if (dashboard) dashboard.style.display = 'none';
+        if (label) label.textContent = '—';
         return;
       }
-      errEl.style.display = 'none';
-      loginUnit(callsign, name, dept);
+      if (dashboard) dashboard.style.display = 'block';
+      if (label) {
+        label.innerHTML = `<strong>${officer.callsign}</strong> · ${officer.name} · ${officer.department} · <span class="badge badge-primary">${officer.status || 'On Duty'}</span>`;
+      }
+    }
+
+    function getOfficerSession() {
+      try {
+        return JSON.parse(localStorage.getItem(OFFICER_SESSION_KEY) || 'null');
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function setOfficerSession(officer) {
+      localStorage.setItem(OFFICER_SESSION_KEY, JSON.stringify(officer));
+      officerLoginEls().overlay.style.display = 'none';
+      renderOfficerHeader(officer);
+    }
+
+    function clearOfficerSession() {
+      localStorage.removeItem(OFFICER_SESSION_KEY);
+      renderOfficerHeader(null);
+      officerLoginEls().overlay.style.display = 'flex';
+      validateOfficerLoginForm(true);
+    }
+
+    async function submitOfficerLogin() {
+      if (!validateOfficerLoginForm(true)) return;
+      const els = officerLoginEls();
+      const payload = {
+        callsign: els.callsign.value.trim(),
+        name: els.name.value.trim(),
+        department: els.dept.value.trim(),
+      };
+      els.loginBtn.disabled = true;
+      setOfficerLoginAlert('');
+      try {
+        const res = await fetch('/api/officer-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || 'Unable to start officer session.');
+        }
+        const officer = { ...payload, status: 'On Duty', loggedInAt: new Date().toISOString() };
+        setOfficerSession(officer);
+        if (typeof showToast === 'function') showToast(`${payload.callsign} is On Duty`, 'success');
+      } catch (err) {
+        setOfficerLoginAlert(err.message === 'Callsign already in use.' ? 'Callsign already in use.' : (err.message || 'Unable to start officer session.'));
+        validateOfficerLoginForm(true);
+      }
+    }
+
+    async function officerLogout() {
+      const officer = getOfficerSession();
+      if (officer && officer.callsign) {
+        try {
+          await fetch(`/api/officer-session/${encodeURIComponent(officer.callsign)}`, { method: 'DELETE' });
+        } catch (_) {}
+      }
+      clearOfficerSession();
+      if (typeof showToast === 'function') showToast('Shift ended. Officer session cleared.', 'info');
+    }
+
+    async function restoreOfficerSession() {
+      const officer = getOfficerSession();
+      if (!officer || !officer.callsign) {
+        clearOfficerSession();
+        return;
+      }
+      try {
+        const res = await fetch('/api/officer-sessions');
+        const json = await res.json();
+        const active = json.sessions && json.sessions[officer.callsign];
+        if (active && active.status === 'On Duty') {
+          setOfficerSession({
+            callsign: active.callsign,
+            name: active.name || officer.name,
+            department: active.department || officer.department,
+            status: active.status,
+            loggedInAt: active.loggedInAt || officer.loggedInAt,
+          });
+          return;
+        }
+      } catch (_) {}
+      clearOfficerSession();
     }
 
     buildUnitGrid();
-
-    // Check for existing session immediately (before main.js async init finishes)
-    (function checkExistingSession() {
-      try {
-        const raw = localStorage.getItem('NThaCityOfficer');
-        if (raw) {
-          const officer = JSON.parse(raw);
-          if (officer && officer.callsign) {
-            document.getElementById('officer-login-overlay').style.display = 'none';
-          }
-        }
-      } catch (_) {}
-    })();
+    ['login-callsign', 'login-officer-name', 'login-dept'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', () => validateOfficerLoginForm(true));
+      if (el) el.addEventListener('change', () => validateOfficerLoginForm(true));
+    });
+    switchOfficerMode('preset');
+    restoreOfficerSession();
   </script>
 </body>
 </html>

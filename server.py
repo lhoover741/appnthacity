@@ -2151,7 +2151,7 @@ def patch_officer_status():
     data = request.get_json(silent=True) or {}
     officer_id = data.get('id', '').strip()
     new_status = data.get('status', '').strip()
-    valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty', 'Active']
+    valid_statuses = ['Available', 'Assigned', 'En Route', 'On Scene', 'Busy', 'Off Duty', 'Active', 'On Duty']
     if not officer_id or new_status not in valid_statuses:
         return jsonify({'success': False, 'error': 'invalid id or status'}), 400
     s = OfficerSession.query.filter_by(callsign=officer_id).first()
@@ -2186,10 +2186,16 @@ def post_officer_session():
     data = request.get_json(silent=True) or {}
     callsign = data.get('callsign', '').strip()
     name = data.get('name', '').strip()
-    department = data.get('department', 'LSPD').strip()
+    department = data.get('department', '').strip()
     if not callsign:
         return jsonify({'success': False, 'error': 'callsign required'}), 400
+    if not name:
+        return jsonify({'success': False, 'error': 'officer name required'}), 400
+    if not department:
+        return jsonify({'success': False, 'error': 'department required'}), 400
     s = OfficerSession.query.filter_by(callsign=callsign).first()
+    if s is not None and (s.status or '').strip().lower() == 'on duty':
+        return jsonify({'success': False, 'error': 'Callsign already in use.'}), 409
     if s is None:
         s = OfficerSession(callsign=callsign)
         db.session.add(s)
@@ -2213,7 +2219,8 @@ def delete_officer_session(callsign):
     s = OfficerSession.query.filter_by(callsign=callsign).first()
     if s:
         try:
-            db.session.delete(s)
+            s.status = 'Off Duty'
+            s.updated_at = datetime.utcnow()
             db.session.commit()
         except Exception as e:
             db.session.rollback()
