@@ -571,13 +571,20 @@ def inmate_to_dict(i):
     }
 
 
+def _display_hearing_type(value):
+    hearing_type = (value or 'Arraignment').strip()
+    if hearing_type.lower() == 'arrigment':
+        return 'Arraignment'
+    return hearing_type
+
+
 def hearing_to_dict(h):
     return {
         'id': h.hearing_id,
         'civilianId': h.civilian_id or '',
         'suspectName': h.suspect_name,
         'charges': h.charges or '',
-        'hearingType': h.hearing_type,
+        'hearingType': _display_hearing_type(h.hearing_type),
         'scheduledAt': h.scheduled_at or '',
         'judge': h.judge or '',
         'notes': h.notes or '',
@@ -2863,9 +2870,169 @@ def post_cad_data():
     return jsonify({'success': True})
 
 
+def _dedupe_records(records, key_attr):
+    seen = set()
+    deduped = []
+    for record in records:
+        key = getattr(record, key_attr, None) or getattr(record, 'id', None)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped
+
+
+def _ordered_records(records, date_attr='created_at'):
+    return sorted(records, key=lambda item: getattr(item, date_attr, None) or datetime.min, reverse=True)
+
+
+def _criminal_record_search_payload(search_text):
+    """Search civilians first, then aggregate all records linked to matching civilians."""
+    civilians = (
+        _civilian_search_query(search_text)
+        .order_by(Civilian.created_at.desc())
+        .limit(25)
+        .all()
+    )
+    civilian_payloads = [_civilian_response(c) for c in civilians]
+
+    civilian_ids = {c.civilian_id for c in civilians if c.civilian_id}
+    civilian_plates = {c.plate_number for c in civilians if c.plate_number}
+    full_names = {f'{c.first_name or ""} {c.last_name or ""}'.strip() for c in civilians}
+    full_names = {name for name in full_names if name}
+    lower_full_names = {name.lower() for name in full_names}
+    name_pairs = [
+        ((c.first_name or '').strip(), (c.last_name or '').strip())
+        for c in civilians
+        if (c.first_name or '').strip() and (c.last_name or '').strip()
+    ]
+
+    def identity_filter(id_column=None, name_column=None, arrest_column=None, arrest_ids=None):
+        filters = []
+        if id_column is not None and civilian_ids:
+            filters.append(id_column.in_(civilian_ids))
+        if arrest_column is not None and arrest_ids:
+            filters.append(arrest_column.in_(arrest_ids))
+        if name_column is not None and lower_full_names:
+            filters.append(sqlalchemy.func.lower(name_column).in_(lower_full_names))
+        if name_column is not None:
+            for first, last in name_pairs:
+                filters.append(sqlalchemy.and_(name_column.ilike(f'%{first}%'), name_column.ilike(f'%{last}%')))
+        return sqlalchemy.or_(*filters) if filters else sqlalchemy.false()
+
+    arrests = Arrest.query.filter(identity_filter(Arrest.civilian_id, Arrest.suspect_name)).all()
+    arrest_ids = {a.arrest_id for a in arrests if a.arrest_id}
+
+    jail_records = JailBooking.query.filter(
+        identity_filter(JailBooking.civilian_id, JailBooking.suspect_name, JailBooking.arrest_id, arrest_ids)
+    ).all()
+    hearing_records = Hearing.query.filter(
+        identity_filter(Hearing.civilian_id, Hearing.suspect_name, Hearing.arrest_id, arrest_ids)
+    ).all()
+
+    related_arrest_ids = set(arrest_ids)
+    related_arrest_ids.update(j.arrest_id for j in jail_records if j.arrest_id)
+    related_arrest_ids.update(h.arrest_id for h in hearing_records if h.arrest_id)
+    if related_arrest_ids - arrest_ids:
+        arrests.extend(Arrest.query.filter(Arrest.arrest_id.in_(related_arrest_ids - arrest_ids)).all())
+        arrest_ids = {a.arrest_id for a in arrests if a.arrest_id}
+        jail_records.extend(JailBooking.query.filter(JailBooking.arrest_id.in_(arrest_ids)).all())
+        hearing_records.extend(Hearing.query.filter(Hearing.arrest_id.in_(arrest_ids)).all())
+
+    warrants = Warrant.query.filter(identity_filter(Warrant.civilian_id, Warrant.warrant_name)).all()
+    citations = Citation.query.filter(Citation.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false()).all()
+
+    traffic_filters = []
+    if lower_full_names:
+        traffic_filters.append(sqlalchemy.func.lower(TrafficStop.driver_name).in_(lower_full_names))
+    for first, last in name_pairs:
+        traffic_filters.append(sqlalchemy.and_(TrafficStop.driver_name.ilike(f'%{first}%'), TrafficStop.driver_name.ilike(f'%{last}%')))
+    if civilian_plates:
+        traffic_filters.append(TrafficStop.plate.in_(civilian_plates))
+    traffic = TrafficStop.query.filter(sqlalchemy.or_(*traffic_filters) if traffic_filters else sqlalchemy.false()).all()
+
+    arrests = _dedupe_records(arrests, 'arrest_id')
+    jail_records = _dedupe_records(jail_records, 'booking_id')
+    hearing_records = _dedupe_records(hearing_records, 'hearing_id')
+    warrants = _dedupe_records(warrants, 'warrant_id')
+    citations = _dedupe_records(citations, 'citation_id')
+    traffic = _dedupe_records(traffic, 'stop_id')
+
+    linked_case_numbers = set(arrest_ids)
+    linked_case_numbers.update(j.booking_id for j in jail_records if j.booking_id)
+    linked_case_numbers.update(h.hearing_id for h in hearing_records if h.hearing_id)
+    linked_case_numbers.update(c.citation_id for c in citations if c.citation_id)
+    linked_case_numbers.update(w.warrant_id for w in warrants if w.warrant_id)
+    linked_evidence_ids = set()
+    for arrest in arrests:
+        attached = (arrest.evidence_attached or '').replace(',', ' ').replace(';', ' ').split()
+        linked_evidence_ids.update(token.strip() for token in attached if token.strip())
+    evidence_filters = []
+    if linked_case_numbers:
+        evidence_filters.append(Evidence.case_number.in_(linked_case_numbers))
+    if linked_evidence_ids:
+        evidence_filters.append(Evidence.evidence_id.in_(linked_evidence_ids))
+    evidence = Evidence.query.filter(sqlalchemy.or_(*evidence_filters) if evidence_filters else sqlalchemy.false()).all()
+
+    has_criminal_history = any([arrests, jail_records, hearing_records, warrants, citations, traffic, evidence])
+
+    return {
+        'success': True,
+        'query': search_text,
+        'civilian': civilian_payloads[0] if civilian_payloads else {},
+        'civilians': civilian_payloads,
+        'total': len(civilian_payloads),
+        'arrests': [arrest_to_dict(a) for a in _ordered_records(arrests)],
+        'jailBookings': [jail_booking_to_dict(j) for j in _ordered_records(jail_records)],
+        'jailRecords': [jail_booking_to_dict(j) for j in _ordered_records(jail_records)],
+        'hearings': [hearing_to_dict(h) for h in _ordered_records(hearing_records)],
+        'warrants': [warrant_to_dict(w) for w in _ordered_records(warrants)],
+        'citations': [citation_to_dict(c) for c in _ordered_records(citations)],
+        'trafficStops': [traffic_stop_to_dict(t) for t in _ordered_records(traffic)],
+        'evidence': [evidence_to_dict(e) for e in _ordered_records(evidence)],
+        'hasCriminalHistory': has_criminal_history,
+    }
+
+
+@app.route('/api/criminal-records/search', methods=['GET'])
+def search_criminal_records():
+    """Return civilian-first criminal record aggregation for Criminal Record Check."""
+    search_text = (request.args.get('q') or request.args.get('query') or request.args.get('name') or '').strip()
+    if not search_text or len(search_text) < 2:
+        return jsonify({
+            'success': True,
+            'civilian': {},
+            'civilians': [],
+            'arrests': [],
+            'jailBookings': [],
+            'jailRecords': [],
+            'hearings': [],
+            'warrants': [],
+            'citations': [],
+            'trafficStops': [],
+            'evidence': [],
+            'hasCriminalHistory': False,
+            'error': 'Enter at least 2 characters to search.',
+        })
+    try:
+        payload = _criminal_record_search_payload(search_text)
+        logger.info(
+            'Criminal record lookup count for "%s": civilians=%s arrests=%s jail=%s hearings=%s',
+            search_text,
+            payload['total'],
+            len(payload['arrests']),
+            len(payload['jailBookings']),
+            len(payload['hearings']),
+        )
+        return jsonify(payload)
+    except Exception as e:
+        logger.exception(f'Criminal record lookup failed: {e}')
+        return jsonify({'success': False, 'error': 'Criminal record lookup failed.'}), 500
+
+
 @app.route('/api/cad/criminal-record', methods=['GET', 'POST'])
 def get_criminal_record():
-    """Find a civilian by ordinary lookup text and return related CAD history."""
+    """Backward-compatible criminal record lookup endpoint."""
     data = request.get_json(silent=True) or {}
     search_text = (
         data.get('query')
@@ -2875,92 +3042,26 @@ def get_criminal_record():
         or request.args.get('q')
         or ''
     ).strip()
-
     if not search_text or len(search_text) < 2:
-        return jsonify({'success': False, 'error': 'Enter at least 2 characters to search.'}), 400
-
-    try:
-        civilians = (
-            _civilian_search_query(search_text)
-            .order_by(Civilian.created_at.desc())
-            .limit(25)
-            .all()
-        )
-        civilian_payloads = [_civilian_response(c) for c in civilians]
-        civilian_ids = [c.civilian_id for c in civilians if c.civilian_id]
-        civilian_plates = [c.plate_number for c in civilians if c.plate_number]
-        full_names = [f'{c.first_name or ""} {c.last_name or ""}'.strip() for c in civilians]
-        name_terms = [search_text, *full_names]
-
-        def name_or_id_filter(id_column, *name_columns):
-            filters = []
-            if civilian_ids is not None:
-                filters.append(id_column.in_(civilian_ids) if civilian_ids else sqlalchemy.false())
-            for term in name_terms:
-                if not term:
-                    continue
-                for column in name_columns:
-                    filters.append(column.ilike(f'%{term}%'))
-            return sqlalchemy.or_(*filters) if filters else sqlalchemy.false()
-
-        warrants = (
-            Warrant.query
-            .filter(name_or_id_filter(Warrant.civilian_id, Warrant.warrant_name))
-            .order_by(Warrant.created_at.desc())
-            .all()
-        )
-        arrests = (
-            Arrest.query
-            .filter(name_or_id_filter(Arrest.civilian_id, Arrest.suspect_name))
-            .order_by(Arrest.created_at.desc())
-            .all()
-        )
-        traffic_filters = [TrafficStop.driver_name.ilike(f'%{term}%') for term in name_terms if term]
-        if civilian_plates:
-            traffic_filters.append(TrafficStop.plate.in_(civilian_plates))
-        traffic_filters.append(TrafficStop.plate.ilike(f'%{search_text}%'))
-        traffic = (
-            TrafficStop.query
-            .filter(sqlalchemy.or_(*traffic_filters))
-            .order_by(TrafficStop.created_at.desc())
-            .all()
-        )
-        citations = (
-            Citation.query
-            .filter(Citation.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false())
-            .order_by(Citation.created_at.desc())
-            .all()
-        )
-        jail_records = (
-            JailBooking.query
-            .filter(name_or_id_filter(JailBooking.civilian_id, JailBooking.suspect_name))
-            .order_by(JailBooking.created_at.desc())
-            .all()
-        )
-        hearings = (
-            Hearing.query
-            .filter(name_or_id_filter(Hearing.civilian_id, Hearing.suspect_name))
-            .order_by(Hearing.created_at.desc())
-            .all()
-        )
-
-        logger.info(f'Criminal record lookup count for "{search_text}": civilians={len(civilian_payloads)} arrests={len(arrests)} jail={len(jail_records)} hearings={len(hearings)}')
-
         return jsonify({
             'success': True,
-            'query': search_text,
-            'civilians': civilian_payloads,
-            'total': len(civilian_payloads),
-            'warrants': [warrant_to_dict(w) for w in warrants],
-            'arrests': [arrest_to_dict(a) for a in arrests],
-            'trafficStops': [traffic_stop_to_dict(t) for t in traffic],
-            'citations': [citation_to_dict(c) for c in citations],
-            'jailRecords': [jail_booking_to_dict(j) for j in jail_records],
-            'hearings': [hearing_to_dict(h) for h in hearings],
+            'civilian': {},
+            'civilians': [],
+            'arrests': [],
+            'jailBookings': [],
+            'jailRecords': [],
+            'hearings': [],
+            'warrants': [],
+            'citations': [],
+            'trafficStops': [],
             'evidence': [],
+            'hasCriminalHistory': False,
+            'error': 'Enter at least 2 characters to search.',
         })
+    try:
+        return jsonify(_criminal_record_search_payload(search_text))
     except Exception as e:
-        logger.error(f'Criminal record lookup failed: {e}')
+        logger.exception(f'Criminal record lookup failed: {e}')
         return jsonify({'success': False, 'error': 'Criminal record lookup failed.'}), 500
 
 
