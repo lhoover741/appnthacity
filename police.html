@@ -1866,6 +1866,9 @@
         const jailRecords = (NThaCityData.jailRecords || []).filter(j =>
           matchesCivilian(j, ['civilianId', 'civilian_id'], ['suspectName', 'name'])
         );
+        const hearings = (NThaCityData.hearings || []).filter(h =>
+          matchesCivilian(h, ['civilianId', 'civilian_id'], ['suspectName', 'name'])
+        );
         const evidence = (NThaCityData.evidence || []).filter(e =>
           matchesCivilian(e, ['civilianId', 'civilian_id'], ['suspectName', 'name', 'ownerName'], ['plate'])
         );
@@ -1910,16 +1913,18 @@
         const cHtml = section('Related Citations', '🧾', citations, c =>
           `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(c.violation)}</strong> <span style="color:#aaa;">${fmt(c.status)}</span><br>Fine: ${fmt(c.fineAmount)} · Officer: ${fmt(c.issuingOfficer)} · ${fmt(c.location)}</div>`);
         const jHtml = section('Related Jail Records', '🚔', jailRecords, j =>
-          `<div style="background:#0a0a0a;border:1px solid #9b59b644;border-left:3px solid #9b59b6;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(j.charges)}</strong> <span style="color:#aaa;">${fmt(j.status)}</span><br>Booking Officer: ${fmt(j.bookingOfficer)} · Cell: ${fmt(j.cellAssignment)} · Sentence: ${fmt(j.sentenceLength)}</div>`);
+          `<div style="background:#0a0a0a;border:1px solid #9b59b644;border-left:3px solid #9b59b6;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(j.charges)}</strong> <span style="color:#aaa;">${fmt(j.status)}</span><br>Booking Officer: ${fmt(j.bookingOfficer)} · Cell: ${fmt(j.cellAssignment)} · Sentence: ${fmt(j.sentenceLength)} · Fine: ${fmt(j.fineAmount || j.bondAmount)}</div>`);
+        const hHtml = section('Related Hearings', '🏛', hearings, h =>
+          `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(h.hearingType || 'Arraignment')}</strong> <span style="color:#aaa;">${fmt(h.status)}</span><br>${fmt(h.charges)} · Scheduled: ${fmt(h.scheduledAt)} · Outcome: ${fmt(h.outcome || 'Pending')}</div>`);
         const tHtml = section('Traffic Stops', '🚗', trafficStops, t =>
           `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(t.driverName)}</strong> · ${fmt(t.trafficPlate || t.plate)}<br><span style="color:#aaa;">${fmt(t.trafficReason || t.reason)}</span> → ${fmt(t.trafficOutcome || t.outcome)}</div>`);
         const eHtml = section('Evidence', '📦', evidence, e =>
           `<div style="background:#0a0a0a;border:1px solid #4caf8244;border-left:3px solid #4caf82;border-radius:8px;padding:10px 14px;font-size:0.83rem;">Case <strong>${fmt(e.caseNumber)}</strong> · ${fmt(e.evidenceType || e.type)}<br><span style="color:#aaa;">${fmt(e.evidenceDescription || e.description)}</span></div>`);
 
-        const hasCriminalHistory = warrants.length || arrests.length || citations.length || jailRecords.length;
+        const hasCriminalHistory = warrants.length || arrests.length || citations.length || jailRecords.length || hearings.length;
         output.innerHTML = `
           ${civHtml}
-          ${hasCriminalHistory ? `${wHtml}${aHtml}${cHtml}${jHtml}${tHtml}${eHtml}` : '<p style="color:var(--muted);font-size:0.85rem;margin-top:12px;">No criminal history on file.</p>'}`;
+          ${hasCriminalHistory ? `${wHtml}${aHtml}${cHtml}${jHtml}${hHtml}${tHtml}${eHtml}` : '<p style="color:var(--muted);font-size:0.85rem;margin-top:12px;">No criminal history on file.</p>'}`;
       } catch (err) {
         output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${escapeHtml(err.message || 'Search failed.')}</p>`;
       } finally {
@@ -2032,7 +2037,11 @@
                 <option>Dismissed</option>
                 <option>Continued</option>
                 <option>No Contest</option>
+                <option>Sentenced</option>
               </select>
+              <input id="sentence-input-${h.id}" type="text" placeholder="Sentence length" value="${h.sentenceLength || ''}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
+              <input id="fine-input-${h.id}" type="text" placeholder="Fine amount" value="${h.fineAmount || ''}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
+              <input id="outcome-notes-input-${h.id}" type="text" placeholder="Outcome notes" value="${h.outcomeNotes || ''}" style="flex:1;min-width:180px;background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
               <select id="status-select-${h.id}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
                 <option value="Scheduled">Scheduled</option>
                 <option value="Completed">Completed</option>
@@ -2056,21 +2065,25 @@
     async function saveOutcome(id) {
       const outcome = document.getElementById(`outcome-select-${id}`).value;
       const status  = document.getElementById(`status-select-${id}`).value;
+      const sentenceLength = document.getElementById(`sentence-input-${id}`).value.trim();
+      const fineAmount = document.getElementById(`fine-input-${id}`).value.trim();
+      const outcomeNotes = document.getElementById(`outcome-notes-input-${id}`).value.trim();
       try {
         const res = await fetch(`/api/court/hearings/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ outcome, status })
+          body: JSON.stringify({ outcome, status, sentenceLength, fineAmount, outcomeNotes })
         });
         const json = await res.json();
         if (json.success) {
           const idx = _courtHearings.findIndex(h => h.id === id);
           const suspectName = idx !== -1 ? _courtHearings[idx].suspectName : '';
-          if (idx !== -1) { _courtHearings[idx].outcome = outcome; _courtHearings[idx].status = status; }
+          if (idx !== -1) Object.assign(_courtHearings[idx], json.hearing);
           renderCourtHearings();
           if (['Not Guilty', 'Dismissed'].includes(outcome) && suspectName) {
             autoReleaseFromHearing(suspectName, outcome);
           }
+          loadJail();
           typeof showToast === 'function' && showToast('Hearing updated.', 'success');
         } else {
           typeof showToast === 'function' && showToast(json.error || 'Update failed.', 'error');
@@ -2221,6 +2234,9 @@
           const bookedDt  = i.bookedAt ? new Date(i.bookedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
           const releaseDt = i.estimatedRelease ? new Date(i.estimatedRelease).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
           const countdown = inCust && i.estimatedRelease ? `<div style="font-size:0.78rem;margin-top:4px;" class="jail-countdown" data-release="${i.estimatedRelease}">⏱ ${formatCountdown(i.estimatedRelease)}</div>` : '';
+          const hearing = _courtHearings.find(h => (h.arrestId && h.arrestId === i.arrestId) || ((h.suspectName || '').toLowerCase() === (i.suspectName || '').toLowerCase() && (h.status || 'Scheduled') === 'Scheduled'));
+          const courtStatus = hearing ? (hearing.status || 'Scheduled') : (i.courtHearingStatus || '—');
+          const fine = i.fineAmount || '—';
           return `<div style="background:#0a0a0a;border:1px solid #222;border-left:3px solid ${borderCol};border-radius:10px;padding:14px 16px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
               <strong style="font-size:0.95rem;flex:1;">${i.suspectName || '—'}</strong>
@@ -2229,6 +2245,8 @@
             </div>
             <p style="margin:0 0 4px;font-size:0.83rem;color:#ccc;">${i.charges || '—'}</p>
             ${i.penalty ? `<p style="margin:0 0 4px;font-size:0.78rem;color:#aaa;">⚖️ Sentence: ${i.penalty}</p>` : ''}
+            <p style="margin:0 0 4px;font-size:0.78rem;color:#aaa;">💵 Fine: ${fine}</p>
+            <p style="margin:0 0 4px;font-size:0.78rem;color:#aaa;">🏛 Court Hearing: ${courtStatus}</p>
             <div style="font-size:0.78rem;color:#666;margin-top:4px;">
               <div>🔒 Booked: ${bookedDt} · by ${i.bookedBy || '—'}</div>
               ${i.estimatedRelease ? `<div>🗓 Est. Release: ${releaseDt}</div>` : ''}
