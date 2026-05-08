@@ -148,11 +148,106 @@ def ensure_arrest_automation_schema():
                 db.session.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {col_type}'))
     db.session.commit()
 
+
+def backfill_criminal_record_links():
+    """Safely link legacy arrest/custody/court rows to civilians by arrest ID or full name."""
+    dialect = db.engine.dialect.name
+    try:
+        if dialect == 'postgresql':
+            statements = [
+                """
+                UPDATE arrests AS a
+                SET civilian_id = c.civilian_id, updated_at = CURRENT_TIMESTAMP
+                FROM civilians AS c
+                WHERE COALESCE(NULLIF(TRIM(a.civilian_id), ''), '') = ''
+                  AND LOWER(TRIM(a.suspect_name)) = LOWER(TRIM(CONCAT(c.first_name, ' ', c.last_name)))
+                """,
+                """
+                UPDATE jail_bookings AS j
+                SET civilian_id = a.civilian_id,
+                    suspect_name = COALESCE(NULLIF(j.suspect_name, ''), a.suspect_name),
+                    updated_at = CURRENT_TIMESTAMP
+                FROM arrests AS a
+                WHERE COALESCE(NULLIF(TRIM(j.civilian_id), ''), '') = ''
+                  AND j.arrest_id = a.arrest_id
+                  AND COALESCE(NULLIF(TRIM(a.civilian_id), ''), '') <> ''
+                """,
+                """
+                UPDATE hearings AS h
+                SET civilian_id = a.civilian_id,
+                    suspect_name = COALESCE(NULLIF(h.suspect_name, ''), a.suspect_name),
+                    updated_at = CURRENT_TIMESTAMP
+                FROM arrests AS a
+                WHERE COALESCE(NULLIF(TRIM(h.civilian_id), ''), '') = ''
+                  AND h.arrest_id = a.arrest_id
+                  AND COALESCE(NULLIF(TRIM(a.civilian_id), ''), '') <> ''
+                """,
+                """
+                UPDATE jail_bookings AS j
+                SET civilian_id = c.civilian_id, updated_at = CURRENT_TIMESTAMP
+                FROM civilians AS c
+                WHERE COALESCE(NULLIF(TRIM(j.civilian_id), ''), '') = ''
+                  AND LOWER(TRIM(j.suspect_name)) = LOWER(TRIM(CONCAT(c.first_name, ' ', c.last_name)))
+                """,
+                """
+                UPDATE hearings AS h
+                SET civilian_id = c.civilian_id, updated_at = CURRENT_TIMESTAMP
+                FROM civilians AS c
+                WHERE COALESCE(NULLIF(TRIM(h.civilian_id), ''), '') = ''
+                  AND LOWER(TRIM(h.suspect_name)) = LOWER(TRIM(CONCAT(c.first_name, ' ', c.last_name)))
+                """,
+                "UPDATE jail_bookings SET bond_amount = NULL WHERE bond_amount::text = 'Pending'",
+            ]
+        else:
+            statements = [
+                """
+                UPDATE arrests
+                SET civilian_id = (
+                    SELECT civilians.civilian_id FROM civilians
+                    WHERE LOWER(TRIM(arrests.suspect_name)) = LOWER(TRIM(civilians.first_name || ' ' || civilians.last_name))
+                    LIMIT 1
+                ), updated_at = CURRENT_TIMESTAMP
+                WHERE COALESCE(TRIM(civilian_id), '') = ''
+                  AND EXISTS (
+                    SELECT 1 FROM civilians
+                    WHERE LOWER(TRIM(arrests.suspect_name)) = LOWER(TRIM(civilians.first_name || ' ' || civilians.last_name))
+                  )
+                """,
+                """
+                UPDATE jail_bookings
+                SET civilian_id = (
+                    SELECT arrests.civilian_id FROM arrests
+                    WHERE arrests.arrest_id = jail_bookings.arrest_id AND COALESCE(TRIM(arrests.civilian_id), '') <> ''
+                    LIMIT 1
+                ), updated_at = CURRENT_TIMESTAMP
+                WHERE COALESCE(TRIM(civilian_id), '') = ''
+                  AND EXISTS (SELECT 1 FROM arrests WHERE arrests.arrest_id = jail_bookings.arrest_id AND COALESCE(TRIM(arrests.civilian_id), '') <> '')
+                """,
+                """
+                UPDATE hearings
+                SET civilian_id = (
+                    SELECT arrests.civilian_id FROM arrests
+                    WHERE arrests.arrest_id = hearings.arrest_id AND COALESCE(TRIM(arrests.civilian_id), '') <> ''
+                    LIMIT 1
+                ), updated_at = CURRENT_TIMESTAMP
+                WHERE COALESCE(TRIM(civilian_id), '') = ''
+                  AND EXISTS (SELECT 1 FROM arrests WHERE arrests.arrest_id = hearings.arrest_id AND COALESCE(TRIM(arrests.civilian_id), '') <> '')
+                """,
+            ]
+        for statement in statements:
+            db.session.execute(text(statement))
+        db.session.commit()
+        logger.info('✓ Criminal record link backfill completed')
+    except Exception as e:
+        db.session.rollback()
+        logger.warning(f'Criminal record link backfill skipped: {e}')
+
 # Initialize database on startup
 with app.app_context():
     try:
         db.create_all()
         ensure_arrest_automation_schema()
+        backfill_criminal_record_links()
         logger.info('✓ Database tables verified on startup')
     except Exception as e:
         logger.error(f'Database initialization error: {e}')
@@ -348,6 +443,72 @@ def _normalize_name(value):
     return ' '.join(str(value or '').strip().lower().split())
 
 
+def _civilian_full_name(civilian):
+    return f'{civilian.first_name or ""} {civilian.last_name or ""}'.strip()
+
+
+def _same_person_name_filter(column, civilian):
+    full_name = _civilian_full_name(civilian)
+    first = (civilian.first_name or '').strip()
+    last = (civilian.last_name or '').strip()
+    filters = []
+    if full_name:
+        filters.append(column == full_name)
+        filters.append(sqlalchemy.func.lower(column) == full_name.lower())
+    if first and last:
+        filters.append(sqlalchemy.and_(column.ilike(f'%{first}%'), column.ilike(f'%{last}%')))
+    return sqlalchemy.or_(*filters) if filters else sqlalchemy.false()
+
+
+def _civilian_related_history_exists(civilian):
+    """Fast profile-card check for any criminal/CAD history tied to a civilian."""
+    if not civilian:
+        return False
+
+    civilian_id = civilian.civilian_id or ''
+    name_filter = _same_person_name_filter
+    full_name = _civilian_full_name(civilian)
+    first = (civilian.first_name or '').strip()
+    last = (civilian.last_name or '').strip()
+
+    arrest_query = Arrest.query.filter(sqlalchemy.or_(
+        Arrest.civilian_id == civilian_id,
+        name_filter(Arrest.suspect_name, civilian),
+    ))
+    if arrest_query.first():
+        return True
+
+    arrest_ids = [row[0] for row in arrest_query.with_entities(Arrest.arrest_id).all() if row[0]]
+    if JailBooking.query.filter(sqlalchemy.or_(
+        JailBooking.civilian_id == civilian_id,
+        JailBooking.arrest_id.in_(arrest_ids) if arrest_ids else sqlalchemy.false(),
+        name_filter(JailBooking.suspect_name, civilian),
+    )).first():
+        return True
+    if Hearing.query.filter(sqlalchemy.or_(
+        Hearing.civilian_id == civilian_id,
+        Hearing.arrest_id.in_(arrest_ids) if arrest_ids else sqlalchemy.false(),
+        name_filter(Hearing.suspect_name, civilian),
+    )).first():
+        return True
+    if Warrant.query.filter(sqlalchemy.or_(
+        Warrant.civilian_id == civilian_id,
+        name_filter(Warrant.warrant_name, civilian),
+    )).first():
+        return True
+    if Citation.query.filter(Citation.civilian_id == civilian_id).first():
+        return True
+
+    traffic_filters = []
+    if full_name:
+        traffic_filters.extend([TrafficStop.driver_name == full_name, sqlalchemy.func.lower(TrafficStop.driver_name) == full_name.lower()])
+    if first and last:
+        traffic_filters.append(sqlalchemy.and_(TrafficStop.driver_name.ilike(f'%{first}%'), TrafficStop.driver_name.ilike(f'%{last}%')))
+    if civilian.plate_number:
+        traffic_filters.append(TrafficStop.plate.ilike(civilian.plate_number))
+    return TrafficStop.query.filter(sqlalchemy.or_(*traffic_filters) if traffic_filters else sqlalchemy.false()).first() is not None
+
+
 def _find_civilian_for_arrest(civilian_id='', suspect_name=''):
     """Resolve an arrest to a civilian by explicit ID first, then case-insensitive full name."""
     civilian_id = (civilian_id or '').strip()
@@ -424,6 +585,12 @@ def _ensure_arrest_custody_and_hearing(arrest):
         db.session.add(inmate)
         logger.info(f'Jail tracker inmate auto-created for arrest {arrest.arrest_id}')
     else:
+        if not inmate.civilian_id and arrest.civilian_id:
+            inmate.civilian_id = arrest.civilian_id
+        if not inmate.suspect_name and arrest.suspect_name:
+            inmate.suspect_name = arrest.suspect_name
+        if not inmate.charges and arrest.charges:
+            inmate.charges = arrest.charges
         logger.info(f'Duplicate inmate booking prevented for arrest {arrest.arrest_id}')
 
     booking = JailBooking.query.filter_by(arrest_id=arrest.arrest_id).first()
@@ -447,6 +614,17 @@ def _ensure_arrest_custody_and_hearing(arrest):
         db.session.add(booking)
         logger.info(f'Jail booking auto-created for arrest {arrest.arrest_id}')
     else:
+        if not booking.civilian_id and arrest.civilian_id:
+            booking.civilian_id = arrest.civilian_id
+        if not booking.suspect_name and arrest.suspect_name:
+            booking.suspect_name = arrest.suspect_name
+        if not booking.charges and arrest.charges:
+            booking.charges = arrest.charges
+        if not booking.arrest_id and arrest.arrest_id:
+            booking.arrest_id = arrest.arrest_id
+        if booking.bond_amount == 'Pending':
+            booking.bond_amount = None
+        booking.updated_at = datetime.utcnow()
         logger.info(f'Duplicate jail booking prevented for arrest {arrest.arrest_id}')
 
     hearing = Hearing.query.filter_by(arrest_id=arrest.arrest_id).first()
@@ -474,6 +652,15 @@ def _ensure_arrest_custody_and_hearing(arrest):
         db.session.add(hearing)
         logger.info(f'Court hearing auto-created for arrest {arrest.arrest_id}')
     else:
+        if not hearing.civilian_id and arrest.civilian_id:
+            hearing.civilian_id = arrest.civilian_id
+        if not hearing.suspect_name and arrest.suspect_name:
+            hearing.suspect_name = arrest.suspect_name
+        if not hearing.charges and arrest.charges:
+            hearing.charges = arrest.charges
+        if not hearing.arrest_id and arrest.arrest_id:
+            hearing.arrest_id = arrest.arrest_id
+        hearing.updated_at = datetime.utcnow()
         logger.info(f'Duplicate court hearing prevented for arrest {arrest.arrest_id}')
 
     return inmate, booking, hearing
@@ -845,6 +1032,7 @@ def _civilian_response(c):
         'insurance': c.insurance_status or 'Valid',
         'background': c.criminal_background_notes or '',
         'backstory': c.character_backstory or '',
+        'hasCriminalHistory': _civilian_related_history_exists(c),
     })
     return base
 

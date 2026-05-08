@@ -307,7 +307,7 @@ function renderLookupResults(container, results, type) {
             </div>
             <div class="result-notes">
               <div class="result-label">Criminal Background</div>
-              <div class="result-value">${result.criminalNotes || 'No known criminal background'}</div>
+              <div class="result-value">${result.hasCriminalHistory ? 'Criminal record present. See related records below.' : (result.criminalNotes || 'No criminal history on file')}</div>
             </div>
           </div>
         </div>
@@ -974,7 +974,8 @@ function handleCivilianLookupForm() {
           vehicleColor: r.vehicleColor || r.vehicle_color || '',
           plate: r.plate || r.plate_number || '',
           insuranceStatus: r.insurance || r.insurance_status || '',
-          criminalNotes: r.background || r.criminal_background_notes || '',
+          hasCriminalHistory: Boolean(r.hasCriminalHistory),
+          criminalNotes: r.background || r.criminal_background_notes || (r.hasCriminalHistory ? 'Criminal record present. See related records below.' : 'No criminal history on file'),
         }));
         renderLookupResults(resultsContainer, mapped, 'civilian');
         addActivity('Civilian Lookup', `Civilian lookup performed for "${query}"`);

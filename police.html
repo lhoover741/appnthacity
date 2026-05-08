@@ -1814,7 +1814,7 @@
         }
         if (!res.ok) throw new Error(json.error || 'Criminal record lookup failed.');
         if (!json.success) {
-          output.innerHTML = `<p style="color:var(--muted);font-size:0.85rem;">${escapeHtml(json.error || 'No criminal record found for that search.')}</p>`;
+          output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${escapeHtml(json.error || 'Criminal record lookup failed.')}</p>`;
           return;
         }
 
@@ -1861,7 +1861,7 @@
         const civHtml = civilians.map(civ => {
           const vehicle = [civ.vehicleYear, civ.vehicleColor, civ.vehicleMake, civ.vehicleModel].filter(Boolean).join(' ');
           const plate = civ.plate || civ.plate_number || '';
-          const notes = civ.background || civ.criminal_background_notes || (hasCriminalHistory ? 'Related criminal records found below.' : 'No criminal history on file.');
+          const notes = hasCriminalHistory ? 'Criminal record present. See related records below.' : (civ.background || civ.criminal_background_notes || 'No criminal history on file');
           return `
             <div style="background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:16px;margin-bottom:12px;">
               <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
