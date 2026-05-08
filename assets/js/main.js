@@ -68,12 +68,18 @@ function generateId(prefix) {
 }
 
 // Add record functions
-function addCivilian(record) {
-  record.id = generateId('civ');
-  record.createdAt = new Date().toISOString();
-  NThaCityData.civilians.push(record);
-  saveData();
-  return record;
+async function addCivilian(record) {
+  const res = await fetch('/api/civilians', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Civilian save failed');
+  }
+  await loadData();
+  return data.civilian;
 }
 
 function addVehicle(record) {
@@ -157,18 +163,16 @@ function addActivity(type, message) {
 }
 
 // Lookup functions
-function lookupCivilian(query) {
+async function lookupCivilian(query) {
   if (!query || query.trim() === '') return [];
 
-  const lowerQuery = query.toLowerCase().trim();
-  return NThaCityData.civilians.filter(civ =>
-    (civ.firstName && civ.firstName.toLowerCase().includes(lowerQuery)) ||
-    (civ.lastName && civ.lastName.toLowerCase().includes(lowerQuery)) ||
-    (civ.discord && civ.discord.toLowerCase().includes(lowerQuery)) ||
-    (civ.id && civ.id.toLowerCase().includes(lowerQuery)) ||
-    (civ.phone && civ.phone.includes(query)) ||
-    (civ.dob && civ.dob === query)
-  );
+  const params = new URLSearchParams({ q: query.trim() });
+  const res = await fetch(`/api/civilians?${params.toString()}`);
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Civilian lookup failed');
+  }
+  return data.civilians || [];
 }
 
 function lookupVehiclePlate(plate) {
@@ -775,30 +779,8 @@ function handleCivilianForm() {
     event.preventDefault();
     const raw = getFormData(form);
 
-    // Map form field names to API field names
-    const payload = {
-      first_name: raw.firstName || '',
-      last_name: raw.lastName || '',
-      date_of_birth: raw.dob || '',
-      gender: raw.gender || '',
-      phone_number: raw.phone || '',
-      address: raw.address || '',
-      occupation: raw.occupation || '',
-      gang_affiliation: raw.faction || 'None',
-      emergency_contact_name: raw.emergencyName || '',
-      emergency_contact_phone: raw.emergencyPhone || '',
-      driver_license_status: raw.driverLicense || 'Valid',
-      firearm_license_status: raw.firearmLicense || 'None',
-      business_license_status: raw.businessLicense || 'None',
-      vehicle_make: raw.vehicleMake || '',
-      vehicle_model: raw.vehicleModel || '',
-      vehicle_year: raw.vehicleYear ? parseInt(raw.vehicleYear) : null,
-      vehicle_color: raw.vehicleColor || '',
-      plate_number: raw.plate || '',
-      insurance_status: raw.insurance || 'Active',
-      criminal_background_notes: raw.background || '',
-      character_backstory: raw.backstory || '',
-    };
+    // Send the Civilian Registration form payload to the API; PostgreSQL is the source of truth.
+    const payload = { ...raw };
 
     const submitBtn = form.querySelector('[type="submit"]');
     if (submitBtn) submitBtn.disabled = true;
@@ -812,25 +794,12 @@ function handleCivilianForm() {
       });
       const data = await res.json();
 
-      if (data.success) {
-        // Build a preview-compatible record
-        const record = {
-          id: data.civilian_id,
-          firstName: payload.first_name,
-          lastName: payload.last_name,
-          dob: payload.date_of_birth,
-          phone: payload.phone_number,
-          discord: raw.discord || '',
-          address: payload.address,
-          occupation: payload.occupation,
-          driverLicense: payload.driver_license_status,
-          vehicleMake: payload.vehicle_make,
-          vehicleModel: payload.vehicle_model,
-          plate: payload.plate_number,
-          createdAt: new Date().toISOString(),
-        };
-        renderCivilianPreview(record);
+      if (res.ok && data.success) {
+        const record = data.civilian || { id: data.civilian_id, ...raw };
+        renderCivilianPreview({ ...record, discord: raw.discord || '' });
         showFormMessage(form, `✅ Civilian registered — ID: ${data.civilian_id}`);
+        showToast(`Civilian saved to database — ID: ${data.civilian_id}`, 'success');
+        await loadData();
         form.reset();
       } else {
         showFormMessage(form, `❌ Error: ${data.error || 'Registration failed'}`, 'error');
@@ -929,12 +898,15 @@ function handleCivilianLookupForm() {
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const query = form.querySelector('[name="lookupName"]').value.trim();
+    const nameQuery = form.querySelector('[name="lookupName"]').value.trim();
+    const dobQuery = (form.querySelector('[name="lookupDob"]')?.value || '').trim();
+    const licenseQuery = (form.querySelector('[name="lookupLicense"]')?.value || '').trim();
+    const query = [nameQuery, licenseQuery].filter(Boolean).join(' ').trim();
     const resultsContainer = document.getElementById('civilian-lookup-results');
     const statusEl = document.getElementById('civilian-lookup-status');
 
-    if (!query || query.length < 2) {
-      if (statusEl) { statusEl.textContent = 'Enter at least 2 characters to search.'; statusEl.className = 'form-status error'; }
+    if ((!query || query.length < 2) && !dobQuery) {
+      if (statusEl) { statusEl.textContent = 'Enter at least 2 characters or a DOB to search.'; statusEl.className = 'form-status error'; }
       return;
     }
 
@@ -944,30 +916,31 @@ function handleCivilianLookupForm() {
       const res = await fetch('/api/civilian/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, name: nameQuery, dob: dobQuery }),
       });
       const data = await res.json();
 
       if (data.success) {
         const results = data.results || [];
-        // Map API results to the format renderLookupResults expects
         const mapped = results.map(r => ({
-          id: r.civilian_id,
-          firstName: (r.name || '').split(' ')[0] || '',
-          lastName: (r.name || '').split(' ').slice(1).join(' ') || '',
-          phone: r.phone || '',
+          id: r.civilian_id || r.id,
+          firstName: r.firstName || r.first_name || '',
+          lastName: r.lastName || r.last_name || '',
+          phone: r.phone || r.phone_number || '',
           address: r.address || '',
           discord: '',
-          dob: '',
-          occupation: '',
-          driverLicense: '',
-          firearmLicense: '',
-          businessLicense: '',
-          vehicleMake: '',
-          vehicleModel: '',
-          plate: '',
-          insuranceStatus: '',
-          criminalNotes: '',
+          dob: r.dob || r.date_of_birth || '',
+          occupation: r.occupation || '',
+          driverLicense: r.driverLicense || r.driver_license_status || '',
+          firearmLicense: r.firearmLicense || r.firearm_license_status || '',
+          businessLicense: r.businessLicense || r.business_license_status || '',
+          vehicleMake: r.vehicleMake || r.vehicle_make || '',
+          vehicleModel: r.vehicleModel || r.vehicle_model || '',
+          vehicleYear: r.vehicleYear || r.vehicle_year || '',
+          vehicleColor: r.vehicleColor || r.vehicle_color || '',
+          plate: r.plate || r.plate_number || '',
+          insuranceStatus: r.insurance || r.insurance_status || '',
+          criminalNotes: r.background || r.criminal_background_notes || '',
         }));
         renderLookupResults(resultsContainer, mapped, 'civilian');
         addActivity('Civilian Lookup', `Civilian lookup performed for "${query}"`);

@@ -235,17 +235,7 @@ def hearing_to_dict(h):
 
 
 def civilian_to_dict(c):
-    return {
-        'id': c.civilian_id,
-        'firstName': c.first_name or '',
-        'lastName': c.last_name or '',
-        'dob': c.date_of_birth.isoformat() if c.date_of_birth else '',
-        'gender': c.gender or '',
-        'phone': c.phone_number or '',
-        'address': c.address or '',
-        'occupation': c.occupation or '',
-        'notes': '',
-    }
+    return _civilian_response(c)
 
 
 def vehicle_to_dict(v):
@@ -369,6 +359,133 @@ def activity_log_to_dict(a):
         'timestamp': a.created_at.isoformat() if a.created_at else None,
     }
 
+
+
+# ---------------------------------------------------------------------------
+# Civilian PostgreSQL source-of-truth helpers
+# ---------------------------------------------------------------------------
+
+def _pick(data, *keys, default=''):
+    """Return the first present, non-None payload value from frontend or DB-style keys."""
+    for key in keys:
+        if key in data and data.get(key) is not None:
+            return data.get(key)
+    return default
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    if hasattr(value, 'isoformat') and not isinstance(value, str):
+        return value
+    try:
+        return datetime.strptime(str(value), '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def _civilian_from_payload(data):
+    """Map Civilian Registration form fields onto PostgreSQL Civilian columns."""
+    vehicle_year = _pick(data, 'vehicleYear', 'vehicle_year', default=None)
+    if vehicle_year in ('', None):
+        vehicle_year = None
+    else:
+        try:
+            vehicle_year = int(vehicle_year)
+        except (TypeError, ValueError):
+            vehicle_year = None
+
+    return {
+        'first_name': str(_pick(data, 'firstName', 'first_name')).strip(),
+        'last_name': str(_pick(data, 'lastName', 'last_name')).strip(),
+        'date_of_birth': _parse_date(_pick(data, 'dob', 'date_of_birth', default=None)),
+        'gender': _pick(data, 'gender'),
+        'phone_number': _pick(data, 'phone', 'phone_number'),
+        'address': _pick(data, 'address'),
+        'occupation': _pick(data, 'occupation'),
+        'gang_affiliation': _pick(data, 'faction', 'gang_affiliation', default='None') or 'None',
+        'emergency_contact_name': _pick(data, 'emergencyName', 'emergency_contact_name'),
+        'emergency_contact_phone': _pick(data, 'emergencyPhone', 'emergency_contact_phone'),
+        'driver_license_status': _pick(data, 'driverLicense', 'driver_license_status', default='Valid') or 'Valid',
+        'firearm_license_status': _pick(data, 'firearmLicense', 'firearm_license_status', default='None') or 'None',
+        'business_license_status': _pick(data, 'businessLicense', 'business_license_status', default='None') or 'None',
+        'vehicle_make': _pick(data, 'vehicleMake', 'vehicle_make'),
+        'vehicle_model': _pick(data, 'vehicleModel', 'vehicle_model'),
+        'vehicle_year': vehicle_year,
+        'vehicle_color': _pick(data, 'vehicleColor', 'vehicle_color'),
+        'plate_number': _pick(data, 'plate', 'plate_number'),
+        'insurance_status': _pick(data, 'insurance', 'insurance_status', default='Valid') or 'Valid',
+        'criminal_background_notes': _pick(data, 'background', 'criminal_background_notes'),
+        'character_backstory': _pick(data, 'backstory', 'character_backstory'),
+    }
+
+
+def _civilian_response(c):
+    base = c.to_dict()
+    base.update({
+        'id': c.civilian_id,
+        'name': f'{c.first_name or ""} {c.last_name or ""}'.strip(),
+        'firstName': c.first_name or '',
+        'lastName': c.last_name or '',
+        'dob': c.date_of_birth.isoformat() if c.date_of_birth else '',
+        'phone': c.phone_number or '',
+        'faction': c.gang_affiliation or 'None',
+        'emergencyName': c.emergency_contact_name or '',
+        'emergencyPhone': c.emergency_contact_phone or '',
+        'driverLicense': c.driver_license_status or 'Valid',
+        'firearmLicense': c.firearm_license_status or 'None',
+        'businessLicense': c.business_license_status or 'None',
+        'vehicleMake': c.vehicle_make or '',
+        'vehicleModel': c.vehicle_model or '',
+        'vehicleYear': c.vehicle_year,
+        'vehicleColor': c.vehicle_color or '',
+        'plate': c.plate_number or '',
+        'insurance': c.insurance_status or 'Valid',
+        'background': c.criminal_background_notes or '',
+        'backstory': c.character_backstory or '',
+    })
+    return base
+
+
+def _civilian_search_query(query, name=None, dob=None):
+    q = (query or '').strip()
+    name = (name or '').strip()
+    dob = (dob or '').strip()
+    db_query = Civilian.query
+
+    if name:
+        db_query = db_query.filter(_civilian_name_filter(name))
+    if dob:
+        parsed_dob = _parse_date(dob)
+        if parsed_dob:
+            db_query = db_query.filter(Civilian.date_of_birth == parsed_dob)
+    if q:
+        filters = [
+            Civilian.first_name.ilike(f'%{q}%'),
+            Civilian.last_name.ilike(f'%{q}%'),
+            Civilian.civilian_id.ilike(f'%{q}%'),
+            Civilian.phone_number.ilike(f'%{q}%'),
+            Civilian.plate_number.ilike(f'%{q}%'),
+        ]
+        parsed_q_dob = _parse_date(q)
+        if parsed_q_dob:
+            filters.append(Civilian.date_of_birth == parsed_q_dob)
+        filters.append(_civilian_name_filter(q))
+        db_query = db_query.filter(sqlalchemy.or_(*filters))
+
+    return db_query
+
+
+def _civilian_name_filter(value):
+    parts = [p for p in value.split() if p]
+    if len(parts) >= 2:
+        first = parts[0]
+        last = ' '.join(parts[1:])
+        return sqlalchemy.or_(
+            sqlalchemy.and_(Civilian.first_name.ilike(f'%{first}%'), Civilian.last_name.ilike(f'%{last}%')),
+            sqlalchemy.and_(Civilian.first_name.ilike(f'%{last}%'), Civilian.last_name.ilike(f'%{first}%')),
+        )
+    return sqlalchemy.or_(Civilian.first_name.ilike(f'%{value}%'), Civilian.last_name.ilike(f'%{value}%'))
 
 # ---------------------------------------------------------------------------
 # Database-backed CAD data helpers
@@ -561,8 +678,8 @@ def _upsert_activity(data):
 def save_cad_data(data):
     """Persist a full CAD data dict to the database."""
     try:
-        for item in data.get('civilians', []):
-            _upsert_civilian(item)
+        if data.get('civilians'):
+            logger.info('Ignoring civilians in bulk CAD save; use POST /api/civilians for PostgreSQL civilian writes')
         for item in data.get('vehicles', []):
             _upsert_vehicle(item)
         for item in data.get('licenses', []):
@@ -2113,11 +2230,13 @@ def post_alert():
     return jsonify({'success': True, 'alert': alert_dict})
 
 
+@app.route('/api/cad', methods=['GET'])
 @app.route('/api/cad/data', methods=['GET'])
 def get_cad_data():
     return jsonify(load_cad_data())
 
 
+@app.route('/api/cad', methods=['POST'])
 @app.route('/api/cad/data', methods=['POST'])
 def post_cad_data():
     data = request.get_json(silent=True)
@@ -2125,20 +2244,11 @@ def post_cad_data():
         return jsonify({'success': False, 'error': 'Invalid payload'}), 400
 
     try:
-        # Civilians
-        if 'civilians' in data:
-            for c in data['civilians']:
-                civ_id = c.get('id') or c.get('civilian_id')
-                if not civ_id:
-                    continue
-                obj = Civilian.query.filter_by(civilian_id=civ_id).first()
-                if obj:
-                    obj.first_name = c.get('firstName', obj.first_name)
-                    obj.last_name = c.get('lastName', obj.last_name)
-                    obj.phone_number = c.get('phone', obj.phone_number)
-                    obj.address = c.get('address', obj.address)
-                else:
-                    db.session.add(Civilian(civilian_id=civ_id, first_name=c.get('firstName', ''), last_name=c.get('lastName', ''), phone_number=c.get('phone', ''), address=c.get('address', '')))
+        # Civilians are intentionally not accepted through bulk CAD saves.
+        # POST /api/civilians is the only civilian write path so browser state cannot
+        # replace PostgreSQL as the source of truth.
+        if data.get('civilians'):
+            logger.info('Ignoring civilians in /api/cad bulk save; use POST /api/civilians')
 
         # Vehicles
         if 'vehicles' in data:
@@ -2626,60 +2736,121 @@ def ai_civilian_assist():
 
 @app.route('/api/civilians', methods=['POST'])
 def create_civilian():
-    """Register civilian - ONLY called by form submit button."""
+    """Persist a Civilian Registration payload directly to PostgreSQL."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
+        mapped = _civilian_from_payload(data)
 
-        import secrets as _secrets
+        if not mapped['first_name'] or not mapped['last_name']:
+            return jsonify({'success': False, 'error': 'firstName and lastName are required'}), 400
 
-        civilian_id = f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{_secrets.token_hex(3)}"
-
-        # Parse date_of_birth
-        dob = None
-        if data.get('date_of_birth'):
-            try:
-                dob = datetime.strptime(data['date_of_birth'], '%Y-%m-%d').date()
-            except Exception:
-                pass
-
-        # Create civilian with ONLY form fields
-        civilian = Civilian(
-            civilian_id=civilian_id,
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
-            date_of_birth=dob,
-            gender=data.get('gender', ''),
-            phone_number=data.get('phone_number', ''),
-            address=data.get('address', ''),
-            occupation=data.get('occupation', ''),
-            gang_affiliation=data.get('gang_affiliation', 'None'),
-            emergency_contact_name=data.get('emergency_contact_name', ''),
-            emergency_contact_phone=data.get('emergency_contact_phone', ''),
-            driver_license_status=data.get('driver_license_status', 'Valid'),
-            firearm_license_status=data.get('firearm_license_status', 'None'),
-            business_license_status=data.get('business_license_status', 'None'),
-            vehicle_make=data.get('vehicle_make'),
-            vehicle_model=data.get('vehicle_model'),
-            vehicle_year=data.get('vehicle_year'),
-            vehicle_color=data.get('vehicle_color'),
-            plate_number=data.get('plate_number'),
-            insurance_status=data.get('insurance_status', 'Valid'),
-            criminal_background_notes=data.get('criminal_background_notes', ''),
-            character_backstory=data.get('character_backstory', ''),
-        )
+        civilian_id = f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+        civilian = Civilian(civilian_id=civilian_id, **mapped)
 
         db.session.add(civilian)
         db.session.commit()
 
+        logger.info('Civilian insert success: civilian_id=%s name="%s %s" plate="%s"',
+                    civilian.civilian_id, civilian.first_name, civilian.last_name, civilian.plate_number or '')
+
         return jsonify({
             'success': True,
-            'civilian_id': civilian_id,
-            'data': civilian.to_dict(),
+            'civilian_id': civilian.civilian_id,
+            'civilian': _civilian_response(civilian),
         }), 201
 
     except Exception as e:
         db.session.rollback()
         logger.error(f'Failed to create civilian: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/civilians', methods=['GET'])
+def get_civilians():
+    """Read civilian records directly from PostgreSQL with q/name/dob filters."""
+    q = request.args.get('q', '').strip()
+    name = request.args.get('name', '').strip()
+    dob = request.args.get('dob', '').strip()
+
+    try:
+        logger.info('Civilian lookup query: q="%s" name="%s" dob="%s"', q, name, dob)
+        civilians = (_civilian_search_query(q, name=name, dob=dob)
+                     .order_by(Civilian.created_at.desc())
+                     .limit(100)
+                     .all())
+        result = [_civilian_response(c) for c in civilians]
+        logger.info('Civilian lookup result count: %s', len(result))
+        return jsonify({'success': True, 'civilians': result, 'results': result, 'total': len(result)})
+    except Exception as e:
+        logger.error(f'Civilian lookup error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/civilian/search', methods=['POST'])
+def search_civilians():
+    """Police/CAD civilian lookup backed by PostgreSQL civilians table."""
+    data = request.get_json(silent=True) or {}
+    query = (data.get('query') or data.get('q') or '').strip()
+    name = (data.get('name') or '').strip()
+    dob = (data.get('dob') or '').strip()
+
+    if not query and not name and not dob:
+        return jsonify({'success': False, 'error': 'Query required'}), 400
+
+    try:
+        logger.info('Civilian lookup query: q="%s" name="%s" dob="%s"', query, name, dob)
+        civilians = _civilian_search_query(query, name=name, dob=dob).order_by(Civilian.created_at.desc()).limit(50).all()
+        result = [_civilian_response(c) for c in civilians]
+        logger.info('Civilian lookup result count: %s', len(result))
+        return jsonify({'success': True, 'results': result, 'civilians': result, 'total': len(result)})
+    except Exception as e:
+        logger.error(f'Civilian search error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cad/search', methods=['POST'])
+def cad_search():
+    """Search civilians in PostgreSQL database for CAD."""
+    try:
+        data = request.get_json(silent=True) or {}
+        query_type = data.get('type', 'all')
+        query_value = (data.get('query') or data.get('q') or '').strip()
+
+        if not query_value:
+            return jsonify({'success': False, 'error': 'Query required'}), 400
+
+        logger.info('Civilian lookup query: cad_type="%s" query="%s"', query_type, query_value)
+
+        if query_type == 'name':
+            civilians = _civilian_search_query('', name=query_value).all()
+        elif query_type == 'dob':
+            civilians = _civilian_search_query('', dob=query_value).all()
+        elif query_type in ('plate', 'phone', 'civilian_id'):
+            column = {
+                'plate': Civilian.plate_number,
+                'phone': Civilian.phone_number,
+                'civilian_id': Civilian.civilian_id,
+            }[query_type]
+            civilians = Civilian.query.filter(column.ilike(f'%{query_value}%')).order_by(Civilian.created_at.desc()).limit(50).all()
+        elif query_type == 'all':
+            civilians = _civilian_search_query(query_value).order_by(Civilian.created_at.desc()).limit(50).all()
+        else:
+            return jsonify({'success': False, 'error': 'Invalid search type'}), 400
+
+        results = [_civilian_response(c) for c in civilians]
+        logger.info('Civilian lookup result count: %s', len(results))
+
+        return jsonify({
+            'success': True,
+            'query_type': query_type,
+            'query': query_value,
+            'results': results,
+            'civilians': results,
+            'total': len(results),
+        }), 200
+
+    except Exception as e:
+        logger.error(f'CAD search error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2734,143 +2905,6 @@ def ai_generate_narrative():
     return jsonify({'success': True, 'narrative': result})
 
 
-# ---------------------------------------------------------------------------
-# Civilian CRUD
-# ---------------------------------------------------------------------------
-
-@app.route('/api/civilians', methods=['GET'])
-def get_civilians():
-    civilians = Civilian.query.order_by(Civilian.created_at.desc()).all()
-    result = [{
-        'civilian_id': c.civilian_id,
-        'name': f'{c.first_name or ""} {c.last_name or ""}'.strip(),
-        'gender': c.gender,
-        'occupation': c.occupation,
-        'gang_affiliation': c.gang_affiliation,
-        'driver_license_status': c.driver_license_status,
-    } for c in civilians]
-    return jsonify({'success': True, 'civilians': result, 'total': len(result)})
-
-
-@app.route('/api/civilian/search', methods=['POST'])
-def search_civilians():
-    data = request.get_json(silent=True) or {}
-    query = data.get('query', '').strip().lower()
-
-    if not query or len(query) < 2:
-        return jsonify({'success': False, 'error': 'Query must be at least 2 characters'}), 400
-
-    civilians = Civilian.query.filter(
-        (Civilian.first_name.ilike(f'%{query}%')) |
-        (Civilian.last_name.ilike(f'%{query}%')) |
-        (Civilian.phone_number.ilike(f'%{query}%')) |
-        (Civilian.address.ilike(f'%{query}%'))
-    ).limit(20).all()
-
-    result = [{
-        'civilian_id': c.civilian_id,
-        'name': f'{c.first_name or ""} {c.last_name or ""}'.strip(),
-        'phone': c.phone_number or '',
-        'address': c.address or '',
-        'gang_affiliation': c.gang_affiliation or 'None',
-        'risk_level': c.gang_affiliation if c.gang_affiliation and c.gang_affiliation != 'None' else 'Low',
-    } for c in civilians]
-
-    return jsonify({'success': True, 'results': result, 'total': len(result)})
-
-
-@app.route('/api/cad/search', methods=['POST'])
-def cad_search():
-    """Search civilians in PostgreSQL database."""
-    try:
-        data = request.get_json() or {}
-        query_type = data.get('type', 'name')
-        query_value = data.get('query', '').strip()
-
-        if not query_value:
-            return jsonify({'success': False, 'error': 'Query required'}), 400
-
-        results = []
-
-        if query_type == 'name':
-            # Search by first + last name (partial match)
-            parts = query_value.split()
-            if len(parts) >= 2:
-                first = parts[0]
-                last = ' '.join(parts[1:])
-                civilians = Civilian.query.filter(
-                    Civilian.first_name.ilike(f'{first}%'),
-                    Civilian.last_name.ilike(f'{last}%')
-                ).all()
-            else:
-                # Single name - search both first and last
-                civilians = Civilian.query.filter(
-                    (Civilian.first_name.ilike(f'%{query_value}%')) |
-                    (Civilian.last_name.ilike(f'%{query_value}%'))
-                ).all()
-
-        elif query_type == 'dob':
-            # Search by exact date of birth
-            try:
-                dob = datetime.strptime(query_value, '%Y-%m-%d').date()
-                civilians = Civilian.query.filter_by(date_of_birth=dob).all()
-            except ValueError:
-                return jsonify({'success': False, 'error': 'Invalid DOB format (use YYYY-MM-DD)'}), 400
-
-        elif query_type == 'plate':
-            # Search by license plate
-            civilians = Civilian.query.filter(
-                Civilian.plate_number.ilike(f'%{query_value}%')
-            ).all()
-
-        elif query_type == 'phone':
-            # Search by phone number
-            civilians = Civilian.query.filter(
-                Civilian.phone_number.ilike(f'%{query_value}%')
-            ).all()
-
-        else:
-            return jsonify({'success': False, 'error': 'Invalid search type'}), 400
-
-        # Format results
-        for c in civilians:
-            results.append({
-                'civilian_id': c.civilian_id,
-                'name': f'{c.first_name} {c.last_name}',
-                'date_of_birth': c.date_of_birth.isoformat() if c.date_of_birth else None,
-                'gender': c.gender,
-                'phone_number': c.phone_number,
-                'address': c.address,
-                'occupation': c.occupation,
-                'gang_affiliation': c.gang_affiliation,
-                'driver_license_status': c.driver_license_status,
-                'firearm_license_status': c.firearm_license_status,
-                'business_license_status': c.business_license_status,
-                'vehicle_make': c.vehicle_make,
-                'vehicle_model': c.vehicle_model,
-                'vehicle_year': c.vehicle_year,
-                'vehicle_color': c.vehicle_color,
-                'plate_number': c.plate_number,
-                'insurance_status': c.insurance_status,
-                'criminal_background_notes': c.criminal_background_notes,
-                'character_backstory': c.character_backstory,
-            })
-
-        logger.info(f'CAD search: type={query_type}, query={query_value}, found={len(results)}')
-
-        return jsonify({
-            'success': True,
-            'query_type': query_type,
-            'query': query_value,
-            'results': results,
-            'total': len(results),
-        }), 200
-
-    except Exception as e:
-        logger.error(f'CAD search error: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/cad/civilian/<civilian_id>', methods=['GET'])
 def get_cad_civilian(civilian_id):
     """Get civilian details for CAD."""
@@ -2882,7 +2916,7 @@ def get_cad_civilian(civilian_id):
 
         return jsonify({
             'success': True,
-            'civilian': civilian.to_dict(),
+            'civilian': _civilian_response(civilian),
         }), 200
 
     except Exception as e:
@@ -2896,16 +2930,7 @@ def get_all_cad_civilians():
     try:
         civilians = Civilian.query.order_by(Civilian.created_at.desc()).all()
 
-        results = [{
-            'civilian_id': c.civilian_id,
-            'name': f'{c.first_name} {c.last_name}',
-            'date_of_birth': c.date_of_birth.isoformat() if c.date_of_birth else None,
-            'gender': c.gender,
-            'occupation': c.occupation,
-            'gang_affiliation': c.gang_affiliation,
-            'driver_license_status': c.driver_license_status,
-            'insurance_status': c.insurance_status,
-        } for c in civilians]
+        results = [_civilian_response(c) for c in civilians]
 
         logger.info(f'CAD civilians list: total={len(results)}')
 
@@ -2928,7 +2953,7 @@ def get_civilian(civilian_id):
 
     return jsonify({
         'success': True,
-        'civilian': c.to_dict(),
+        'civilian': _civilian_response(c),
     })
 
 
