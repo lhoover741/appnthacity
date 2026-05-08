@@ -1791,45 +1791,88 @@
 
     /* ── CRIMINAL RECORD CHECK ── */
     document.getElementById('criminal-record-btn').addEventListener('click', async function () {
-      const name = document.getElementById('criminal-record-input').value.trim();
+      const query = document.getElementById('criminal-record-input').value.trim();
       const output = document.getElementById('criminal-record-output');
-      if (!name || name.length < 2) {
-        output.innerHTML = '<p style="color:var(--accent);font-size:0.85rem;">Enter at least 2 characters to search.</p>';
+      const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
+      const fmt = value => escapeHtml(value || '—');
+
+      if (!query || query.length < 2) {
+        output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Enter at least 2 characters to search.</p>';
         return;
       }
       this.disabled = true;
-      output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching all CAD records…</p>';
+      output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching civilian registry and CAD history…</p>';
       try {
-        const res = await fetch(`/api/cad/criminal-record?name=${encodeURIComponent(name)}`);
+        const params = new URLSearchParams({ query });
+        const res = await fetch(`/api/cad/criminal-record?${params.toString()}`);
         const json = await res.json();
-        if (!json.success) throw new Error(json.error);
-        const { warrants, arrests, trafficStops, evidence } = json;
-        const total = warrants.length + arrests.length + trafficStops.length + evidence.length;
-        if (total === 0) {
-          output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No records found for this individual.</p>';
+        if (!res.ok || !json.success) throw new Error(json.error || 'Search failed.');
+
+        const civilians = json.civilians || [];
+        const warrants = json.warrants || [];
+        const arrests = json.arrests || [];
+        const trafficStops = json.trafficStops || [];
+        const citations = json.citations || [];
+        const jailRecords = json.jailRecords || [];
+        const evidence = json.evidence || [];
+
+        if (!civilians.length) {
+          output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No civilian record found for that search.</p>';
           return;
         }
+
         const section = (title, icon, items, fn) => !items.length ? '' : `
-          <div style="margin-bottom:18px;">
+          <div style="margin-top:16px;">
             <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">${icon} ${title} (${items.length})</p>
             <div style="display:grid;gap:8px;">${items.map(fn).join('')}</div>
           </div>`;
-        const wHtml = section('Warrants', '📋', warrants, w =>
-          `<div style="background:#0a0a0a;border:1px solid #e0525244;border-left:3px solid #e05252;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${w.warrantName || w.suspectName || '—'}</strong> <span style="color:#e05252;margin-left:8px;font-size:0.75rem;">${w.warrantStatus || w.status || 'Active'}</span><br><span style="color:#aaa;">${w.warrantCharges || w.charges || '—'}</span> · Issued by ${w.warrantIssuer || w.issuer || '—'}</div>`);
-        const aHtml = section('Arrests', '🔒', arrests, a =>
-          `<div style="background:#0a0a0a;border:1px solid #f5a62344;border-left:3px solid #f5a623;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${a.suspectName || '—'}</strong><br><span style="color:#aaa;">${a.charges || '—'}</span> · Penalty: ${a.penalty || '—'} · Officer: ${a.arrestingOfficer || '—'}</div>`);
+        const detail = (label, value) => `<div><span style="display:block;color:var(--muted);font-size:0.72rem;text-transform:uppercase;letter-spacing:.06em;">${label}</span><strong style="font-size:0.88rem;">${fmt(value)}</strong></div>`;
+
+        const civHtml = civilians.map(civ => {
+          const vehicle = [civ.vehicleYear, civ.vehicleColor, civ.vehicleMake, civ.vehicleModel].filter(Boolean).join(' ');
+          const plate = civ.plate || civ.plate_number || '';
+          const notes = civ.background || civ.criminal_background_notes || 'No criminal history on file.';
+          return `
+            <div style="background:#111;border:1px solid #2a2a2a;border-radius:12px;padding:16px;margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+                <div>
+                  <strong style="font-size:1.05rem;">${fmt(civ.name || `${civ.firstName || civ.first_name || ''} ${civ.lastName || civ.last_name || ''}`.trim())}</strong>
+                  <p style="margin:3px 0 0;color:var(--muted);font-size:0.78rem;">Civilian ID: ${fmt(civ.civilian_id || civ.id)}</p>
+                </div>
+                <span style="height:max-content;border:1px solid #4caf8244;background:#4caf8215;color:#4caf82;border-radius:999px;padding:4px 10px;font-size:0.74rem;">Record found</span>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px;">
+                ${detail('DOB', civ.dob || civ.date_of_birth)}
+                ${detail('Phone', civ.phone || civ.phone_number)}
+                ${detail('Address', civ.address)}
+                ${detail('Occupation', civ.occupation)}
+                ${detail('Gang/Faction', civ.faction || civ.gang_affiliation)}
+                ${detail('Driver License', civ.driverLicense || civ.driver_license_status)}
+                ${detail('Vehicle/Plate', vehicle || plate ? `${vehicle || 'Vehicle'}${plate ? ` / ${plate}` : ''}` : '')}
+              </div>
+              <div style="background:#0a0a0a;border:1px solid #222;border-radius:8px;padding:10px 12px;font-size:0.83rem;color:#bbb;"><strong style="color:#fff;">Criminal Background Notes:</strong> ${fmt(notes)}</div>
+            </div>`;
+        }).join('');
+
+        const wHtml = section('Related Warrants', '📋', warrants, w =>
+          `<div style="background:#0a0a0a;border:1px solid #e0525244;border-left:3px solid #e05252;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(w.warrantName || w.suspectName)}</strong> <span style="color:#e05252;margin-left:8px;font-size:0.75rem;">${fmt(w.warrantStatus || w.status || 'Active')}</span><br><span style="color:#aaa;">${fmt(w.warrantCharges || w.charges)}</span> · Issued by ${fmt(w.warrantIssuer || w.issuer)}</div>`);
+        const aHtml = section('Related Arrests', '🔒', arrests, a =>
+          `<div style="background:#0a0a0a;border:1px solid #f5a62344;border-left:3px solid #f5a623;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(a.suspectName)}</strong><br><span style="color:#aaa;">${fmt(a.charges)}</span> · Penalty: ${fmt(a.penalty)} · Officer: ${fmt(a.arrestingOfficer)}</div>`);
+        const cHtml = section('Related Citations', '🧾', citations, c =>
+          `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(c.violation)}</strong> <span style="color:#aaa;">${fmt(c.status)}</span><br>Fine: ${fmt(c.fineAmount)} · Officer: ${fmt(c.issuingOfficer)} · ${fmt(c.location)}</div>`);
+        const jHtml = section('Related Jail Records', '🚔', jailRecords, j =>
+          `<div style="background:#0a0a0a;border:1px solid #9b59b644;border-left:3px solid #9b59b6;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(j.charges)}</strong> <span style="color:#aaa;">${fmt(j.status)}</span><br>Booking Officer: ${fmt(j.bookingOfficer)} · Cell: ${fmt(j.cellAssignment)} · Sentence: ${fmt(j.sentenceLength)}</div>`);
         const tHtml = section('Traffic Stops', '🚗', trafficStops, t =>
-          `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${t.driverName || '—'}</strong> · ${t.trafficPlate || t.plate || '—'}<br><span style="color:#aaa;">${t.trafficReason || t.reason || '—'}</span> → ${t.trafficOutcome || t.outcome || '—'}</div>`);
+          `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(t.driverName)}</strong> · ${fmt(t.trafficPlate || t.plate)}<br><span style="color:#aaa;">${fmt(t.trafficReason || t.reason)}</span> → ${fmt(t.trafficOutcome || t.outcome)}</div>`);
         const eHtml = section('Evidence', '📦', evidence, e =>
-          `<div style="background:#0a0a0a;border:1px solid #4caf8244;border-left:3px solid #4caf82;border-radius:8px;padding:10px 14px;font-size:0.83rem;">Case <strong>${e.caseNumber || '—'}</strong> · ${e.evidenceType || e.type || '—'}<br><span style="color:#aaa;">${e.evidenceDescription || e.description || '—'}</span></div>`);
+          `<div style="background:#0a0a0a;border:1px solid #4caf8244;border-left:3px solid #4caf82;border-radius:8px;padding:10px 14px;font-size:0.83rem;">Case <strong>${fmt(e.caseNumber)}</strong> · ${fmt(e.evidenceType || e.type)}<br><span style="color:#aaa;">${fmt(e.evidenceDescription || e.description)}</span></div>`);
+
+        const hasCriminalHistory = warrants.length || arrests.length || citations.length || jailRecords.length || trafficStops.length || evidence.length;
         output.innerHTML = `
-          <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
-            ${[['Warrants',warrants.length,'#e05252'],['Arrests',arrests.length,'#f5a623'],['Traffic Stops',trafficStops.length,'#4c9af5'],['Evidence',evidence.length,'#4caf82']].map(([lbl,cnt,col])=>
-              `<div style="background:${col}15;border:1px solid ${col}33;border-radius:8px;padding:8px 16px;text-align:center;"><strong style="color:${col};font-size:1.1rem;display:block;">${cnt}</strong><span style="font-size:0.72rem;color:#888;">${lbl}</span></div>`).join('')}
-          </div>
-          ${wHtml}${aHtml}${tHtml}${eHtml}`;
+          ${civHtml}
+          ${hasCriminalHistory ? `${wHtml}${aHtml}${cHtml}${jHtml}${tHtml}${eHtml}` : '<p style="color:var(--muted);font-size:0.85rem;margin-top:12px;">No criminal history on file.</p>'}`;
       } catch (err) {
-        output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${err.message || 'Search failed.'}</p>`;
+        output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${escapeHtml(err.message || 'Search failed.')}</p>`;
       } finally {
         this.disabled = false;
       }
