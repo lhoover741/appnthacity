@@ -71,6 +71,13 @@ with app.app_context():
     except Exception as e:
         logger.error(f'Database initialization error: {e}')
 
+# Ensure schema is synced on startup
+try:
+    from database import verify_schema
+    verify_schema(app)
+except Exception as e:
+    logger.warning(f'Schema verification on startup: {e}')
+
 DEFAULT_OFFICERS = [
     {'id': '1L-01',  'name': 'Chief Unit',      'status': 'Available', 'department': 'LSPD'},
     {'id': '2L-12',  'name': 'Patrol Unit',     'status': 'En Route',  'department': 'LSPD'},
