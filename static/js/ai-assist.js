@@ -177,7 +177,7 @@ class AIAssist {
     }
 
     autofillForm(data) {
-        // Map API response keys to actual form field name attributes (civilian.html)
+        // Map API response keys to form field name attributes
         const fieldMap = {
             'first_name': 'firstName',
             'last_name': 'lastName',
@@ -186,17 +186,27 @@ class AIAssist {
             'phone_number': 'phone',
             'address': 'address',
             'occupation': 'occupation',
-            'biography': 'backstory',
-            'criminal_background': 'background',
+            'gang_affiliation': 'faction',
             'emergency_contact_name': 'emergencyName',
             'emergency_contact_phone': 'emergencyPhone',
+            'driver_license_status': 'driverLicense',
+            'firearm_license_status': 'firearmLicense',
+            'business_license_status': 'businessLicense',
+            'vehicle_make': 'vehicleMake',
+            'vehicle_model': 'vehicleModel',
+            'vehicle_year': 'vehicleYear',
+            'vehicle_color': 'vehicleColor',
+            'plate_number': 'plate',
+            'insurance_status': 'insurance',
+            'criminal_background_notes': 'background',
+            'character_backstory': 'backstory',
         };
 
         for (const [dataKey, fieldName] of Object.entries(fieldMap)) {
             const value = data[dataKey];
-            if (!value) continue;
+            if (value === null || value === undefined) continue;
 
-            // Try by name attribute first
+            // Try by name attribute
             const input = document.querySelector(`[name="${fieldName}"]`);
             if (input) {
                 input.value = value;
@@ -204,8 +214,6 @@ class AIAssist {
                 input.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }
-
-        this.showToast('✨ All fields auto-filled!', 'success');
     }
 
     showToast(message, type = 'info') {

@@ -1,238 +1,151 @@
 import os
 import json
-import logging
-import requests
 import random
+import requests
+import logging
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
-
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
-OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
-
-# Realistic data for GTA RP
-ETHNICITIES = ['African American', 'Hispanic/Latino', 'Caucasian', 'Asian', 'Middle Eastern', 'Mixed']
-GANG_AFFILIATIONS = ['None', 'Grove Street Families', 'Ballas', 'Vagos', 'Mafia', 'Triads', 'Bikers', 'Street Crew']
-OCCUPATIONS = [
-    'Construction Worker', 'Mechanic', 'Taxi Driver', 'Security Guard', 'Bartender',
-    'Waiter/Waitress', 'Retail Clerk', 'Delivery Driver', 'Bouncer', 'Stripper',
-    'Drug Dealer', 'Hustler', 'Prostitute', 'Thief', 'Enforcer', 'Unemployed',
-    'Truck Driver', 'Electrician', 'Plumber', 'Carpenter', 'Painter', 'Cleaner',
-    'Fast Food Worker', 'Cashier', 'Janitor', 'Security Officer', 'Bodyguard'
-]
-NEIGHBORHOODS = [
-    'Grove Street', 'Ballas Territory', 'Downtown', 'Vinewood', 'Pillbox Hill',
-    'Del Perro', 'Vespucci', 'Sandy Shores', 'Paleto Bay', 'Grapeseed',
-    'Chumash', 'Blaine County', 'Mirror Park', 'Rockford Hills', 'Maze Bank'
-]
-STREET_NAMES = [
-    'Grove Street', 'Integrity Way', 'Magellan Avenue', 'Pillbox Avenue',
-    'Del Perro Boulevard', 'Vespucci Boulevard', 'Innocence Boulevard',
-    'Prosperity Street', 'Cougar Avenue', 'Ginger Street', 'Amarillo Avenue'
-]
-MENTAL_STATES = [
-    'Stable', 'Anxious', 'Paranoid', 'Aggressive', 'Depressed',
-    'Manic', 'Calm', 'Volatile', 'Suicidal ideation', 'Substance abuse issues'
-]
-RISK_FACTORS = [
-    'None', 'Violent history', 'Weapons access', 'Gang ties', 'Drug addiction',
-    'Mental illness', 'Suicidal', 'Homicidal', 'Escape risk', 'Assault history'
-]
-VEHICLE_MAKES = [
-    'Baller', 'Blista', 'Dilettante', 'Fugitive', 'Granger', 'Habanero',
-    'Jackal', 'Khamelion', 'Landstalker', 'Oracle', 'Patriot', 'Rocoto',
-    'Rumpo', 'Serrano', 'Tailgater', 'Tornado', 'Warrener', 'Washington'
-]
-VEHICLE_COLORS = [
-    'Black', 'White', 'Gray', 'Silver', 'Red', 'Blue', 'Green', 'Yellow',
-    'Orange', 'Purple', 'Brown', 'Gold', 'Lime', 'Cyan', 'Pink'
-]
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
 
 
-def generate_realistic_address(neighborhood):
-    """Generate a realistic GTA-style address."""
-    street = random.choice(STREET_NAMES)
-    number = random.randint(100, 9999)
-    return f"{number} {street}, {neighborhood}"
+def generate_character_prompt(age, gender, race, occupation_type, neighborhood):
+    """Generate prompt for AI to create civilian with ONLY form-visible fields."""
 
-
-def generate_plate():
-    """Generate a realistic GTA-style license plate."""
-    formats = [
-        lambda: f"{random.randint(1,9)}{random.randint(0,9)}{random.randint(0,9)} {random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}",
-        lambda: f"{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.randint(10,99)} {random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}",
-    ]
-    return random.choice(formats)()
-
-
-def generate_character_prompt(age, gender, race, personality_traits, criminal_history_level,
-                              gang_affiliation, occupation_type, risk_level, vehicle_preference, neighborhood):
-    """Generate detailed character generation prompt."""
-
-    return f"""You are an expert GTA RP character designer. Generate a DEEPLY REALISTIC, IMMERSIVE character who is a BRAND NEW CITY RESIDENT with NO criminal history.
+    return f"""You are a GTA RP character designer. Generate a BRAND NEW CITY RESIDENT with a CLEAN RECORD.
 
 PARAMETERS:
 - Age: {age}
 - Gender: {gender}
 - Ethnicity: {race}
-- Personality: {personality_traits}
-- Criminal History: Clean record (NO criminal history - new resident)
-- Gang Affiliation: None (NO gang affiliation)
 - Occupation: {occupation_type}
-- Risk Level: Low (new resident, no known issues)
 - Neighborhood: {neighborhood}
 
-INSTRUCTIONS:
-1. Generate realistic name (NEVER generic like John Doe or Jane Doe)
-2. Create realistic date of birth
-3. Generate realistic phone number
-4. Create realistic address in neighborhood
-5. Create realistic employment history
-6. Generate realistic personality traits
-7. Create believable social connections
-8. This character is a NEW RESIDENT - they have NO warrants, NO arrests, NO criminal history
-9. Officer safety notes must reflect clean background only
-10. Make character feel like a real person just starting fresh in the city
-11. DO NOT generate vehicle information - civilians must visit dealerships in RP
-12. DO NOT generate Discord username - civilians create their own
+CRITICAL RULES:
+1. This is a NEW RESIDENT - NO criminal history, NO warrants, NO arrests
+2. Generate ONLY these fields (nothing else):
+   - first_name: unique, realistic name (NEVER generic like John Doe)
+   - last_name: realistic surname
+   - date_of_birth: YYYY-MM-DD format
+   - phone_number: 555-XXXX format
+   - address: realistic GTA address in neighborhood
+   - occupation: specific job title
+   - gang_affiliation: "None" (always)
+   - emergency_contact_name: realistic name
+   - emergency_contact_phone: 555-XXXX format
+   - driver_license_status: "Valid" (always)
+   - firearm_license_status: "None" (always)
+   - business_license_status: "None" (always)
+   - vehicle_make: null (civilians visit dealerships in RP)
+   - vehicle_model: null
+   - vehicle_year: null
+   - vehicle_color: null
+   - plate_number: null
+   - insurance_status: "Valid"
+   - criminal_background_notes: "No criminal history on file"
+   - character_backstory: 3-4 sentence RP backstory as new resident
 
 Return ONLY valid JSON (no markdown, no code blocks):
 {{
   "first_name": "unique first name",
   "last_name": "unique last name",
-  "nickname": "nickname or empty string",
   "date_of_birth": "YYYY-MM-DD",
-  "age": {age},
   "gender": "{gender}",
-  "ethnicity": "{race}",
-  "phone_number": "555-XXXX format",
+  "phone_number": "555-XXXX",
   "address": "realistic GTA address",
-  "neighborhood": "{neighborhood}",
-  "occupation": "specific job title",
-  "employment_history": "2-3 previous jobs with dates",
-  "biography": "3-4 sentence detailed RP biography as a new city resident",
-  "criminal_background": "No criminal history on file",
-  "known_associates": ["name1", "name2", "name3"],
-  "aliases": [],
+  "occupation": "{occupation_type}",
   "gang_affiliation": "None",
-  "gang_rank": "None",
-  "mental_state": "Stable",
-  "habits": ["habit1", "habit2", "habit3"],
-  "social_behavior": "how they interact with others",
-  "personality_traits": "detailed personality description",
   "emergency_contact_name": "realistic name",
-  "emergency_contact_phone": "555-XXXX format",
-  "emergency_contact_relationship": "family/friend relationship",
-  "warrants": [],
-  "parole_status": "None",
-  "probation_status": "None",
-  "warrant_risk": "None",
-  "officer_safety_notes": "No known issues. Clean background.",
-  "dispatch_lookup_summary": "New resident. No criminal history.",
-  "risk_factors": [],
-  "weapon_access": "None",
-  "violence_history": "None"
+  "emergency_contact_phone": "555-XXXX",
+  "driver_license_status": "Valid",
+  "firearm_license_status": "None",
+  "business_license_status": "None",
+  "vehicle_make": null,
+  "vehicle_model": null,
+  "vehicle_year": null,
+  "vehicle_color": null,
+  "plate_number": null,
+  "insurance_status": "Valid",
+  "criminal_background_notes": "No criminal history on file",
+  "character_backstory": "3-4 sentence backstory as new resident"
 }}
 
-Make this character FEEL REAL. Include contradictions, flaws, and depth. Avoid stereotypes. Remember: clean record, new to the city, NO vehicles, NO Discord username."""
+Make this character FEEL REAL. New to the city, clean record, no vehicles yet."""
 
 
-def generate_character(age, gender, race, personality_traits,
-                       criminal_history_level='clean',
-                       gang_affiliation='None',
-                       occupation_type='random',
-                       risk_level='Low',
-                       vehicle_preference='random',
-                       neighborhood='random'):
-    """Generate a deeply realistic AI character with a clean record (new city resident)."""
+def generate_character(age=None, gender='random', race='random', occupation_type='random', neighborhood='random'):
+    """Generate civilian with ONLY form-visible fields."""
 
     if not OPENROUTER_API_KEY:
         logger.error('OPENROUTER_API_KEY not configured')
         return {'error': 'AI service not configured'}
 
-    # Always enforce clean record regardless of what was passed in
-    criminal_history_level = 'clean'
-    gang_affiliation = 'None'
-    risk_level = 'Low'
+    # Default age if not provided
+    if not age:
+        age = random.randint(18, 70)
 
-    prompt = generate_character_prompt(age, gender, race, personality_traits, criminal_history_level,
-                                       gang_affiliation, occupation_type, risk_level, vehicle_preference, neighborhood)
+    prompt = generate_character_prompt(age, gender, race, occupation_type, neighborhood)
 
     try:
         response = requests.post(
-            f'{OPENROUTER_BASE_URL}/chat/completions',
+            'https://openrouter.ai/api/v1/chat/completions',
             headers={
                 'Authorization': f'Bearer {OPENROUTER_API_KEY}',
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://nthacityrp.com',
-                'X-Title': 'NThaCityRP Police CAD',
+                'HTTP-Referer': 'http://localhost',
+                'X-Title': 'NThaCityRP',
             },
             json={
-                'model': 'openrouter/auto',
-                'messages': [
-                    {'role': 'user', 'content': prompt}
-                ],
-                'temperature': 0.85,
+                'model': 'openai/gpt-3.5-turbo',
+                'messages': [{'role': 'user', 'content': prompt}],
+                'temperature': 0.8,
                 'max_tokens': 1500,
             },
-            timeout=30
+            timeout=30,
         )
 
-        if response.status_code != 200:
-            logger.error(f'OpenRouter API error: {response.status_code} {response.text}')
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                content = result['choices'][0]['message']['content'].strip()
+
+                # Remove markdown code blocks if present
+                if content.startswith('```'):
+                    content = content.split('```')[1]
+                    if content.startswith('json'):
+                        content = content[4:]
+
+                character_data = json.loads(content)
+
+                # ENFORCE CLEAN RECORD - ONLY FORM FIELDS
+                character_data['gang_affiliation'] = 'None'
+                character_data['driver_license_status'] = 'Valid'
+                character_data['firearm_license_status'] = 'None'
+                character_data['business_license_status'] = 'None'
+                character_data['vehicle_make'] = None
+                character_data['vehicle_model'] = None
+                character_data['vehicle_year'] = None
+                character_data['vehicle_color'] = None
+                character_data['plate_number'] = None
+                character_data['insurance_status'] = 'Valid'
+                character_data['criminal_background_notes'] = 'No criminal history on file'
+
+                return character_data
+            else:
+                logger.error('No choices in API response')
+                return {'error': 'No response from AI'}
+        else:
+            logger.error(f'API error: {response.status_code}')
             return {'error': f'API error: {response.status_code}'}
 
-        data = response.json()
-        content = data['choices'][0]['message']['content'].strip()
-
-        # Extract JSON from response
-        try:
-            # Remove markdown code blocks if present
-            if content.startswith('```'):
-                content = content.split('```')[1]
-                if content.startswith('json'):
-                    content = content[4:]
-
-            character_data = json.loads(content)
-
-            # CLEAN RECORD ENFORCEMENT — override any AI-generated criminal fields
-            character_data['criminal_background'] = 'No criminal history on file'
-            character_data['gang_affiliation'] = 'None'
-            character_data['gang_rank'] = 'None'
-            character_data['parole_status'] = 'None'
-            character_data['probation_status'] = 'None'
-            character_data['warrant_risk'] = 'None'
-            character_data['warrants'] = []
-            character_data['risk_factors'] = []
-            character_data['officer_safety_notes'] = 'No known issues. Clean background.'
-            character_data['violence_history'] = 'None'
-            character_data['weapon_access'] = 'None'
-            character_data['risk_level'] = 'Low'
-            character_data['addiction_status'] = 'None'
-            character_data['addiction_severity'] = 'None'
-            character_data['weapon_permit'] = False
-            character_data['insurance_status'] = 'Valid'
-            character_data['driver_license_status'] = 'Valid'
-
-            # NO VEHICLES - civilians must visit dealerships in RP
-            character_data['vehicle_make'] = None
-            character_data['vehicle_model'] = None
-            character_data['vehicle_year'] = None
-            character_data['vehicle_color'] = None
-            character_data['vehicle_plate'] = None
-            character_data['vehicle_vin'] = None
-
-            # NO DISCORD USERNAME - civilians create their own
-            character_data['discord_username'] = None
-
-            return character_data
-        except json.JSONDecodeError as e:
-            logger.error(f'Failed to parse AI response: {content[:200]}... Error: {e}')
-            return {'error': 'Failed to parse AI response'}
-
-    except requests.RequestException as e:
-        logger.error(f'OpenRouter request failed: {e}')
-        return {'error': f'Request failed: {str(e)}'}
+    except requests.exceptions.Timeout:
+        logger.error('AI request timeout')
+        return {'error': 'AI request timeout'}
+    except json.JSONDecodeError as e:
+        logger.error(f'Failed to parse AI response: {e}')
+        return {'error': 'Invalid AI response format'}
+    except Exception as e:
+        logger.error(f'AI generation error: {e}')
+        return {'error': str(e)}
 
 
 def generate_narrative(narrative_type, context):
