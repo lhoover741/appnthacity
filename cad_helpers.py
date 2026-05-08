@@ -81,7 +81,7 @@ def create_civilian_from_ai(ai_data):
         ai_generated=True,
 
         # CLEAN RECORD ENFORCEMENT — hardcoded, never read from ai_data
-        criminal_background='Clean record',
+        criminal_background='No criminal history on file',
         gang_affiliation='None',
         gang_rank='None',
         parole_status='None',

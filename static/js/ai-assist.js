@@ -44,29 +44,6 @@ class AIAssist {
                         </div>
 
                         <div class="ai-assist-section">
-                            <label>Gang Affiliation</label>
-                            <select id="ai-gang" class="ai-input">
-                                <option value="None">None</option>
-                                <option value="Grove Street Families">Grove Street Families</option>
-                                <option value="Ballas">Ballas</option>
-                                <option value="Vagos">Vagos</option>
-                                <option value="Mafia">Mafia</option>
-                                <option value="Triads">Triads</option>
-                                <option value="Bikers">Bikers</option>
-                            </select>
-                        </div>
-
-                        <div class="ai-assist-section">
-                            <label>Risk Level</label>
-                            <select id="ai-risk" class="ai-input">
-                                <option value="Low">Low</option>
-                                <option value="Medium">Medium</option>
-                                <option value="High">High</option>
-                                <option value="Critical">Critical</option>
-                            </select>
-                        </div>
-
-                        <div class="ai-assist-section">
                             <label>Occupation Type</label>
                             <select id="ai-occupation" class="ai-input">
                                 <option value="random">Random</option>
@@ -75,7 +52,6 @@ class AIAssist {
                                 <option value="Security Guard">Security Guard</option>
                                 <option value="Bartender">Bartender</option>
                                 <option value="Taxi Driver">Taxi Driver</option>
-                                <option value="Drug Dealer">Drug Dealer</option>
                                 <option value="Unemployed">Unemployed</option>
                             </select>
                         </div>
@@ -89,15 +65,6 @@ class AIAssist {
                                 <option value="Vinewood">Vinewood</option>
                                 <option value="Del Perro">Del Perro</option>
                                 <option value="Sandy Shores">Sandy Shores</option>
-                            </select>
-                        </div>
-
-                        <div class="ai-assist-section">
-                            <label>Criminal History Level</label>
-                            <select id="ai-criminal" class="ai-input">
-                                <option value="low">Clean Record</option>
-                                <option value="medium">Minor Offenses</option>
-                                <option value="high">Extensive History</option>
                             </select>
                         </div>
 
@@ -153,7 +120,7 @@ class AIAssist {
     }
 
     randomizeAll() {
-        const selects = ['ai-gender', 'ai-ethnicity', 'ai-gang', 'ai-risk', 'ai-occupation', 'ai-neighborhood', 'ai-criminal'];
+        const selects = ['ai-gender', 'ai-ethnicity', 'ai-occupation', 'ai-neighborhood'];
         selects.forEach(id => {
             const select = document.getElementById(id);
             const options = select.querySelectorAll('option');
@@ -173,11 +140,8 @@ class AIAssist {
             const params = {
                 gender: document.getElementById('ai-gender').value,
                 ethnicity: document.getElementById('ai-ethnicity').value,
-                gang_affiliation: document.getElementById('ai-gang').value,
-                risk_level: document.getElementById('ai-risk').value,
                 occupation_type: document.getElementById('ai-occupation').value,
                 neighborhood: document.getElementById('ai-neighborhood').value,
-                criminal_history_level: document.getElementById('ai-criminal').value,
             };
 
             const response = await fetch('/api/ai/civilian-assist', {
@@ -191,6 +155,15 @@ class AIAssist {
             if (result.success) {
                 this.autofillForm(result.data);
                 this.closeModal();
+                this.showToast('✨ Civilian generated successfully', 'success');
+
+                // Scroll to form
+                setTimeout(() => {
+                    const form = document.getElementById('civilian-form');
+                    if (form) {
+                        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 300);
             } else {
                 this.showToast(`❌ Generation failed: ${result.error}`, 'error');
             }
@@ -204,7 +177,7 @@ class AIAssist {
     }
 
     autofillForm(data) {
-        // Map API response keys to form field name attributes
+        // Map API response keys to actual form field name attributes (civilian.html)
         const fieldMap = {
             'first_name': 'firstName',
             'last_name': 'lastName',
@@ -213,19 +186,21 @@ class AIAssist {
             'phone_number': 'phone',
             'address': 'address',
             'occupation': 'occupation',
-            'gang_affiliation': 'faction',
             'biography': 'backstory',
             'criminal_background': 'background',
+            'emergency_contact_name': 'emergencyName',
+            'emergency_contact_phone': 'emergencyPhone',
         };
 
         for (const [dataKey, fieldName] of Object.entries(fieldMap)) {
             const value = data[dataKey];
             if (!value) continue;
 
-            // Try by name attribute first (civilian.html uses name=)
+            // Try by name attribute first
             const input = document.querySelector(`[name="${fieldName}"]`);
             if (input) {
                 input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }
