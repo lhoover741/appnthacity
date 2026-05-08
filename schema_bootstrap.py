@@ -30,14 +30,13 @@ def bootstrap_schema():
             db.create_all()
             logger.info('✓ Database tables created/verified')
 
-            # Run migrations
-            try:
-                from flask_migrate import upgrade
-                logger.info('Running database migrations...')
-                upgrade()
-                logger.info('✓ Database migrations applied')
-            except Exception as e:
-                logger.warning(f'Migration note (may be normal): {e}')
+            # Run schema sync to add missing columns
+            logger.info('Syncing schema with SQLAlchemy model...')
+            from schema_sync import sync_schema
+            if sync_schema():
+                logger.info('✓ Schema sync completed')
+            else:
+                logger.warning('⚠ Schema sync had issues but continuing...')
 
             logger.info('✓ Schema bootstrap completed successfully')
             return True
