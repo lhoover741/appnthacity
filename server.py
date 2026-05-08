@@ -224,12 +224,12 @@ def civilian_to_dict(c):
         'id': c.civilian_id,
         'firstName': c.first_name or '',
         'lastName': c.last_name or '',
-        'dob': c.dob or '',
+        'dob': c.date_of_birth.isoformat() if c.date_of_birth else '',
         'gender': c.gender or '',
-        'phone': c.phone or '',
+        'phone': c.phone_number or '',
         'address': c.address or '',
         'occupation': c.occupation or '',
-        'notes': c.notes or '',
+        'notes': '',
     }
 
 
@@ -392,17 +392,15 @@ def _upsert_civilian(data):
     civ_id = data.get('id') or f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
     obj = Civilian.query.filter_by(civilian_id=civ_id).first()
     if obj is None:
-        obj = Civilian(civilian_id=civ_id)
+        obj = Civilian(civilian_id=civ_id, first_name=data.get('firstName', ''), last_name=data.get('lastName', ''))
         db.session.add(obj)
-    obj.first_name  = data.get('firstName', '')
-    obj.last_name   = data.get('lastName', '')
-    obj.dob         = data.get('dob', '')
-    obj.gender      = data.get('gender', '')
-    obj.phone       = data.get('phone', '')
-    obj.address     = data.get('address', '')
-    obj.occupation  = data.get('occupation', '')
-    obj.notes       = data.get('notes', '')
-    obj.updated_at  = datetime.utcnow()
+    obj.first_name   = data.get('firstName', '')
+    obj.last_name    = data.get('lastName', '')
+    obj.gender       = data.get('gender', '')
+    obj.phone_number = data.get('phone', '')
+    obj.address      = data.get('address', '')
+    obj.occupation   = data.get('occupation', '')
+    obj.updated_at   = datetime.utcnow()
 
 
 def _upsert_vehicle(data):
@@ -2122,11 +2120,10 @@ def post_cad_data():
                 if obj:
                     obj.first_name = c.get('firstName', obj.first_name)
                     obj.last_name = c.get('lastName', obj.last_name)
-                    obj.dob = c.get('dob', obj.dob)
-                    obj.phone = c.get('phone', obj.phone)
+                    obj.phone_number = c.get('phone', obj.phone_number)
                     obj.address = c.get('address', obj.address)
                 else:
-                    db.session.add(Civilian(civilian_id=civ_id, first_name=c.get('firstName', ''), last_name=c.get('lastName', ''), dob=c.get('dob', ''), phone=c.get('phone', ''), address=c.get('address', '')))
+                    db.session.add(Civilian(civilian_id=civ_id, first_name=c.get('firstName', ''), last_name=c.get('lastName', ''), phone_number=c.get('phone', ''), address=c.get('address', '')))
 
         # Vehicles
         if 'vehicles' in data:
@@ -2589,46 +2586,85 @@ def generate_ai_civilian():
 
 @app.route('/api/ai/civilian-assist', methods=['POST'])
 def ai_civilian_assist():
-    """Generate civilian with AI assist and auto-save."""
-    data = request.get_json(silent=True) or {}
-
-    from ai_assist_service import generate_ai_civilian, save_generated_civilian
-
+    """Generate civilian data for form population (NO auto-save)."""
     try:
-        # Generate civilian
-        ai_data, source = generate_ai_civilian(data)
+        params = request.get_json() or {}
 
-        if 'error' in ai_data:
-            return jsonify({'success': False, 'error': ai_data['error']}), 500
+        from ai_assist_service import generate_ai_civilian
 
-        # Save to database
-        civilian = save_generated_civilian(ai_data)
+        civilian_data, source = generate_ai_civilian(params)
+
+        if 'error' in civilian_data:
+            return jsonify({'success': False, 'error': civilian_data['error']}), 400
+
+        # Return ONLY form-visible fields
+        return jsonify({
+            'success': True,
+            'data': civilian_data,
+            'source': source,
+        }), 200
+
+    except Exception as e:
+        logger.error(f'AI assist error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/civilians', methods=['POST'])
+def create_civilian():
+    """Register civilian - ONLY called by form submit button."""
+    try:
+        data = request.get_json() or {}
+
+        import secrets as _secrets
+
+        civilian_id = f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{_secrets.token_hex(3)}"
+
+        # Parse date_of_birth
+        dob = None
+        if data.get('date_of_birth'):
+            try:
+                dob = datetime.strptime(data['date_of_birth'], '%Y-%m-%d').date()
+            except Exception:
+                pass
+
+        # Create civilian with ONLY form fields
+        civilian = Civilian(
+            civilian_id=civilian_id,
+            first_name=data.get('first_name', ''),
+            last_name=data.get('last_name', ''),
+            date_of_birth=dob,
+            gender=data.get('gender', ''),
+            phone_number=data.get('phone_number', ''),
+            address=data.get('address', ''),
+            occupation=data.get('occupation', ''),
+            gang_affiliation=data.get('gang_affiliation', 'None'),
+            emergency_contact_name=data.get('emergency_contact_name', ''),
+            emergency_contact_phone=data.get('emergency_contact_phone', ''),
+            driver_license_status=data.get('driver_license_status', 'Valid'),
+            firearm_license_status=data.get('firearm_license_status', 'None'),
+            business_license_status=data.get('business_license_status', 'None'),
+            vehicle_make=data.get('vehicle_make'),
+            vehicle_model=data.get('vehicle_model'),
+            vehicle_year=data.get('vehicle_year'),
+            vehicle_color=data.get('vehicle_color'),
+            plate_number=data.get('plate_number'),
+            insurance_status=data.get('insurance_status', 'Valid'),
+            criminal_background_notes=data.get('criminal_background_notes', ''),
+            character_backstory=data.get('character_backstory', ''),
+        )
+
+        db.session.add(civilian)
+        db.session.commit()
 
         return jsonify({
             'success': True,
-            'civilian_id': civilian.civilian_id,
-            'source': source,
-            'data': {
-                'civilian_id': civilian.civilian_id,
-                'first_name': civilian.first_name,
-                'last_name': civilian.last_name,
-                'full_name': civilian.full_name,
-                'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else None,
-                'age': civilian.age,
-                'gender': civilian.gender,
-                'race': civilian.race,
-                'phone_number': civilian.phone_number,
-                'address': civilian.address,
-                'occupation': civilian.occupation,
-                'biography': civilian.biography,
-                'criminal_background': civilian.criminal_background,
-                'gang_affiliation': civilian.gang_affiliation,
-                'risk_level': civilian.risk_level,
-                'officer_safety_notes': civilian.officer_safety_notes,
-            }
-        })
+            'civilian_id': civilian_id,
+            'data': civilian.to_dict(),
+        }), 201
+
     except Exception as e:
-        logger.error(f'AI assist failed: {e}')
+        db.session.rollback()
+        logger.error(f'Failed to create civilian: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2638,89 +2674,24 @@ def ai_civilian_assist():
 
 @app.route('/api/ai/character', methods=['POST'])
 def ai_generate_character():
-    """Generate advanced AI character with full background."""
+    """Generate AI character data (form population only, no auto-save)."""
     data = request.get_json(silent=True) or {}
 
-    required = ['age', 'gender', 'race', 'personality_traits', 'criminal_history_level',
-                'gang_affiliation', 'occupation_type', 'risk_level', 'vehicle_preference', 'neighborhood']
-    missing = [f for f in required if not data.get(f)]
-    if missing:
-        return jsonify({'success': False, 'error': f'Missing fields: {", ".join(missing)}'}), 400
-
-    from ai_character_engine import generate_character
-    from cad_helpers import check_name_uniqueness, create_civilian_from_ai, log_ai_generation
-
-    ai_result = generate_character(
-        data['age'], data['gender'], data['race'], data['personality_traits'],
-        data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
-        data['risk_level'], data['vehicle_preference'], data['neighborhood']
-    )
-
-    if 'error' in ai_result:
-        log_ai_generation('character', data, 'Failed', status='Error', error_message=ai_result['error'])
-        return jsonify({'success': False, 'error': ai_result['error']}), 500
-
-    # Check name uniqueness
-    first_name = ai_result.get('first_name', '')
-    last_name = ai_result.get('last_name', '')
-
-    if not check_name_uniqueness(first_name, last_name):
-        logger.warning(f'Duplicate name detected: {first_name} {last_name}, regenerating...')
-        ai_result = generate_character(
-            data['age'], data['gender'], data['race'], data['personality_traits'],
-            data['criminal_history_level'], data['gang_affiliation'], data['occupation_type'],
-            data['risk_level'], data['vehicle_preference'], data['neighborhood']
-        )
-        if 'error' in ai_result:
-            log_ai_generation('character', data, 'Failed', status='Error', error_message=ai_result['error'])
-            return jsonify({'success': False, 'error': ai_result['error']}), 500
+    from ai_assist_service import generate_ai_civilian
 
     try:
-        civilian = create_civilian_from_ai(ai_result)
-        log_ai_generation('character', data, f'Created {civilian.civilian_id}', status='Success')
+        ai_result, source = generate_ai_civilian(data)
+
+        if 'error' in ai_result:
+            return jsonify({'success': False, 'error': ai_result['error']}), 500
 
         return jsonify({
             'success': True,
-            'civilian_id': civilian.civilian_id,
-            'name': civilian.full_name,
-            'data': {
-                'first_name': civilian.first_name,
-                'last_name': civilian.last_name,
-                'nickname': ai_result.get('nickname'),
-                'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else None,
-                'phone_number': civilian.phone_number,
-                'address': civilian.address,
-                'occupation': civilian.occupation,
-                'employment_history': ai_result.get('employment_history'),
-                'biography': civilian.biography,
-                'criminal_background': civilian.criminal_background,
-                'known_associates': ai_result.get('known_associates', []),
-                'aliases': ai_result.get('aliases', []),
-                'gang_affiliation': civilian.gang_affiliation,
-                'gang_rank': ai_result.get('gang_rank'),
-                'mental_state': ai_result.get('mental_state'),
-                'habits': ai_result.get('habits', []),
-                'social_behavior': ai_result.get('social_behavior'),
-                'vehicle': {
-                    'make': ai_result.get('vehicle_make'),
-                    'model': ai_result.get('vehicle_model'),
-                    'color': ai_result.get('vehicle_color'),
-                    'plate': ai_result.get('vehicle_plate'),
-                    'vin': ai_result.get('vehicle_vin'),
-                },
-                'warrants': ai_result.get('warrants', []),
-                'parole_status': civilian.parole_status,
-                'probation_status': civilian.probation_status,
-                'warrant_risk': civilian.warrant_risk,
-                'officer_safety_notes': civilian.officer_safety_notes,
-                'risk_factors': ai_result.get('risk_factors', []),
-                'weapon_access': ai_result.get('weapon_access'),
-                'violence_history': ai_result.get('violence_history'),
-            }
+            'source': source,
+            'data': ai_result,
         })
     except Exception as e:
-        logger.error(f'Character creation failed: {e}')
-        log_ai_generation('character', data, 'Failed', status='Error', error_message=str(e))
+        logger.error(f'Character generation failed: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2757,15 +2728,11 @@ def get_civilians():
     civilians = Civilian.query.order_by(Civilian.created_at.desc()).all()
     result = [{
         'civilian_id': c.civilian_id,
-        'name': c.full_name or f'{c.first_name or ""} {c.last_name or ""}'.strip(),
-        'age': c.age,
+        'name': f'{c.first_name or ""} {c.last_name or ""}'.strip(),
         'gender': c.gender,
         'occupation': c.occupation,
-        'risk_level': c.risk_level,
-        'warrant_risk': c.warrant_risk,
-        'parole_status': c.parole_status,
-        'probation_status': c.probation_status,
-        'ai_generated': c.ai_generated,
+        'gang_affiliation': c.gang_affiliation,
+        'driver_license_status': c.driver_license_status,
     } for c in civilians]
     return jsonify({'success': True, 'civilians': result, 'total': len(result)})
 
@@ -2781,17 +2748,16 @@ def search_civilians():
     civilians = Civilian.query.filter(
         (Civilian.first_name.ilike(f'%{query}%')) |
         (Civilian.last_name.ilike(f'%{query}%')) |
-        (Civilian.full_name.ilike(f'%{query}%')) |
         (Civilian.phone_number.ilike(f'%{query}%')) |
         (Civilian.address.ilike(f'%{query}%'))
     ).limit(20).all()
 
     result = [{
         'civilian_id': c.civilian_id,
-        'name': c.full_name or f'{c.first_name or ""} {c.last_name or ""}'.strip(),
-        'phone': c.phone_number or c.phone or '',
+        'name': f'{c.first_name or ""} {c.last_name or ""}'.strip(),
+        'phone': c.phone_number or '',
         'address': c.address or '',
-        'risk_level': c.risk_level,
+        'gang_affiliation': c.gang_affiliation or 'None',
     } for c in civilians]
 
     return jsonify({'success': True, 'results': result, 'total': len(result)})
@@ -2805,34 +2771,7 @@ def get_civilian(civilian_id):
 
     return jsonify({
         'success': True,
-        'civilian': {
-            'civilian_id': c.civilian_id,
-            'first_name': c.first_name,
-            'last_name': c.last_name,
-            'full_name': c.full_name or f'{c.first_name or ""} {c.last_name or ""}'.strip(),
-            'date_of_birth': c.date_of_birth.isoformat() if c.date_of_birth else (c.dob or None),
-            'age': c.age,
-            'gender': c.gender,
-            'race': c.race,
-            'phone_number': c.phone_number or c.phone or '',
-            'address': c.address,
-            'occupation': c.occupation,
-            'gang_affiliation': c.gang_affiliation,
-            'risk_level': c.risk_level,
-            'warrant_risk': c.warrant_risk,
-            'parole_status': c.parole_status,
-            'probation_status': c.probation_status,
-            'weapon_permit': c.weapon_permit,
-            'driver_license_status': c.driver_license_status,
-            'biography': c.biography,
-            'criminal_background': c.criminal_background,
-            'mental_state_notes': c.mental_state_notes,
-            'officer_safety_notes': c.officer_safety_notes,
-            'last_known_location': c.last_known_location,
-            'notes': c.notes,
-            'ai_generated': c.ai_generated,
-            'created_at': c.created_at.isoformat() if c.created_at else None,
-        }
+        'civilian': c.to_dict(),
     })
 
 

@@ -37,7 +37,7 @@ def find_similar_names(first_name, last_name):
 
 
 def create_civilian_from_ai(ai_data):
-    """Create a civilian record from AI-generated data."""
+    """Create a civilian record from AI-generated data (form fields only)."""
     civilian_id = f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
     dob = None
@@ -48,54 +48,29 @@ def create_civilian_from_ai(ai_data):
         except (ValueError, TypeError):
             dob = None
 
-    # Normalise JSON-array fields — accept list or string
-    def _json_field(val):
-        if val is None:
-            return None
-        if isinstance(val, list):
-            import json as _json
-            return _json.dumps(val)
-        return str(val)
-
     civilian = Civilian(
         civilian_id=civilian_id,
         first_name=ai_data.get('first_name', ''),
         last_name=ai_data.get('last_name', ''),
-        full_name=f"{ai_data.get('first_name', '')} {ai_data.get('last_name', '')}".strip(),
         date_of_birth=dob,
+        gender=ai_data.get('gender', ''),
         phone_number=ai_data.get('phone_number', ''),
         address=ai_data.get('address', ''),
         occupation=ai_data.get('occupation', ''),
-        biography=ai_data.get('biography', ''),
-        # Support both legacy key (mental_state_notes) and new key (mental_state)
-        mental_state_notes=ai_data.get('mental_state_notes') or ai_data.get('mental_state', ''),
-        race=ai_data.get('ethnicity') or ai_data.get('race', ''),
-        age=ai_data.get('age'),
-        gender=ai_data.get('gender', ''),
-        # Advanced character engine fields (non-criminal)
-        nickname=ai_data.get('nickname', ''),
-        aliases=_json_field(ai_data.get('aliases')),
-        employment_history=ai_data.get('employment_history', ''),
-        habits=_json_field(ai_data.get('habits')),
-        social_behavior=ai_data.get('social_behavior', ''),
-        ai_generated=True,
-
-        # CLEAN RECORD ENFORCEMENT — hardcoded, never read from ai_data
-        criminal_background='No criminal history on file',
         gang_affiliation='None',
-        gang_rank='None',
-        parole_status='None',
-        probation_status='None',
-        warrant_risk='None',
-        risk_level='Low',
-        officer_safety_notes='No known issues. Clean background.',
-        violence_history='None',
-        weapon_access='None',
-        addiction_status='None',
-        addiction_severity='None',
-        weapon_permit=False,
-        insurance_status='Valid',
+        emergency_contact_name=ai_data.get('emergency_contact_name', ''),
+        emergency_contact_phone=ai_data.get('emergency_contact_phone', ''),
         driver_license_status='Valid',
+        firearm_license_status='None',
+        business_license_status='None',
+        vehicle_make=None,
+        vehicle_model=None,
+        vehicle_year=None,
+        vehicle_color=None,
+        plate_number=None,
+        insurance_status='Valid',
+        criminal_background_notes='No criminal history on file',
+        character_backstory=ai_data.get('character_backstory', ai_data.get('biography', '')),
     )
 
     try:

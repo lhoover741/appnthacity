@@ -1,27 +1,30 @@
 import random
-import secrets
 import logging
-import json
 from datetime import datetime, timedelta
-from database import db
-from models import Civilian
+from ai_character_engine import generate_character
+from world_realism_service import generate_name, generate_address
 
 logger = logging.getLogger(__name__)
 
 
 def check_name_exists(first_name, last_name):
     """Check if name already exists in database."""
-    civilian = Civilian.query.filter(
-        (Civilian.first_name.ilike(first_name)) &
-        (Civilian.last_name.ilike(last_name))
-    ).first()
-    return civilian is not None
+    from database import db
+    from models import Civilian
+
+    try:
+        existing = db.session.query(Civilian).filter_by(
+            first_name=first_name,
+            last_name=last_name
+        ).first()
+        return existing is not None
+    except Exception as e:
+        logger.warning(f'Name check failed: {e}')
+        return False
 
 
 def generate_ai_civilian(params):
-    """Generate civilian using AI with fallback to local generator."""
-    from ai_character_engine import generate_character
-    from world_realism_service import generate_name, generate_address
+    """Generate civilian data for form population (NO auto-save)."""
 
     # Try AI generation first
     try:
@@ -29,24 +32,32 @@ def generate_ai_civilian(params):
             params.get('age', random.randint(18, 70)),
             params.get('gender', 'random'),
             params.get('ethnicity', 'random'),
-            params.get('personality_traits', 'realistic'),
-            criminal_history_level='clean',  # FORCE clean record
-            gang_affiliation='None',          # FORCE no gang affiliation
-            occupation_type=params.get('occupation_type', 'random'),
-            risk_level='Low',                 # FORCE low risk
-            vehicle_preference=params.get('vehicle_preference', 'random'),
-            neighborhood=params.get('neighborhood', 'random'),
+            params.get('occupation_type', 'random'),
+            params.get('neighborhood', 'random'),
         )
 
         if 'error' not in ai_result:
+            # Check for duplicate names
+            attempts = 0
+            while check_name_exists(ai_result.get('first_name'), ai_result.get('last_name')) and attempts < 5:
+                logger.info('Duplicate name detected, regenerating...')
+                ai_result = generate_character(
+                    params.get('age', random.randint(18, 70)),
+                    params.get('gender', 'random'),
+                    params.get('ethnicity', 'random'),
+                    params.get('occupation_type', 'random'),
+                    params.get('neighborhood', 'random'),
+                )
+                attempts += 1
+
             return ai_result, 'ai'
     except Exception as e:
         logger.warning(f'AI generation failed, using fallback: {e}')
 
-    # Fallback to local generator with clean record
+    # Fallback to local generator - ONLY FORM FIELDS
     name = generate_name(params.get('gender', 'random'))
 
-    # Check for duplicates and regenerate if needed
+    # Check for duplicates
     attempts = 0
     while check_name_exists(name['first_name'], name['last_name']) and attempts < 5:
         name = generate_name(params.get('gender', 'random'))
@@ -57,61 +68,23 @@ def generate_ai_civilian(params):
     return {
         'first_name': name['first_name'],
         'last_name': name['last_name'],
-        'full_name': name['full_name'],
         'date_of_birth': (datetime.now() - timedelta(days=random.randint(18 * 365, 70 * 365))).strftime('%Y-%m-%d'),
-        'age': random.randint(18, 70),
         'gender': name['gender'],
-        'ethnicity': params.get('ethnicity', 'random'),
         'phone_number': f"555-{random.randint(1000, 9999)}",
         'address': address,
         'occupation': params.get('occupation_type', 'random'),
-        'biography': f"New resident of {params.get('neighborhood', 'the city')}. Just arrived looking for opportunities.",
-
-        # CLEAN RECORD - NO EXCEPTIONS
-        'criminal_background': 'No criminal history on file',
         'gang_affiliation': 'None',
-        'gang_rank': 'None',
-        'parole_status': 'None',
-        'probation_status': 'None',
-        'warrant_risk': 'None',
-        'risk_level': 'Low',
-        'officer_safety_notes': 'No known issues. Clean background.',
-        'violence_history': 'None',
-        'weapon_access': 'None',
-        'addiction_status': 'None',
-        'addiction_severity': 'None',
-        'weapon_permit': False,
-        'insurance_status': 'Valid',
+        'emergency_contact_name': generate_name()['full_name'],
+        'emergency_contact_phone': f"555-{random.randint(1000, 9999)}",
         'driver_license_status': 'Valid',
-
-        # NO VEHICLES - civilians must visit dealerships in RP
+        'firearm_license_status': 'None',
+        'business_license_status': 'None',
         'vehicle_make': None,
         'vehicle_model': None,
         'vehicle_year': None,
         'vehicle_color': None,
-        'vehicle_plate': None,
-        'vehicle_vin': None,
-
-        # NO DISCORD USERNAME - civilians create their own
-        'discord_username': None,
-
-        # Emergency contact (randomized)
-        'emergency_contact_name': generate_name()['full_name'],
-        'emergency_contact_phone': f"555-{random.randint(1000, 9999)}",
-        'emergency_contact_relationship': random.choice(['Parent', 'Sibling', 'Friend', 'Spouse', 'Relative']),
+        'plate_number': None,
+        'insurance_status': 'Valid',
+        'criminal_background_notes': 'No criminal history on file',
+        'character_backstory': f"New resident of {params.get('neighborhood', 'the city')}. Just arrived looking for opportunities.",
     }, 'fallback'
-
-
-def save_generated_civilian(ai_data):
-    """Save generated civilian to database."""
-    from cad_helpers import create_civilian_from_ai, log_ai_generation
-
-    try:
-        civilian = create_civilian_from_ai(ai_data)
-        log_ai_generation('ai_assist', str(ai_data), f'Created {civilian.civilian_id}', status='Success')
-        return civilian
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f'Failed to save civilian: {e}')
-        log_ai_generation('ai_assist', str(ai_data), 'Failed', status='Error', error_message=str(e))
-        raise

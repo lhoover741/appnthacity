@@ -23,17 +23,9 @@ def configure_database(app):
             try:
                 # Create all tables from models
                 db.create_all()
-                logger.info('Database tables created/verified')
+                logger.info('✓ Database tables created/verified')
             except Exception as e:
                 logger.error(f'Failed to create tables: {e}')
-
-            try:
-                # Run migrations
-                from flask_migrate import upgrade
-                upgrade()
-                logger.info('Database migrations applied')
-            except Exception as e:
-                logger.warning(f'Migration warning (may be normal): {e}')
 
         return True
     return False

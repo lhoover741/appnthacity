@@ -45,56 +45,68 @@ class Civilian(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     civilian_id = db.Column(db.String(64), unique=True, nullable=False)
-    first_name = db.Column(db.String(255))
-    last_name = db.Column(db.String(255))
-    full_name = db.Column(db.String(255))
+
+    # ONLY fields visible on Civilian Registration form
+    first_name = db.Column(db.String(255), nullable=False)
+    last_name = db.Column(db.String(255), nullable=False)
     date_of_birth = db.Column(db.Date)
-    age = db.Column(db.Integer)
     gender = db.Column(db.String(64))
-    race = db.Column(db.String(255))
     phone_number = db.Column(db.String(64))
-    address = db.Column(db.Text)
+    address = db.Column(db.String(255))
     occupation = db.Column(db.String(255))
-    gang_affiliation = db.Column(db.String(255))
-    risk_level = db.Column(db.String(64), default='Low')
-    parole_status = db.Column(db.String(64), default='None')
-    probation_status = db.Column(db.String(64), default='None')
-    weapon_permit = db.Column(db.Boolean, default=False)
-    driver_license_status = db.Column(db.String(64), default='Valid')
-    notes = db.Column(db.Text)
-    ai_generated = db.Column(db.Boolean, default=False)
-    last_known_location = db.Column(db.String(255))
-    biography = db.Column(db.Text)
-    criminal_background = db.Column(db.Text)
-    mental_state_notes = db.Column(db.Text)
-    officer_safety_notes = db.Column(db.Text)
-    warrant_risk = db.Column(db.String(64), default='Low')
-    # Advanced character engine fields
-    nickname = db.Column(db.String(255))
-    aliases = db.Column(db.Text)  # JSON array
-    employment_history = db.Column(db.Text)
-    gang_rank = db.Column(db.String(64))
-    habits = db.Column(db.Text)  # JSON array
-    social_behavior = db.Column(db.Text)
-    weapon_access = db.Column(db.String(64), default='None')
-    violence_history = db.Column(db.String(64), default='None')
-    # Advanced civilian profile fields
-    addiction_status = db.Column(db.String(255))  # None, Alcohol, Drugs, Both
-    addiction_severity = db.Column(db.String(64))  # None, Mild, Moderate, Severe
-    weapon_permit_type = db.Column(db.String(255))  # Handgun, Rifle, Shotgun, etc.
-    driving_history = db.Column(db.Text)  # JSON array of violations
-    insurance_status = db.Column(db.String(64), default='Valid')  # Valid, Lapsed, None
+    gang_affiliation = db.Column(db.String(255), default='None')
+
+    # Emergency contact
     emergency_contact_name = db.Column(db.String(255))
     emergency_contact_phone = db.Column(db.String(64))
-    emergency_contact_relationship = db.Column(db.String(64))
-    medical_conditions = db.Column(db.Text)  # JSON array
-    medications = db.Column(db.Text)  # JSON array
-    allergies = db.Column(db.Text)  # JSON array
-    # Legacy fields kept for backward compatibility
-    dob = db.Column(db.String(64))
-    phone = db.Column(db.String(64))
+
+    # License/status fields
+    driver_license_status = db.Column(db.String(64), default='Valid')
+    firearm_license_status = db.Column(db.String(64), default='None')
+    business_license_status = db.Column(db.String(64), default='None')
+
+    # Vehicle info
+    vehicle_make = db.Column(db.String(255))
+    vehicle_model = db.Column(db.String(255))
+    vehicle_year = db.Column(db.Integer)
+    vehicle_color = db.Column(db.String(64))
+    plate_number = db.Column(db.String(64))
+    insurance_status = db.Column(db.String(64), default='Valid')
+
+    # Background/notes
+    criminal_background_notes = db.Column(db.Text)
+    character_backstory = db.Column(db.Text)
+
+    # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        """Return only form-visible fields."""
+        return {
+            'civilian_id': self.civilian_id,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+            'date_of_birth': self.date_of_birth.isoformat() if self.date_of_birth else None,
+            'gender': self.gender,
+            'phone_number': self.phone_number,
+            'address': self.address,
+            'occupation': self.occupation,
+            'gang_affiliation': self.gang_affiliation,
+            'emergency_contact_name': self.emergency_contact_name,
+            'emergency_contact_phone': self.emergency_contact_phone,
+            'driver_license_status': self.driver_license_status,
+            'firearm_license_status': self.firearm_license_status,
+            'business_license_status': self.business_license_status,
+            'vehicle_make': self.vehicle_make,
+            'vehicle_model': self.vehicle_model,
+            'vehicle_year': self.vehicle_year,
+            'vehicle_color': self.vehicle_color,
+            'plate_number': self.plate_number,
+            'insurance_status': self.insurance_status,
+            'criminal_background_notes': self.criminal_background_notes,
+            'character_backstory': self.character_backstory,
+        }
 
 
 class Vehicle(db.Model):
