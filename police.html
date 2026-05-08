@@ -1804,18 +1804,26 @@
       output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching civilian registry and CAD history…</p>';
       try {
         const params = new URLSearchParams({ q: query });
-        const res = await fetch(`/api/cad/criminal-record?${params.toString()}`);
-        if (!res.ok) throw new Error('Criminal record lookup failed.');
+        const res = await fetch(`/api/criminal-records/search?${params.toString()}`);
+        let json;
+        try {
+          json = await res.json();
+        } catch (parseErr) {
+          if (res.ok) throw parseErr;
+          throw new Error('Criminal record lookup failed.');
+        }
+        if (!res.ok) throw new Error(json.error || 'Criminal record lookup failed.');
+        if (!json.success) {
+          output.innerHTML = `<p style="color:var(--muted);font-size:0.85rem;">${escapeHtml(json.error || 'No criminal record found for that search.')}</p>`;
+          return;
+        }
 
-        const json = await res.json();
-        if (!json.success) throw new Error(json.error || 'Criminal record lookup failed.');
-
-        const civilians = json.civilians || json.results || [];
+        const civilians = (json.civilians && json.civilians.length ? json.civilians : (json.civilian && Object.keys(json.civilian).length ? [json.civilian] : (json.results || [])));
         const warrants = json.warrants || [];
         const arrests = json.arrests || [];
         const trafficStops = json.trafficStops || [];
         const citations = json.citations || [];
-        const jailRecords = json.jailRecords || [];
+        const jailRecords = json.jailBookings || json.jailRecords || [];
         const hearings = json.hearings || [];
         const evidence = json.evidence || [];
 
@@ -1842,7 +1850,7 @@
           if (plate) civilianPlates.add(normalize(plate));
         });
 
-        const hasCriminalHistory = warrants.length || arrests.length || citations.length || jailRecords.length || hearings.length;
+        const hasCriminalHistory = Boolean(json.hasCriminalHistory ?? (warrants.length || arrests.length || citations.length || jailRecords.length || hearings.length || trafficStops.length || evidence.length));
         const section = (title, icon, items, fn) => !items.length ? '' : `
           <div style="margin-top:16px;">
             <p style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">${icon} ${title} (${items.length})</p>
@@ -1891,7 +1899,7 @@
         const eHtml = section('Evidence', '📦', evidence, e =>
           `<div style="background:#0a0a0a;border:1px solid #4caf8244;border-left:3px solid #4caf82;border-radius:8px;padding:10px 14px;font-size:0.83rem;">Case <strong>${fmt(e.caseNumber)}</strong> · ${fmt(e.evidenceType || e.type)}<br><span style="color:#aaa;">${fmt(e.evidenceDescription || e.description)}</span></div>`);
 
-        const criminalPresenceHtml = hasCriminalHistory ? '<p style="margin:10px 0 0;color:#4caf82;font-size:0.85rem;font-weight:700;">Criminal record present</p>' : '';
+        const criminalPresenceHtml = hasCriminalHistory ? '<p style="margin:10px 0 0;color:#4caf82;font-size:0.85rem;font-weight:700;">Criminal record present. See related records below.</p>' : '';
         output.innerHTML = `
           ${civHtml}
           ${criminalPresenceHtml}
