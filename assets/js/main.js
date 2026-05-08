@@ -871,6 +871,11 @@ function handleArrestForm() {
     renderArrestsTable();
     addActivity('Arrest Report', `Arrest filed for ${data.suspectName} - ${data.charges}`);
     showToast('Arrest report filed successfully', 'success');
+    setTimeout(async () => {
+      if (typeof loadData === 'function') await loadData();
+      if (typeof loadCourtHearings === 'function') loadCourtHearings();
+      if (typeof loadJail === 'function') loadJail();
+    }, 500);
     form.reset();
   });
 }

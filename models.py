@@ -350,6 +350,7 @@ class Hearing(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     hearing_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64), default='')
     suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
     hearing_type = db.Column(db.String(64), default='Arraignment')
@@ -359,6 +360,9 @@ class Hearing(db.Model):
     arrest_id = db.Column(db.String(64))
     filing_officer = db.Column(db.String(255))
     outcome = db.Column(db.Text)
+    sentence_length = db.Column(db.String(255))
+    fine_amount = db.Column(db.String(255))
+    outcome_notes = db.Column(db.Text)
     status = db.Column(db.String(64), default='Scheduled')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime)
@@ -432,8 +436,9 @@ class JailBooking(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     booking_id = db.Column(db.String(64), unique=True, nullable=False)
-    civilian_id = db.Column(db.String(64), nullable=False)
+    civilian_id = db.Column(db.String(64), nullable=False, default='')
     arrest_id = db.Column(db.String(64))
+    suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
     booking_officer = db.Column(db.String(255))
     cell_assignment = db.Column(db.String(64))

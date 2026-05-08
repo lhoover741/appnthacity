@@ -5,7 +5,7 @@ import smtplib
 import logging
 import secrets
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session
@@ -72,10 +72,41 @@ cache.init_app(app)
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
 
+
+def ensure_arrest_automation_schema():
+    """Add columns needed by arrest-to-court automation on existing databases."""
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+    column_specs = {
+        'hearings': {
+            'civilian_id': 'VARCHAR(64)',
+            'sentence_length': 'VARCHAR(255)',
+            'fine_amount': 'VARCHAR(255)',
+            'outcome_notes': 'TEXT',
+        },
+        'jail_bookings': {
+            'suspect_name': 'VARCHAR(255)',
+        },
+    }
+    for table, columns in column_specs.items():
+        try:
+            existing = {col['name'] for col in inspector.get_columns(table)}
+        except Exception:
+            continue
+        for column, col_type in columns.items():
+            if column in existing:
+                continue
+            if dialect == 'postgresql':
+                db.session.execute(text(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}'))
+            else:
+                db.session.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {col_type}'))
+    db.session.commit()
+
 # Initialize database on startup
 with app.app_context():
     try:
         db.create_all()
+        ensure_arrest_automation_schema()
         logger.info('✓ Database tables verified on startup')
     except Exception as e:
         logger.error(f'Database initialization error: {e}')
@@ -245,12 +276,166 @@ def status_to_dict(s):
     }
 
 
+
+PENDING_SENTENCE = 'Pending Court Hearing'
+PENDING_FINE = 'Pending'
+AUTO_HEARING_NOTE = 'Automatically scheduled after arrest booking.'
+
+
+def _default_hearing_time():
+    """Return a deterministic default arraignment time for arrest automation."""
+    scheduled = datetime.utcnow() + timedelta(days=1)
+    scheduled = scheduled.replace(hour=9, minute=0, second=0, microsecond=0)
+    return scheduled.isoformat()
+
+
+def _parse_fine_amount(value):
+    if value in (None, ''):
+        return None
+    try:
+        return float(str(value).replace('$', '').replace(',', '').strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _compose_arrest_notes(arrest):
+    summary = (arrest.report_notes or arrest.narrative or '').strip()
+    if not summary:
+        return 'Automatically booked after arrest submission.'
+    return f'Automatically booked after arrest submission. Arrest summary: {summary}'
+
+
+def _ensure_arrest_custody_and_hearing(arrest):
+    """Create the linked custody booking and court hearing for a new arrest once."""
+    if not arrest or not arrest.arrest_id:
+        return None, None, None
+
+    inmate = Inmate.query.filter_by(arrest_id=arrest.arrest_id).first()
+    if inmate is None:
+        ts = int(datetime.utcnow().timestamp() * 1000)
+        inmate = Inmate(
+            inmate_id=f'inmate-{ts}-{secrets.token_hex(4)}',
+            suspect_name=arrest.suspect_name or '',
+            charges=arrest.charges or '',
+            penalty=PENDING_SENTENCE,
+            cell='',
+            booked_by=arrest.arresting_officer or 'Unknown',
+            arrest_id=arrest.arrest_id,
+            estimated_release='',
+            notes=f'{_compose_arrest_notes(arrest)} Court Hearing: Scheduled.',
+            status='In Custody',
+            booked_at=datetime.utcnow(),
+        )
+        db.session.add(inmate)
+
+    booking = JailBooking.query.filter_by(arrest_id=arrest.arrest_id).first()
+    if booking is None:
+        ts = int(datetime.utcnow().timestamp() * 1000)
+        booking = JailBooking(
+            booking_id=f'booking-{ts}-{secrets.token_hex(4)}',
+            civilian_id=arrest.civilian_id or '',
+            arrest_id=arrest.arrest_id,
+            suspect_name=arrest.suspect_name or '',
+            charges=arrest.charges or '',
+            booking_officer=arrest.arresting_officer or 'Unknown',
+            cell_assignment='',
+            bond_amount=None,
+            sentence_length=PENDING_SENTENCE,
+            status='In Custody',
+            notes=f'{_compose_arrest_notes(arrest)} Fine: {PENDING_FINE}. Court Hearing: Scheduled.',
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(booking)
+
+    hearing = Hearing.query.filter_by(arrest_id=arrest.arrest_id).first()
+    if hearing is None:
+        ts = int(datetime.utcnow().timestamp() * 1000)
+        hearing = Hearing(
+            hearing_id=f'hearing-{ts}-{secrets.token_hex(5)}',
+            civilian_id=arrest.civilian_id or '',
+            suspect_name=arrest.suspect_name or '',
+            charges=arrest.charges or '',
+            hearing_type='Arraignment',
+            scheduled_at=_default_hearing_time(),
+            judge='',
+            notes=AUTO_HEARING_NOTE,
+            arrest_id=arrest.arrest_id,
+            filing_officer=arrest.arresting_officer or 'Unknown',
+            outcome='',
+            sentence_length='',
+            fine_amount='',
+            outcome_notes='',
+            status='Scheduled',
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(hearing)
+
+    return inmate, booking, hearing
+
+
+def _sync_custody_from_completed_hearing(hearing):
+    """Apply a completed/continued hearing result to linked jail records."""
+    if not hearing or not hearing.arrest_id:
+        return
+    normalized = (hearing.outcome or '').strip().lower()
+    completed = (hearing.status or '').strip().lower() in {'completed', 'dismissed', 'continued'}
+    if not completed and normalized not in {'dismissed', 'not guilty', 'continued'}:
+        return
+
+    booking = JailBooking.query.filter_by(arrest_id=hearing.arrest_id).first()
+    inmate = Inmate.query.filter_by(arrest_id=hearing.arrest_id).first()
+
+    if normalized in {'dismissed', 'not guilty'}:
+        if booking:
+            booking.status = 'Released'
+            booking.sentence_length = 'Dismissed'
+            booking.bond_amount = None
+            booking.release_date = datetime.utcnow()
+            booking.release_reason = f'Hearing outcome: {hearing.outcome}'
+            booking.updated_at = datetime.utcnow()
+        if inmate:
+            inmate.status = 'Released'
+            inmate.penalty = 'Dismissed'
+            inmate.released_at = datetime.utcnow()
+            inmate.released_by = 'Court System'
+            inmate.release_reason = f'Hearing outcome: {hearing.outcome}'
+            inmate.updated_at = datetime.utcnow()
+        return
+
+    if normalized == 'continued':
+        if booking:
+            booking.status = 'In Custody'
+            booking.sentence_length = PENDING_SENTENCE
+            booking.bond_amount = None
+            booking.updated_at = datetime.utcnow()
+        if inmate:
+            inmate.status = 'In Custody'
+            inmate.penalty = PENDING_SENTENCE
+            inmate.updated_at = datetime.utcnow()
+        return
+
+    if normalized in {'guilty', 'sentenced', 'no contest'} or completed:
+        sentence = (hearing.sentence_length or '').strip() or PENDING_SENTENCE
+        fine = _parse_fine_amount(hearing.fine_amount)
+        if booking:
+            booking.status = 'In Custody'
+            booking.sentence_length = sentence
+            booking.bond_amount = fine
+            booking.updated_at = datetime.utcnow()
+        if inmate:
+            inmate.status = 'In Custody'
+            inmate.penalty = sentence
+            inmate.updated_at = datetime.utcnow()
+
 def inmate_to_dict(i):
     return {
         'id': i.inmate_id,
         'suspectName': i.suspect_name,
         'charges': i.charges or '',
         'penalty': i.penalty or '',
+        'sentenceLength': i.penalty or '',
+        'fineAmount': PENDING_FINE if (i.penalty == PENDING_SENTENCE and i.status == 'In Custody') else '',
+        'courtHearingStatus': 'Scheduled' if (i.penalty == PENDING_SENTENCE and i.status == 'In Custody') else '',
         'cell': i.cell or '',
         'bookedBy': i.booked_by,
         'arrestId': i.arrest_id or '',
@@ -268,6 +453,7 @@ def inmate_to_dict(i):
 def hearing_to_dict(h):
     return {
         'id': h.hearing_id,
+        'civilianId': h.civilian_id or '',
         'suspectName': h.suspect_name,
         'charges': h.charges or '',
         'hearingType': h.hearing_type,
@@ -277,6 +463,9 @@ def hearing_to_dict(h):
         'arrestId': h.arrest_id or '',
         'filingOfficer': h.filing_officer or '',
         'outcome': h.outcome or '',
+        'sentenceLength': h.sentence_length or '',
+        'fineAmount': h.fine_amount or '',
+        'outcomeNotes': h.outcome_notes or '',
         'status': h.status,
         'createdAt': (h.created_at.isoformat() + 'Z') if h.created_at else None,
         'updatedAt': (h.updated_at.isoformat() + 'Z') if h.updated_at else None,
@@ -326,6 +515,7 @@ def warrant_to_dict(w):
 def arrest_to_dict(a):
     return {
         'id': a.arrest_id,
+        'civilianId': a.civilian_id or '',
         'suspectName': a.suspect_name or '',
         'charges': a.charges or '',
         'arrestingOfficer': a.arresting_officer or '',
@@ -402,10 +592,12 @@ def jail_booking_to_dict(j):
         'id': j.booking_id,
         'civilianId': j.civilian_id or '',
         'arrestId': j.arrest_id or '',
+        'suspectName': j.suspect_name or '',
         'charges': j.charges or '',
         'bookingOfficer': j.booking_officer or '',
         'cellAssignment': j.cell_assignment or '',
-        'bondAmount': j.bond_amount,
+        'bondAmount': PENDING_FINE if j.sentence_length == PENDING_SENTENCE else (j.bond_amount if j.bond_amount is not None else ''),
+        'fineAmount': PENDING_FINE if j.sentence_length == PENDING_SENTENCE else (j.bond_amount if j.bond_amount is not None else ''),
         'sentenceLength': j.sentence_length or '',
         'status': j.status or 'Booked',
         'releaseDate': j.release_date.isoformat() if j.release_date else None,
@@ -586,6 +778,7 @@ def load_cad_data():
     calls911    = [call911_to_dict(c)      for c in Call911.query.order_by(Call911.created_at.desc()).all()]
     activity    = [activity_log_to_dict(a) for a in ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(200).all()]
     hearings    = [hearing_to_dict(h)      for h in Hearing.query.order_by(Hearing.created_at.desc()).all()]
+    jail_records = [jail_booking_to_dict(j) for j in JailBooking.query.order_by(JailBooking.created_at.desc()).all()]
     return {
         'civilians':   civilians,
         'vehicles':    vehicles,
@@ -599,6 +792,7 @@ def load_cad_data():
         'officers':    DEFAULT_OFFICERS,
         'activityLog': activity,
         'hearings':    hearings,
+        'jailRecords': jail_records,
     }
 
 
@@ -679,6 +873,8 @@ def _upsert_arrest(data):
     obj.narrative          = data.get('narrative', '')
     obj.status             = data.get('status', 'Active')
     obj.updated_at         = datetime.utcnow()
+    _ensure_arrest_custody_and_hearing(obj)
+    return obj
 
 
 def _upsert_incident(data):
@@ -2446,16 +2642,21 @@ def post_cad_data():
                     continue
                 obj = Arrest.query.filter_by(arrest_id=a_id).first()
                 if obj:
+                    obj.civilian_id = a.get('civilianId', a.get('civilian_id', obj.civilian_id))
                     obj.suspect_name = a.get('suspectName', obj.suspect_name)
                     obj.charges = a.get('charges', obj.charges)
                     obj.arresting_officer = a.get('arrestingOfficer', obj.arresting_officer)
                     obj.arrest_location = a.get('arrestLocation', obj.arrest_location)
+                    obj.evidence_attached = a.get('evidenceAttached', obj.evidence_attached)
+                    obj.report_notes = a.get('reportNotes', obj.report_notes)
                     obj.penalty = a.get('penalty', obj.penalty)
                     obj.narrative = a.get('narrative', obj.narrative)
                     obj.status = a.get('status', obj.status)
                     obj.updated_at = datetime.utcnow()
                 else:
-                    db.session.add(Arrest(arrest_id=a_id, suspect_name=a.get('suspectName', ''), charges=a.get('charges', ''), arresting_officer=a.get('arrestingOfficer', ''), arrest_location=a.get('arrestLocation', ''), penalty=a.get('penalty', ''), narrative=a.get('narrative', ''), status=a.get('status', 'Active')))
+                    obj = Arrest(arrest_id=a_id, civilian_id=a.get('civilianId', a.get('civilian_id', '')), suspect_name=a.get('suspectName', ''), charges=a.get('charges', ''), arresting_officer=a.get('arrestingOfficer', ''), arrest_location=a.get('arrestLocation', ''), evidence_attached=a.get('evidenceAttached', ''), report_notes=a.get('reportNotes', ''), penalty=a.get('penalty', ''), narrative=a.get('narrative', ''), status=a.get('status', 'Active'))
+                    db.session.add(obj)
+                _ensure_arrest_custody_and_hearing(obj)
 
         # Incidents
         if 'incidents' in data:
@@ -2611,8 +2812,14 @@ def get_criminal_record():
         )
         jail_records = (
             JailBooking.query
-            .filter(JailBooking.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false())
+            .filter(name_or_id_filter(JailBooking.civilian_id, JailBooking.suspect_name))
             .order_by(JailBooking.created_at.desc())
+            .all()
+        )
+        hearings = (
+            Hearing.query
+            .filter(name_or_id_filter(Hearing.civilian_id, Hearing.suspect_name))
+            .order_by(Hearing.created_at.desc())
             .all()
         )
 
@@ -2626,6 +2833,7 @@ def get_criminal_record():
             'trafficStops': [traffic_stop_to_dict(t) for t in traffic],
             'citations': [citation_to_dict(c) for c in citations],
             'jailRecords': [jail_booking_to_dict(j) for j in jail_records],
+            'hearings': [hearing_to_dict(h) for h in hearings],
             'evidence': [],
         })
     except Exception as e:
@@ -2740,6 +2948,7 @@ def create_hearing():
     rand = secrets.token_hex(5)
     hearing_obj = Hearing(
         hearing_id=f'hearing-{ts}-{rand}',
+        civilian_id=body.get('civilianId', body.get('civilian_id', '')),
         suspect_name=body.get('suspectName', '').strip(),
         charges=body.get('charges', '').strip(),
         hearing_type=body.get('hearingType', 'Arraignment'),
@@ -2749,6 +2958,9 @@ def create_hearing():
         arrest_id=body.get('arrestId', ''),
         filing_officer=body.get('filingOfficer', '').strip(),
         outcome='',
+        sentence_length='',
+        fine_amount='',
+        outcome_notes='',
         status='Scheduled',
     )
     try:
@@ -2769,6 +2981,12 @@ def update_hearing(hearing_id):
         return jsonify({'success': False, 'error': 'Hearing not found'}), 404
     if 'outcome' in body:
         h.outcome = body['outcome']
+    if 'sentenceLength' in body:
+        h.sentence_length = body['sentenceLength']
+    if 'fineAmount' in body:
+        h.fine_amount = body['fineAmount']
+    if 'outcomeNotes' in body:
+        h.outcome_notes = body['outcomeNotes']
     if 'status' in body:
         h.status = body['status']
     if 'judge' in body:
@@ -2778,6 +2996,7 @@ def update_hearing(hearing_id):
     if 'scheduledAt' in body:
         h.scheduled_at = body['scheduledAt']
     h.updated_at = datetime.utcnow()
+    _sync_custody_from_completed_hearing(h)
     try:
         db.session.commit()
     except Exception as e:
@@ -3630,6 +3849,8 @@ def create_arrest_route():
             data['location'],
             data['narrative']
         )
+        _ensure_arrest_custody_and_hearing(arrest)
+        db.session.commit()
 
         # Auto-create warrant if requested
         if data.get('create_warrant'):
