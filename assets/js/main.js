@@ -771,13 +771,75 @@ function handleCivilianForm() {
   const form = document.getElementById('civilian-form');
   if (!form) return;
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    const record = addCivilian(data);
-    renderCivilianPreview(record);
-    showFormMessage(form, 'Civilian profile registered successfully.');
-    form.reset();
+    const raw = getFormData(form);
+
+    // Map form field names to API field names
+    const payload = {
+      first_name: raw.firstName || '',
+      last_name: raw.lastName || '',
+      date_of_birth: raw.dob || '',
+      gender: raw.gender || '',
+      phone_number: raw.phone || '',
+      address: raw.address || '',
+      occupation: raw.occupation || '',
+      gang_affiliation: raw.faction || 'None',
+      emergency_contact_name: raw.emergencyName || '',
+      emergency_contact_phone: raw.emergencyPhone || '',
+      driver_license_status: raw.driverLicense || 'Valid',
+      firearm_license_status: raw.firearmLicense || 'None',
+      business_license_status: raw.businessLicense || 'None',
+      vehicle_make: raw.vehicleMake || '',
+      vehicle_model: raw.vehicleModel || '',
+      vehicle_year: raw.vehicleYear ? parseInt(raw.vehicleYear) : null,
+      vehicle_color: raw.vehicleColor || '',
+      plate_number: raw.plate || '',
+      insurance_status: raw.insurance || 'Active',
+      criminal_background_notes: raw.background || '',
+      character_backstory: raw.backstory || '',
+    };
+
+    const submitBtn = form.querySelector('[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    showFormMessage(form, 'Saving civilian profile…');
+
+    try {
+      const res = await fetch('/api/civilians', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        // Build a preview-compatible record
+        const record = {
+          id: data.civilian_id,
+          firstName: payload.first_name,
+          lastName: payload.last_name,
+          dob: payload.date_of_birth,
+          phone: payload.phone_number,
+          discord: raw.discord || '',
+          address: payload.address,
+          occupation: payload.occupation,
+          driverLicense: payload.driver_license_status,
+          vehicleMake: payload.vehicle_make,
+          vehicleModel: payload.vehicle_model,
+          plate: payload.plate_number,
+          createdAt: new Date().toISOString(),
+        };
+        renderCivilianPreview(record);
+        showFormMessage(form, `✅ Civilian registered — ID: ${data.civilian_id}`);
+        form.reset();
+      } else {
+        showFormMessage(form, `❌ Error: ${data.error || 'Registration failed'}`, 'error');
+      }
+    } catch (err) {
+      showFormMessage(form, `❌ Network error: ${err.message}`, 'error');
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
   });
 }
 
@@ -865,13 +927,60 @@ function handleCivilianLookupForm() {
   const form = document.getElementById('civilian-lookup-form');
   if (!form) return;
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const query = form.querySelector('[name="lookupName"]').value;
-    const results = lookupCivilian(query);
-    renderLookupResults(document.getElementById('civilian-lookup-results'), results, 'civilian');
-    addActivity('Civilian Lookup', `Civilian lookup performed for "${query}"`);
-    showToast(`Found ${results.length} civilian record(s)`, 'info');
+    const query = form.querySelector('[name="lookupName"]').value.trim();
+    const resultsContainer = document.getElementById('civilian-lookup-results');
+    const statusEl = document.getElementById('civilian-lookup-status');
+
+    if (!query || query.length < 2) {
+      if (statusEl) { statusEl.textContent = 'Enter at least 2 characters to search.'; statusEl.className = 'form-status error'; }
+      return;
+    }
+
+    if (statusEl) { statusEl.textContent = 'Searching database…'; statusEl.className = 'form-status'; }
+
+    try {
+      const res = await fetch('/api/civilian/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        const results = data.results || [];
+        // Map API results to the format renderLookupResults expects
+        const mapped = results.map(r => ({
+          id: r.civilian_id,
+          firstName: (r.name || '').split(' ')[0] || '',
+          lastName: (r.name || '').split(' ').slice(1).join(' ') || '',
+          phone: r.phone || '',
+          address: r.address || '',
+          discord: '',
+          dob: '',
+          occupation: '',
+          driverLicense: '',
+          firearmLicense: '',
+          businessLicense: '',
+          vehicleMake: '',
+          vehicleModel: '',
+          plate: '',
+          insuranceStatus: '',
+          criminalNotes: '',
+        }));
+        renderLookupResults(resultsContainer, mapped, 'civilian');
+        addActivity('Civilian Lookup', `Civilian lookup performed for "${query}"`);
+        showToast(`Found ${results.length} civilian record(s)`, 'info');
+        if (statusEl) { statusEl.textContent = `Found ${results.length} record(s)`; statusEl.className = 'form-status success'; }
+      } else {
+        if (resultsContainer) resultsContainer.innerHTML = `<div class="result-card"><p style="color:var(--accent);">${data.error || 'Search failed'}</p></div>`;
+        if (statusEl) { statusEl.textContent = data.error || 'Search failed'; statusEl.className = 'form-status error'; }
+      }
+    } catch (err) {
+      if (resultsContainer) resultsContainer.innerHTML = `<div class="result-card"><p style="color:var(--accent);">Network error: ${err.message}</p></div>`;
+      if (statusEl) { statusEl.textContent = `Network error: ${err.message}`; statusEl.className = 'form-status error'; }
+    }
   });
 }
 

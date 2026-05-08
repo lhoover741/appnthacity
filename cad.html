@@ -373,8 +373,17 @@
             <div id="civilian-search" class="tab-content">
                 <h2>🔍 Search Civilians</h2>
                 <div class="form-group">
-                    <label>Search by Name, Phone, or Address</label>
-                    <input type="text" id="search-query" placeholder="Enter name or details (min 2 characters)..." onkeydown="if(event.key==='Enter') searchCivilians()">
+                    <label>Search Type</label>
+                    <select id="search-type" onchange="updateSearchPlaceholder()">
+                        <option value="name">Name</option>
+                        <option value="dob">Date of Birth</option>
+                        <option value="plate">License Plate</option>
+                        <option value="phone">Phone Number</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Search Query</label>
+                    <input type="text" id="search-query" placeholder="Enter first and last name..." onkeydown="if(event.key==='Enter') searchCivilians()">
                 </div>
                 <button onclick="searchCivilians()">Search</button>
                 <div id="search-results" style="margin-top: 20px;"></div>
@@ -557,7 +566,20 @@
         // Search Civilians
         // ---------------------------------------------------------------------------
 
+        function updateSearchPlaceholder() {
+            const searchType = document.getElementById('search-type').value;
+            const searchInput = document.getElementById('search-query');
+            const placeholders = {
+                'name': 'Enter first and last name...',
+                'dob': 'Enter date (YYYY-MM-DD)...',
+                'plate': 'Enter license plate...',
+                'phone': 'Enter phone number...',
+            };
+            searchInput.placeholder = placeholders[searchType] || 'Search...';
+        }
+
         async function searchCivilians() {
+            const searchType = document.getElementById('search-type') ? document.getElementById('search-type').value : 'name';
             const query = document.getElementById('search-query').value.trim();
             const resultsDiv = document.getElementById('search-results');
 
@@ -566,13 +588,13 @@
                 return;
             }
 
-            resultsDiv.innerHTML = '<p style="color:#0099ff;">Searching...</p>';
+            resultsDiv.innerHTML = '<p style="color:#0099ff;">Searching database...</p>';
 
             try {
-                const response = await fetch('/api/civilian/search', {
+                const response = await fetch('/api/cad/search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query })
+                    body: JSON.stringify({ type: searchType, query })
                 });
                 const data = await response.json();
 
@@ -582,19 +604,27 @@
 
                 const results = data.results || [];
                 if (results.length > 0) {
-                    resultsDiv.innerHTML = results.map(civ => `
+                    resultsDiv.innerHTML = `<p style="color:#00ff00;">Found ${results.length} civilian record(s)</p>` + results.map(civ => `
                         <div class="card">
                             <div class="card-title">${civ.name || '—'}</div>
                             <div class="card-content">
                                 <p><strong>ID:</strong> ${civ.civilian_id}</p>
-                                <p><strong>Risk:</strong> ${civ.risk_level || 'Unknown'}</p>
-                                <p><strong>Phone:</strong> ${civ.phone || '—'}</p>
+                                <p><strong>DOB:</strong> ${civ.date_of_birth || '—'}</p>
+                                <p><strong>Gender:</strong> ${civ.gender || '—'}</p>
+                                <p><strong>Phone:</strong> ${civ.phone_number || '—'}</p>
                                 <p><strong>Address:</strong> ${civ.address || '—'}</p>
+                                <p><strong>Occupation:</strong> ${civ.occupation || '—'}</p>
+                                <p><strong>Gang Affiliation:</strong> ${civ.gang_affiliation || 'None'}</p>
+                                <p><strong>Driver License:</strong> ${civ.driver_license_status || '—'}</p>
+                                <p><strong>Insurance:</strong> ${civ.insurance_status || '—'}</p>
+                                ${civ.plate_number ? `<p><strong>Plate:</strong> ${civ.plate_number}</p>` : ''}
+                                ${civ.vehicle_make ? `<p><strong>Vehicle:</strong> ${civ.vehicle_year || ''} ${civ.vehicle_make} ${civ.vehicle_model || ''} (${civ.vehicle_color || ''})</p>` : ''}
+                                ${civ.criminal_background_notes ? `<p><strong>Criminal Background:</strong> ${civ.criminal_background_notes}</p>` : ''}
                             </div>
                         </div>
                     `).join('');
                 } else {
-                    resultsDiv.innerHTML = '<p style="color:#ff4444;">No civilians found.</p>';
+                    resultsDiv.innerHTML = '<p style="color:#ff4444;">Found 0 civilian record(s)</p>';
                 }
             } catch (error) {
                 resultsDiv.innerHTML = `<p style="color:#ff4444;">❌ Error: ${error.message}</p>`;

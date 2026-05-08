@@ -2758,9 +2758,151 @@ def search_civilians():
         'phone': c.phone_number or '',
         'address': c.address or '',
         'gang_affiliation': c.gang_affiliation or 'None',
+        'risk_level': c.gang_affiliation if c.gang_affiliation and c.gang_affiliation != 'None' else 'Low',
     } for c in civilians]
 
     return jsonify({'success': True, 'results': result, 'total': len(result)})
+
+
+@app.route('/api/cad/search', methods=['POST'])
+def cad_search():
+    """Search civilians in PostgreSQL database."""
+    try:
+        data = request.get_json() or {}
+        query_type = data.get('type', 'name')
+        query_value = data.get('query', '').strip()
+
+        if not query_value:
+            return jsonify({'success': False, 'error': 'Query required'}), 400
+
+        results = []
+
+        if query_type == 'name':
+            # Search by first + last name (partial match)
+            parts = query_value.split()
+            if len(parts) >= 2:
+                first = parts[0]
+                last = ' '.join(parts[1:])
+                civilians = Civilian.query.filter(
+                    Civilian.first_name.ilike(f'{first}%'),
+                    Civilian.last_name.ilike(f'{last}%')
+                ).all()
+            else:
+                # Single name - search both first and last
+                civilians = Civilian.query.filter(
+                    (Civilian.first_name.ilike(f'%{query_value}%')) |
+                    (Civilian.last_name.ilike(f'%{query_value}%'))
+                ).all()
+
+        elif query_type == 'dob':
+            # Search by exact date of birth
+            try:
+                dob = datetime.strptime(query_value, '%Y-%m-%d').date()
+                civilians = Civilian.query.filter_by(date_of_birth=dob).all()
+            except ValueError:
+                return jsonify({'success': False, 'error': 'Invalid DOB format (use YYYY-MM-DD)'}), 400
+
+        elif query_type == 'plate':
+            # Search by license plate
+            civilians = Civilian.query.filter(
+                Civilian.plate_number.ilike(f'%{query_value}%')
+            ).all()
+
+        elif query_type == 'phone':
+            # Search by phone number
+            civilians = Civilian.query.filter(
+                Civilian.phone_number.ilike(f'%{query_value}%')
+            ).all()
+
+        else:
+            return jsonify({'success': False, 'error': 'Invalid search type'}), 400
+
+        # Format results
+        for c in civilians:
+            results.append({
+                'civilian_id': c.civilian_id,
+                'name': f'{c.first_name} {c.last_name}',
+                'date_of_birth': c.date_of_birth.isoformat() if c.date_of_birth else None,
+                'gender': c.gender,
+                'phone_number': c.phone_number,
+                'address': c.address,
+                'occupation': c.occupation,
+                'gang_affiliation': c.gang_affiliation,
+                'driver_license_status': c.driver_license_status,
+                'firearm_license_status': c.firearm_license_status,
+                'business_license_status': c.business_license_status,
+                'vehicle_make': c.vehicle_make,
+                'vehicle_model': c.vehicle_model,
+                'vehicle_year': c.vehicle_year,
+                'vehicle_color': c.vehicle_color,
+                'plate_number': c.plate_number,
+                'insurance_status': c.insurance_status,
+                'criminal_background_notes': c.criminal_background_notes,
+                'character_backstory': c.character_backstory,
+            })
+
+        logger.info(f'CAD search: type={query_type}, query={query_value}, found={len(results)}')
+
+        return jsonify({
+            'success': True,
+            'query_type': query_type,
+            'query': query_value,
+            'results': results,
+            'total': len(results),
+        }), 200
+
+    except Exception as e:
+        logger.error(f'CAD search error: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cad/civilian/<civilian_id>', methods=['GET'])
+def get_cad_civilian(civilian_id):
+    """Get civilian details for CAD."""
+    try:
+        civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+
+        if not civilian:
+            return jsonify({'success': False, 'error': 'Civilian not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'civilian': civilian.to_dict(),
+        }), 200
+
+    except Exception as e:
+        logger.error(f'Failed to get civilian: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cad/civilians', methods=['GET'])
+def get_all_cad_civilians():
+    """Get all civilians for CAD list."""
+    try:
+        civilians = Civilian.query.order_by(Civilian.created_at.desc()).all()
+
+        results = [{
+            'civilian_id': c.civilian_id,
+            'name': f'{c.first_name} {c.last_name}',
+            'date_of_birth': c.date_of_birth.isoformat() if c.date_of_birth else None,
+            'gender': c.gender,
+            'occupation': c.occupation,
+            'gang_affiliation': c.gang_affiliation,
+            'driver_license_status': c.driver_license_status,
+            'insurance_status': c.insurance_status,
+        } for c in civilians]
+
+        logger.info(f'CAD civilians list: total={len(results)}')
+
+        return jsonify({
+            'success': True,
+            'civilians': results,
+            'total': len(results),
+        }), 200
+
+    except Exception as e:
+        logger.error(f'Failed to get civilians list: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/civilian/<civilian_id>', methods=['GET'])
