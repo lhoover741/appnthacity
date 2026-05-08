@@ -15,6 +15,14 @@ from flask_limiter.util import get_remote_address
 from security_service import require_auth, require_role, hash_password, verify_password
 from performance_service import cache, paginate_query
 
+# Force clear SQLAlchemy metadata cache to ensure fresh schema detection
+import sqlalchemy
+from sqlalchemy import inspect as sa_inspect
+
+# This ensures we don't use cached metadata
+if hasattr(sqlalchemy, '_sa_registry'):
+    sqlalchemy._sa_registry.clear()
+
 # Import database and models FIRST
 from database import db, configure_database
 from models import (
