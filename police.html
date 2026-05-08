@@ -1056,19 +1056,23 @@
     }
 
     /* ── BOLO CIVILIAN LOOKUP ── */
-    document.getElementById('bolo-lookup-btn').addEventListener('click', function () {
-      const name = document.getElementById('bolo-name').value.trim().toLowerCase();
+    document.getElementById('bolo-lookup-btn').addEventListener('click', async function () {
+      const name = document.getElementById('bolo-name').value.trim();
+      const status = document.getElementById('bolo-form-status');
       if (!name || name.length < 2) {
-        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--accent);">Enter a suspect name first to lookup civilian records.</span>';
+        status.innerHTML = '<span style="color:var(--accent);">Enter a suspect name first to lookup civilian records.</span>';
         return;
       }
-      const civilians = (NThaCityData.civilians || []);
-      const match = civilians.find(c => {
-        const full = `${c.firstName || ''} ${c.lastName || ''}`.toLowerCase();
-        return full.includes(name) || name.includes(full.trim());
+      status.innerHTML = '<span style="color:var(--muted);">Searching PostgreSQL civilian records…</span>';
+      const res = await fetch('/api/cad/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'name', query: name })
       });
+      const json = await res.json();
+      const match = json.success ? (json.results || [])[0] : null;
       if (!match) {
-        document.getElementById('bolo-form-status').innerHTML = '<span style="color:var(--muted);">No matching civilian found in server records.</span>';
+        status.innerHTML = '<span style="color:var(--muted);">No matching civilian found in PostgreSQL records.</span>';
         return;
       }
       const vehicleParts = [match.vehicleYear, match.vehicleColor, match.vehicleMake, match.vehicleModel].filter(Boolean);
@@ -1078,7 +1082,7 @@
       if (descParts.length && !document.getElementById('bolo-desc').value.trim()) {
         document.getElementById('bolo-desc').value = descParts.join(', ');
       }
-      document.getElementById('bolo-form-status').innerHTML = `<span style="color:#4caf82;">✓ Civilian found — vehicle and description pre-filled. Driver license: <strong>${match.driverLicense || 'Unknown'}</strong>${match.firearmLicense ? ` · Firearm: <strong>${match.firearmLicense}</strong>` : ''}</span>`;
+      status.innerHTML = `<span style="color:#4caf82;">✓ Civilian found — vehicle and description pre-filled. Driver license: <strong>${match.driverLicense || 'Unknown'}</strong>${match.firearmLicense ? ` · Firearm: <strong>${match.firearmLicense}</strong>` : ''}</span>`;
     });
 
     document.getElementById('toggle-bolo-form-btn').addEventListener('click', function () {
@@ -1439,10 +1443,12 @@
       this.disabled = true;
       resultsEl.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching civilian registry…</p>';
 
-      const stored = localStorage.getItem('NThaCityData');
-      const civilians = stored ? (JSON.parse(stored).civilians || []) : [];
+      let civilians = [];
 
       try {
+        const civRes = await fetch('/api/civilians');
+        const civJson = await civRes.json();
+        civilians = civJson.success ? (civJson.civilians || []) : [];
         const res = await fetch('/api/ai/suspect-match', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

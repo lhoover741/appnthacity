@@ -1,33 +1,5 @@
 {
-  "civilians": [
-    {
-      "address": "J",
-      "background": "Y",
-      "backstory": "Y",
-      "businessLicense": "Approved",
-      "createdAt": "2026-05-06T21:44:47.849Z",
-      "discord": "H",
-      "dob": "2026-05-06",
-      "driverLicense": "Revoked",
-      "emergencyName": "J",
-      "emergencyPhone": ":",
-      "faction": "H",
-      "firearmLicense": "Valid",
-      "firstName": "Yucca",
-      "gender": "Non-binary",
-      "id": "civ-1778103887848-3fjkpkiiv",
-      "insurance": "None",
-      "lastName": "Mace",
-      "occupation": "L",
-      "phone": "66666666",
-      "plate": "J",
-      "rpConsent": "on",
-      "vehicleColor": "H",
-      "vehicleMake": "M",
-      "vehicleModel": "K",
-      "vehicleYear": "2009"
-    }
-  ],
+  "civilians": [],
   "vehicles": [],
   "licenses": [],
   "warrants": [
