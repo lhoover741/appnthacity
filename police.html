@@ -1803,23 +1803,72 @@
       this.disabled = true;
       output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">Searching civilian registry and CAD history…</p>';
       try {
-        const params = new URLSearchParams({ query });
-        const res = await fetch(`/api/cad/criminal-record?${params.toString()}`);
-        const json = await res.json();
-        if (!res.ok || !json.success) throw new Error(json.error || 'Search failed.');
+        const params = new URLSearchParams({ q: query });
+        const res = await fetch(`/api/civilians?${params.toString()}`);
+        if (!res.ok) throw new Error('Criminal record lookup failed.');
 
-        const civilians = json.civilians || [];
-        const warrants = json.warrants || [];
-        const arrests = json.arrests || [];
-        const trafficStops = json.trafficStops || [];
-        const citations = json.citations || [];
-        const jailRecords = json.jailRecords || [];
-        const evidence = json.evidence || [];
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Criminal record lookup failed.');
+
+        const civilians = json.civilians || json.results || [];
 
         if (!civilians.length) {
           output.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No civilian record found for that search.</p>';
           return;
         }
+
+        const normalize = value => String(value || '').trim().toLowerCase();
+        const includes = (value, needle) => normalize(value).includes(needle);
+        const queryLower = normalize(query);
+        const civilianIds = new Set();
+        const civilianNames = new Set();
+        const civilianPlates = new Set();
+
+        civilians.forEach(civ => {
+          const id = civ.civilian_id || civ.civilianId || civ.id;
+          const first = civ.firstName || civ.first_name || '';
+          const last = civ.lastName || civ.last_name || '';
+          const fullName = civ.name || `${first} ${last}`.trim();
+          const plate = civ.plate || civ.plate_number || civ.plateNumber;
+          if (id) civilianIds.add(normalize(id));
+          if (fullName) civilianNames.add(normalize(fullName));
+          if (first) civilianNames.add(normalize(first));
+          if (last) civilianNames.add(normalize(last));
+          if (plate) civilianPlates.add(normalize(plate));
+        });
+
+        const matchesCivilian = (record, idFields = [], nameFields = [], plateFields = []) => {
+          const ids = idFields.map(field => normalize(record[field])).filter(Boolean);
+          if (ids.some(id => civilianIds.has(id) || includes(id, queryLower))) return true;
+
+          const names = nameFields.map(field => normalize(record[field])).filter(Boolean);
+          if (names.some(name => civilianNames.has(name) || civilianNames.has(name.replace(/\s+/g, ' ')) || includes(name, queryLower))) return true;
+          if ([...civilianNames].some(name => names.some(recordName => includes(recordName, name) || includes(name, recordName)))) return true;
+
+          const plates = plateFields.map(field => normalize(record[field])).filter(Boolean);
+          if (plates.some(plate => civilianPlates.has(plate) || includes(plate, queryLower))) return true;
+
+          return false;
+        };
+
+        const warrants = (NThaCityData.warrants || []).filter(w =>
+          matchesCivilian(w, ['civilianId', 'civilian_id'], ['warrantName', 'suspectName', 'name'])
+        );
+        const arrests = (NThaCityData.arrests || []).filter(a =>
+          matchesCivilian(a, ['civilianId', 'civilian_id'], ['suspectName', 'name'])
+        );
+        const trafficStops = (NThaCityData.trafficStops || []).filter(t =>
+          matchesCivilian(t, ['civilianId', 'civilian_id'], ['driverName', 'name'], ['trafficPlate', 'plate'])
+        );
+        const citations = (NThaCityData.citations || []).filter(c =>
+          matchesCivilian(c, ['civilianId', 'civilian_id'], ['driverName', 'suspectName', 'name'], ['trafficPlate', 'plate'])
+        );
+        const jailRecords = (NThaCityData.jailRecords || []).filter(j =>
+          matchesCivilian(j, ['civilianId', 'civilian_id'], ['suspectName', 'name'])
+        );
+        const evidence = (NThaCityData.evidence || []).filter(e =>
+          matchesCivilian(e, ['civilianId', 'civilian_id'], ['suspectName', 'name', 'ownerName'], ['plate'])
+        );
 
         const section = (title, icon, items, fn) => !items.length ? '' : `
           <div style="margin-top:16px;">
@@ -1867,7 +1916,7 @@
         const eHtml = section('Evidence', '📦', evidence, e =>
           `<div style="background:#0a0a0a;border:1px solid #4caf8244;border-left:3px solid #4caf82;border-radius:8px;padding:10px 14px;font-size:0.83rem;">Case <strong>${fmt(e.caseNumber)}</strong> · ${fmt(e.evidenceType || e.type)}<br><span style="color:#aaa;">${fmt(e.evidenceDescription || e.description)}</span></div>`);
 
-        const hasCriminalHistory = warrants.length || arrests.length || citations.length || jailRecords.length || trafficStops.length || evidence.length;
+        const hasCriminalHistory = warrants.length || arrests.length || citations.length || jailRecords.length;
         output.innerHTML = `
           ${civHtml}
           ${hasCriminalHistory ? `${wHtml}${aHtml}${cHtml}${jHtml}${tHtml}${eHtml}` : '<p style="color:var(--muted);font-size:0.85rem;margin-top:12px;">No criminal history on file.</p>'}`;
