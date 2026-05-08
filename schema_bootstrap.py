@@ -30,13 +30,19 @@ def bootstrap_schema():
             db.create_all()
             logger.info('✓ Database tables created/verified')
 
-            # Run schema sync to add missing columns
-            logger.info('Syncing schema with SQLAlchemy model...')
-            from schema_sync import sync_schema
-            if sync_schema():
-                logger.info('✓ Schema sync completed')
+            # Run diagnostic
+            logger.info('Running database diagnostic...')
+            from database_diagnostic import diagnose_database
+            if diagnose_database():
+                logger.info('✓ Database diagnostic passed')
             else:
-                logger.warning('⚠ Schema sync had issues but continuing...')
+                logger.warning('⚠ Database diagnostic found issues, running fix...')
+                from database_fix import fix_database
+                if fix_database():
+                    logger.info('✓ Database fix completed')
+                else:
+                    logger.error('✗ Database fix failed')
+                    return False
 
             logger.info('✓ Schema bootstrap completed successfully')
             return True
