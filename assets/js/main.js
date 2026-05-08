@@ -603,6 +603,7 @@ function renderOfficersBoard() {
           <option value="En Route" ${officer.status === 'En Route' ? 'selected' : ''}>En Route</option>
           <option value="On Scene" ${officer.status === 'On Scene' ? 'selected' : ''}>On Scene</option>
           <option value="Busy" ${officer.status === 'Busy' ? 'selected' : ''}>Busy</option>
+          <option value="On Duty" ${officer.status === 'On Duty' ? 'selected' : ''}>On Duty</option>
           <option value="Off Duty" ${officer.status === 'Off Duty' ? 'selected' : ''}>Off Duty</option>
         </select>
       </div>
@@ -656,11 +657,25 @@ function updateWarrantStatus(warrantId, newStatus) {
 }
 
 // Update officer status
-function updateOfficerStatus(officerId, newStatus) {
+async function updateOfficerStatus(officerId, newStatus) {
   const officer = NThaCityData.officers.find(o => o.id === officerId);
   if (officer) {
     officer.status = newStatus;
     officer.lastUpdate = new Date().toISOString();
+    try {
+      await fetch('/api/officer-status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: officerId,
+          status: newStatus,
+          name: officer.name || officerId,
+          department: officer.department || '',
+        }),
+      });
+    } catch (error) {
+      console.warn('Officer status update failed:', error);
+    }
     saveData();
     updateDashboard();
     renderOfficersBoard();

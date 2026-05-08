@@ -2554,17 +2554,36 @@
       return isValid;
     }
 
+    function normalizeOfficerSession(officer) {
+      if (!officer) return null;
+      const officerName = officer.officerName || officer.officer_name || officer.name || '';
+      return {
+        callsign: officer.callsign || '',
+        officerName,
+        name: officerName,
+        department: officer.department || '',
+        status: officer.status || 'On Duty',
+        loggedInAt: officer.loggedInAt || officer.logged_in_at || new Date().toISOString(),
+      };
+    }
+
     function renderOfficerHeader(officer) {
       const dashboard = document.getElementById('my-dashboard-section');
       const label = document.getElementById('my-officer-label');
+      const chip = document.getElementById('officer-header-chip');
       if (!officer || !officer.callsign) {
         if (dashboard) dashboard.style.display = 'none';
         if (label) label.textContent = '—';
+        if (chip) chip.textContent = '👮 Not signed in';
         return;
       }
+      const displayName = officer.officerName || officer.name || '';
       if (dashboard) dashboard.style.display = 'block';
       if (label) {
-        label.innerHTML = `<strong>${officer.callsign}</strong> · ${officer.name} · ${officer.department} · <span class="badge badge-primary">${officer.status || 'On Duty'}</span>`;
+        label.innerHTML = `<strong>${officer.callsign}</strong> · ${displayName} · ${officer.department} · <span class="badge badge-primary">${officer.status || 'On Duty'}</span>`;
+      }
+      if (chip) {
+        chip.textContent = `👮 ${officer.callsign} · ${displayName} · ${officer.department}`;
       }
     }
 
@@ -2576,10 +2595,31 @@
       }
     }
 
+    async function refreshActiveOfficerSessions() {
+      try {
+        const res = await fetch('/api/officer-sessions/active');
+        const json = await res.json();
+        if (!res.ok || !json.success || !Array.isArray(json.sessions)) return;
+        if (typeof NThaCityData !== 'undefined') {
+          NThaCityData.officers = json.sessions.map(session => ({
+            id: session.callsign,
+            name: session.officerName || session.name || '',
+            department: session.department || '',
+            status: session.status || 'On Duty',
+            lastUpdate: session.updatedAt || session.loggedInAt || new Date().toISOString(),
+          }));
+          if (typeof updateDashboard === 'function') updateDashboard();
+          if (typeof renderOfficersBoard === 'function') renderOfficersBoard();
+        }
+      } catch (_) {}
+    }
+
     function setOfficerSession(officer) {
-      localStorage.setItem(OFFICER_SESSION_KEY, JSON.stringify(officer));
+      const normalized = normalizeOfficerSession(officer);
+      localStorage.setItem(OFFICER_SESSION_KEY, JSON.stringify(normalized));
       officerLoginEls().overlay.style.display = 'none';
-      renderOfficerHeader(officer);
+      renderOfficerHeader(normalized);
+      refreshActiveOfficerSessions();
     }
 
     function clearOfficerSession() {
@@ -2587,6 +2627,7 @@
       renderOfficerHeader(null);
       officerLoginEls().overlay.style.display = 'flex';
       validateOfficerLoginForm(true);
+      refreshActiveOfficerSessions();
     }
 
     async function submitOfficerLogin() {
@@ -2594,7 +2635,7 @@
       const els = officerLoginEls();
       const payload = {
         callsign: els.callsign.value.trim(),
-        name: els.name.value.trim(),
+        officerName: els.name.value.trim(),
         department: els.dept.value.trim(),
       };
       els.loginBtn.disabled = true;
@@ -2607,14 +2648,17 @@
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.success) {
-          throw new Error(json.error || 'Unable to start officer session.');
+          const message = res.status === 409 ? 'Callsign already in use.' : (json.error || 'Unable to start officer session.');
+          throw new Error(message);
         }
-        const officer = { ...payload, status: 'On Duty', loggedInAt: new Date().toISOString() };
+        const officer = json.session || { ...payload, status: 'On Duty', loggedInAt: new Date().toISOString() };
         setOfficerSession(officer);
         if (typeof showToast === 'function') showToast(`${payload.callsign} is On Duty`, 'success');
       } catch (err) {
-        setOfficerLoginAlert(err.message === 'Callsign already in use.' ? 'Callsign already in use.' : (err.message || 'Unable to start officer session.'));
+        setOfficerLoginAlert(err.message || 'Unable to start officer session.');
         validateOfficerLoginForm(true);
+      } finally {
+        els.loginBtn.disabled = !validateOfficerLoginForm(false);
       }
     }
 
@@ -2622,7 +2666,11 @@
       const officer = getOfficerSession();
       if (officer && officer.callsign) {
         try {
-          await fetch(`/api/officer-session/${encodeURIComponent(officer.callsign)}`, { method: 'DELETE' });
+          await fetch('/api/officer-sessions/end', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callsign: officer.callsign }),
+          });
         } catch (_) {}
       }
       clearOfficerSession();
@@ -2636,13 +2684,14 @@
         return;
       }
       try {
-        const res = await fetch('/api/officer-sessions');
+        const res = await fetch('/api/officer-sessions/active');
         const json = await res.json();
-        const active = json.sessions && json.sessions[officer.callsign];
+        const sessions = Array.isArray(json.sessions) ? json.sessions : [];
+        const active = sessions.find(s => s.callsign === officer.callsign);
         if (active && active.status === 'On Duty') {
           setOfficerSession({
             callsign: active.callsign,
-            name: active.name || officer.name,
+            officerName: active.officerName || active.name || officer.officerName || officer.name,
             department: active.department || officer.department,
             status: active.status,
             loggedInAt: active.loggedInAt || officer.loggedInAt,
