@@ -334,6 +334,39 @@ def traffic_stop_to_dict(t):
         'createdAt': t.created_at.isoformat() if t.created_at else None,
     }
 
+def citation_to_dict(c):
+    return {
+        'id': c.citation_id,
+        'civilianId': c.civilian_id or '',
+        'issuingOfficer': c.issuing_officer or '',
+        'violation': c.violation or '',
+        'location': c.location or '',
+        'fineAmount': c.fine_amount,
+        'status': c.status or 'Issued',
+        'notes': c.notes or '',
+        'createdAt': c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def jail_booking_to_dict(j):
+    return {
+        'id': j.booking_id,
+        'civilianId': j.civilian_id or '',
+        'arrestId': j.arrest_id or '',
+        'charges': j.charges or '',
+        'bookingOfficer': j.booking_officer or '',
+        'cellAssignment': j.cell_assignment or '',
+        'bondAmount': j.bond_amount,
+        'sentenceLength': j.sentence_length or '',
+        'status': j.status or 'Booked',
+        'releaseDate': j.release_date.isoformat() if j.release_date else None,
+        'releasedBy': j.released_by or '',
+        'releaseReason': j.release_reason or '',
+        'notes': j.notes or '',
+        'createdAt': j.created_at.isoformat() if j.created_at else None,
+    }
+
+
 
 def call911_to_dict(c):
     return {
@@ -2400,24 +2433,96 @@ def post_cad_data():
     return jsonify({'success': True})
 
 
-@app.route('/api/cad/criminal-record', methods=['GET'])
+@app.route('/api/cad/criminal-record', methods=['GET', 'POST'])
 def get_criminal_record():
-    name = request.args.get('name', '').strip().lower()
-    if not name or len(name) < 2:
-        return jsonify({'success': False, 'error': 'Name must be at least 2 characters'}), 400
+    """Find a civilian by ordinary lookup text and return related CAD history."""
+    data = request.get_json(silent=True) or {}
+    search_text = (
+        data.get('query')
+        or data.get('name')
+        or request.args.get('query')
+        or request.args.get('name')
+        or request.args.get('q')
+        or ''
+    ).strip()
 
-    warrants = [{'id': w.warrant_id, 'warrantName': w.warrant_name or '', 'warrantCharges': w.warrant_charges or '', 'warrantStatus': w.warrant_status or 'Active'} for w in Warrant.query.all() if name in (w.warrant_name or '').lower()]
-    arrests = [{'id': a.arrest_id, 'suspectName': a.suspect_name or '', 'charges': a.charges or '', 'penalty': a.penalty or '', 'status': a.status or 'Active'} for a in Arrest.query.all() if name in (a.suspect_name or '').lower()]
-    traffic = [{'id': t.stop_id, 'driverName': t.driver_name or '', 'plate': t.plate or '', 'reason': t.reason or ''} for t in TrafficStop.query.all() if name in (t.driver_name or '').lower()]
-    evidence = [{'id': e.evidence_id, 'caseNumber': e.case_number or '', 'evidenceDescription': e.evidence_description or '', 'status': e.status or 'Active'} for e in Evidence.query.all() if name in (e.case_number or '').lower() or name in (e.evidence_description or '').lower()]
+    if not search_text or len(search_text) < 2:
+        return jsonify({'success': False, 'error': 'Enter at least 2 characters to search.'}), 400
 
-    return jsonify({
-        'success':     True,
-        'warrants':    warrants,
-        'arrests':     arrests,
-        'trafficStops': traffic,
-        'evidence':    evidence,
-    })
+    try:
+        civilians = (
+            _civilian_search_query(search_text)
+            .order_by(Civilian.created_at.desc())
+            .limit(25)
+            .all()
+        )
+        civilian_payloads = [_civilian_response(c) for c in civilians]
+        civilian_ids = [c.civilian_id for c in civilians if c.civilian_id]
+        civilian_plates = [c.plate_number for c in civilians if c.plate_number]
+        full_names = [f'{c.first_name or ""} {c.last_name or ""}'.strip() for c in civilians]
+        name_terms = [search_text, *full_names]
+
+        def name_or_id_filter(id_column, *name_columns):
+            filters = []
+            if civilian_ids is not None:
+                filters.append(id_column.in_(civilian_ids) if civilian_ids else sqlalchemy.false())
+            for term in name_terms:
+                if not term:
+                    continue
+                for column in name_columns:
+                    filters.append(column.ilike(f'%{term}%'))
+            return sqlalchemy.or_(*filters) if filters else sqlalchemy.false()
+
+        warrants = (
+            Warrant.query
+            .filter(name_or_id_filter(Warrant.civilian_id, Warrant.warrant_name))
+            .order_by(Warrant.created_at.desc())
+            .all()
+        )
+        arrests = (
+            Arrest.query
+            .filter(name_or_id_filter(Arrest.civilian_id, Arrest.suspect_name))
+            .order_by(Arrest.created_at.desc())
+            .all()
+        )
+        traffic_filters = [TrafficStop.driver_name.ilike(f'%{term}%') for term in name_terms if term]
+        if civilian_plates:
+            traffic_filters.append(TrafficStop.plate.in_(civilian_plates))
+        traffic_filters.append(TrafficStop.plate.ilike(f'%{search_text}%'))
+        traffic = (
+            TrafficStop.query
+            .filter(sqlalchemy.or_(*traffic_filters))
+            .order_by(TrafficStop.created_at.desc())
+            .all()
+        )
+        citations = (
+            Citation.query
+            .filter(Citation.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false())
+            .order_by(Citation.created_at.desc())
+            .all()
+        )
+        jail_records = (
+            JailBooking.query
+            .filter(JailBooking.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false())
+            .order_by(JailBooking.created_at.desc())
+            .all()
+        )
+
+        return jsonify({
+            'success': True,
+            'query': search_text,
+            'civilians': civilian_payloads,
+            'total': len(civilian_payloads),
+            'warrants': [warrant_to_dict(w) for w in warrants],
+            'arrests': [arrest_to_dict(a) for a in arrests],
+            'trafficStops': [traffic_stop_to_dict(t) for t in traffic],
+            'citations': [citation_to_dict(c) for c in citations],
+            'jailRecords': [jail_booking_to_dict(j) for j in jail_records],
+            'evidence': [],
+        })
+    except Exception as e:
+        logger.error(f'Criminal record lookup failed: {e}')
+        return jsonify({'success': False, 'error': 'Criminal record lookup failed.'}), 500
 
 
 @app.route('/api/ai/shift-summary', methods=['POST'])
