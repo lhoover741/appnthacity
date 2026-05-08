@@ -114,12 +114,19 @@ function addTrafficStop(record) {
   return record;
 }
 
-function addArrest(record) {
-  record.id = generateId('arr');
-  record.createdAt = new Date().toISOString();
-  NThaCityData.arrests.push(record);
-  saveData();
-  return record;
+async function addArrest(record) {
+  const payload = { ...record, id: record.id || generateId('arr') };
+  const res = await fetch('/api/cad/arrests', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Arrest report save failed');
+  }
+  await loadData();
+  return data.arrest;
 }
 
 function addEvidence(record) {
@@ -863,20 +870,27 @@ function handleArrestForm() {
   const form = document.getElementById('arrest-form');
   if (!form) return;
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = getFormData(form);
-    addArrest(data);
-    updateDashboard();
-    renderArrestsTable();
-    addActivity('Arrest Report', `Arrest filed for ${data.suspectName} - ${data.charges}`);
-    showToast('Arrest report filed successfully', 'success');
-    setTimeout(async () => {
-      if (typeof loadData === 'function') await loadData();
-      if (typeof loadCourtHearings === 'function') loadCourtHearings();
-      if (typeof loadJail === 'function') loadJail();
-    }, 500);
-    form.reset();
+    const submitButton = form.querySelector('[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      const arrest = await addArrest(data);
+      updateDashboard();
+      renderArrestsTable();
+      addActivity('Arrest Report', `Arrest filed for ${arrest.suspectName || data.suspectName} - ${arrest.charges || data.charges}`);
+      showToast('Arrest report filed successfully', 'success');
+      if (typeof loadCourtHearings === 'function') await loadCourtHearings();
+      if (typeof loadJail === 'function') await loadJail();
+      const recordInput = document.getElementById('criminal-record-input');
+      if (recordInput && recordInput.value.trim()) document.getElementById('criminal-record-btn')?.click();
+      form.reset();
+    } catch (err) {
+      showToast(err.message || 'Arrest report save failed', 'error');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
   });
 }
 

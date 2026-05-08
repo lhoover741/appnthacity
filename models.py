@@ -329,6 +329,7 @@ class Inmate(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     inmate_id = db.Column(db.String(64), unique=True, nullable=False)
+    civilian_id = db.Column(db.String(64), default='')
     suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
     penalty = db.Column(db.String(255))
