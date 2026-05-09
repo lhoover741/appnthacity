@@ -3074,15 +3074,48 @@ def _ordered_records(records, date_attr='created_at'):
     return sorted(records, key=lambda item: getattr(item, date_attr, None) or datetime.min, reverse=True)
 
 
+def _criminal_record_civilian_response(c):
+    """Civilian payload for record search without extra related-table lookups."""
+    base = c.to_dict()
+    base.update({
+        'id': c.civilian_id,
+        'name': f'{c.first_name or ""} {c.last_name or ""}'.strip(),
+        'firstName': c.first_name or '',
+        'lastName': c.last_name or '',
+        'dob': c.date_of_birth.isoformat() if c.date_of_birth else '',
+        'phone': c.phone_number or '',
+        'faction': c.gang_affiliation or 'None',
+        'emergencyName': c.emergency_contact_name or '',
+        'emergencyPhone': c.emergency_contact_phone or '',
+        'driverLicense': c.driver_license_status or 'Valid',
+        'firearmLicense': c.firearm_license_status or 'None',
+        'businessLicense': c.business_license_status or 'None',
+        'vehicleMake': c.vehicle_make or '',
+        'vehicleModel': c.vehicle_model or '',
+        'vehicleYear': c.vehicle_year,
+        'vehicleColor': c.vehicle_color or '',
+        'plate': c.plate_number or '',
+        'insurance': c.insurance_status or 'Valid',
+        'background': c.criminal_background_notes or '',
+        'backstory': c.character_backstory or '',
+    })
+    return base
+
+
 def _criminal_record_search_payload(search_text):
-    """Search civilians first, then aggregate all records linked to matching civilians."""
+    """Search civilians first, then safely aggregate linked criminal records."""
+    logger.info('Criminal record search query: "%s"', search_text)
+
     civilians = (
         _civilian_search_query(search_text)
         .order_by(Civilian.created_at.desc())
         .limit(25)
         .all()
     )
-    civilian_payloads = [_civilian_response(c) for c in civilians]
+    civilian_payloads = [_criminal_record_civilian_response(c) for c in civilians]
+
+    matched_names = [payload.get('name') or payload.get('civilian_id') for payload in civilian_payloads]
+    logger.info('Criminal record civilian matched: %s', matched_names if matched_names else 'none')
 
     civilian_ids = {c.civilian_id for c in civilians if c.civilian_id}
     civilian_plates = {c.plate_number for c in civilians if c.plate_number}
@@ -3094,6 +3127,16 @@ def _criminal_record_search_payload(search_text):
         for c in civilians
         if (c.first_name or '').strip() and (c.last_name or '').strip()
     ]
+
+    def safe_records(label, query_factory):
+        try:
+            records = query_factory()
+            logger.info('Criminal record %s count: %s', label, len(records))
+            return records
+        except Exception as exc:
+            db.session.rollback()
+            logger.exception('Criminal record %s lookup failed: %s', label, exc)
+            return []
 
     def identity_filter(id_column=None, name_column=None, arrest_column=None, arrest_ids=None):
         filters = []
@@ -3108,38 +3151,79 @@ def _criminal_record_search_payload(search_text):
                 filters.append(sqlalchemy.and_(name_column.ilike(f'%{first}%'), name_column.ilike(f'%{last}%')))
         return sqlalchemy.or_(*filters) if filters else sqlalchemy.false()
 
-    arrests = Arrest.query.filter(identity_filter(Arrest.civilian_id, Arrest.suspect_name)).all()
+    arrests = safe_records(
+        'arrest',
+        lambda: Arrest.query.filter(identity_filter(Arrest.civilian_id, Arrest.suspect_name)).all(),
+    )
     arrest_ids = {a.arrest_id for a in arrests if a.arrest_id}
 
-    jail_records = JailBooking.query.filter(
-        identity_filter(JailBooking.civilian_id, JailBooking.suspect_name, JailBooking.arrest_id, arrest_ids)
-    ).all()
-    hearing_records = Hearing.query.filter(
-        identity_filter(Hearing.civilian_id, Hearing.suspect_name, Hearing.arrest_id, arrest_ids)
-    ).all()
+    inmates = safe_records(
+        'inmate',
+        lambda: Inmate.query.filter(
+            identity_filter(Inmate.civilian_id, Inmate.suspect_name, Inmate.arrest_id, arrest_ids)
+        ).all(),
+    )
+    jail_records = safe_records(
+        'jail booking',
+        lambda: JailBooking.query.filter(
+            identity_filter(JailBooking.civilian_id, JailBooking.suspect_name, JailBooking.arrest_id, arrest_ids)
+        ).all(),
+    )
+    hearing_records = safe_records(
+        'hearing',
+        lambda: Hearing.query.filter(
+            identity_filter(Hearing.civilian_id, Hearing.suspect_name, Hearing.arrest_id, arrest_ids)
+        ).all(),
+    )
 
     related_arrest_ids = set(arrest_ids)
+    related_arrest_ids.update(i.arrest_id for i in inmates if i.arrest_id)
     related_arrest_ids.update(j.arrest_id for j in jail_records if j.arrest_id)
     related_arrest_ids.update(h.arrest_id for h in hearing_records if h.arrest_id)
-    if related_arrest_ids - arrest_ids:
-        arrests.extend(Arrest.query.filter(Arrest.arrest_id.in_(related_arrest_ids - arrest_ids)).all())
+    missing_arrest_ids = related_arrest_ids - arrest_ids
+    if missing_arrest_ids:
+        arrests.extend(safe_records(
+            'arrest backfill',
+            lambda: Arrest.query.filter(Arrest.arrest_id.in_(missing_arrest_ids)).all(),
+        ))
+        arrests = _dedupe_records(arrests, 'arrest_id')
         arrest_ids = {a.arrest_id for a in arrests if a.arrest_id}
-        jail_records.extend(JailBooking.query.filter(JailBooking.arrest_id.in_(arrest_ids)).all())
-        hearing_records.extend(Hearing.query.filter(Hearing.arrest_id.in_(arrest_ids)).all())
+        inmates.extend(safe_records(
+            'inmate arrest-link backfill',
+            lambda: Inmate.query.filter(Inmate.arrest_id.in_(arrest_ids)).all() if arrest_ids else [],
+        ))
+        jail_records.extend(safe_records(
+            'jail booking arrest-link backfill',
+            lambda: JailBooking.query.filter(JailBooking.arrest_id.in_(arrest_ids)).all() if arrest_ids else [],
+        ))
+        hearing_records.extend(safe_records(
+            'hearing arrest-link backfill',
+            lambda: Hearing.query.filter(Hearing.arrest_id.in_(arrest_ids)).all() if arrest_ids else [],
+        ))
 
-    warrants = Warrant.query.filter(identity_filter(Warrant.civilian_id, Warrant.warrant_name)).all()
-    citations = Citation.query.filter(Citation.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false()).all()
+    warrants = safe_records(
+        'warrant',
+        lambda: Warrant.query.filter(identity_filter(Warrant.civilian_id, Warrant.warrant_name)).all(),
+    )
+    citations = safe_records(
+        'citation',
+        lambda: Citation.query.filter(Citation.civilian_id.in_(civilian_ids) if civilian_ids else sqlalchemy.false()).all(),
+    )
 
-    traffic_filters = []
-    if lower_full_names:
-        traffic_filters.append(sqlalchemy.func.lower(TrafficStop.driver_name).in_(lower_full_names))
-    for first, last in name_pairs:
-        traffic_filters.append(sqlalchemy.and_(TrafficStop.driver_name.ilike(f'%{first}%'), TrafficStop.driver_name.ilike(f'%{last}%')))
-    if civilian_plates:
-        traffic_filters.append(TrafficStop.plate.in_(civilian_plates))
-    traffic = TrafficStop.query.filter(sqlalchemy.or_(*traffic_filters) if traffic_filters else sqlalchemy.false()).all()
+    def traffic_query():
+        traffic_filters = []
+        if lower_full_names:
+            traffic_filters.append(sqlalchemy.func.lower(TrafficStop.driver_name).in_(lower_full_names))
+        for first, last in name_pairs:
+            traffic_filters.append(sqlalchemy.and_(TrafficStop.driver_name.ilike(f'%{first}%'), TrafficStop.driver_name.ilike(f'%{last}%')))
+        if civilian_plates:
+            traffic_filters.append(TrafficStop.plate.in_(civilian_plates))
+        return TrafficStop.query.filter(sqlalchemy.or_(*traffic_filters) if traffic_filters else sqlalchemy.false()).all()
+
+    traffic = safe_records('traffic stop', traffic_query)
 
     arrests = _dedupe_records(arrests, 'arrest_id')
+    inmates = _dedupe_records(inmates, 'inmate_id')
     jail_records = _dedupe_records(jail_records, 'booking_id')
     hearing_records = _dedupe_records(hearing_records, 'hearing_id')
     warrants = _dedupe_records(warrants, 'warrant_id')
@@ -3147,6 +3231,7 @@ def _criminal_record_search_payload(search_text):
     traffic = _dedupe_records(traffic, 'stop_id')
 
     linked_case_numbers = set(arrest_ids)
+    linked_case_numbers.update(i.inmate_id for i in inmates if i.inmate_id)
     linked_case_numbers.update(j.booking_id for j in jail_records if j.booking_id)
     linked_case_numbers.update(h.hearing_id for h in hearing_records if h.hearing_id)
     linked_case_numbers.update(c.citation_id for c in citations if c.citation_id)
@@ -3155,14 +3240,25 @@ def _criminal_record_search_payload(search_text):
     for arrest in arrests:
         attached = (arrest.evidence_attached or '').replace(',', ' ').replace(';', ' ').split()
         linked_evidence_ids.update(token.strip() for token in attached if token.strip())
-    evidence_filters = []
-    if linked_case_numbers:
-        evidence_filters.append(Evidence.case_number.in_(linked_case_numbers))
-    if linked_evidence_ids:
-        evidence_filters.append(Evidence.evidence_id.in_(linked_evidence_ids))
-    evidence = Evidence.query.filter(sqlalchemy.or_(*evidence_filters) if evidence_filters else sqlalchemy.false()).all()
 
-    has_criminal_history = any([arrests, jail_records, hearing_records, warrants, citations, traffic, evidence])
+    def evidence_query():
+        evidence_filters = []
+        if linked_case_numbers:
+            evidence_filters.append(Evidence.case_number.in_(linked_case_numbers))
+        if linked_evidence_ids:
+            evidence_filters.append(Evidence.evidence_id.in_(linked_evidence_ids))
+        if not evidence_filters:
+            return []
+        return Evidence.query.filter(sqlalchemy.or_(*evidence_filters)).all()
+
+    evidence = safe_records('evidence', evidence_query)
+
+    logger.info('Criminal record arrest count: %s', len(arrests))
+    logger.info('Criminal record inmate count: %s', len(inmates))
+    logger.info('Criminal record jail booking count: %s', len(jail_records))
+    logger.info('Criminal record hearing count: %s', len(hearing_records))
+
+    has_criminal_history = any([arrests, inmates, jail_records, hearing_records, warrants, citations, traffic, evidence])
 
     return {
         'success': True,
@@ -3171,6 +3267,7 @@ def _criminal_record_search_payload(search_text):
         'civilians': civilian_payloads,
         'total': len(civilian_payloads),
         'arrests': [arrest_to_dict(a) for a in _ordered_records(arrests)],
+        'inmates': [inmate_to_dict(i) for i in _ordered_records(inmates, 'booked_at')],
         'jailBookings': [jail_booking_to_dict(j) for j in _ordered_records(jail_records)],
         'jailRecords': [jail_booking_to_dict(j) for j in _ordered_records(jail_records)],
         'hearings': [hearing_to_dict(h) for h in _ordered_records(hearing_records)],
@@ -3192,6 +3289,7 @@ def search_criminal_records():
             'civilian': {},
             'civilians': [],
             'arrests': [],
+            'inmates': [],
             'jailBookings': [],
             'jailRecords': [],
             'hearings': [],
@@ -3214,8 +3312,8 @@ def search_criminal_records():
         )
         return jsonify(payload)
     except Exception as e:
-        logger.exception(f'Criminal record lookup failed: {e}')
-        return jsonify({'success': False, 'error': 'Criminal record lookup failed.'}), 500
+        logger.exception('Criminal record lookup endpoint failed for "%s": %s', search_text, e)
+        return jsonify({'success': False, 'error': f'Criminal record lookup failed: {e}'}), 500
 
 
 @app.route('/api/cad/criminal-record', methods=['GET', 'POST'])
@@ -3236,6 +3334,7 @@ def get_criminal_record():
             'civilian': {},
             'civilians': [],
             'arrests': [],
+            'inmates': [],
             'jailBookings': [],
             'jailRecords': [],
             'hearings': [],
@@ -3249,8 +3348,8 @@ def get_criminal_record():
     try:
         return jsonify(_criminal_record_search_payload(search_text))
     except Exception as e:
-        logger.exception(f'Criminal record lookup failed: {e}')
-        return jsonify({'success': False, 'error': 'Criminal record lookup failed.'}), 500
+        logger.exception('Criminal record lookup endpoint failed for "%s": %s', search_text, e)
+        return jsonify({'success': False, 'error': f'Criminal record lookup failed: {e}'}), 500
 
 
 @app.route('/api/ai/shift-summary', methods=['POST'])

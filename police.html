@@ -1809,12 +1809,18 @@
         try {
           json = await res.json();
         } catch (parseErr) {
+          console.error('Criminal record lookup returned non-JSON response.', { status: res.status, parseErr });
           if (res.ok) throw parseErr;
-          throw new Error('Criminal record lookup failed.');
+          throw new Error('Server returned a non-JSON error response.');
         }
-        if (!res.ok) throw new Error(json.error || 'Criminal record lookup failed.');
+        if (!res.ok) {
+          console.error('Criminal record lookup backend error.', json);
+          throw new Error(json.error || `HTTP ${res.status}`);
+        }
         if (!json.success) {
-          output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${escapeHtml(json.error || 'Criminal record lookup failed.')}</p>`;
+          const backendError = json.error || 'Unknown backend error.';
+          console.error('Criminal record lookup backend returned success:false.', json);
+          output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Criminal record lookup failed: ${escapeHtml(backendError)}</p>`;
           return;
         }
 
@@ -1823,7 +1829,9 @@
         const arrests = json.arrests || [];
         const trafficStops = json.trafficStops || [];
         const citations = json.citations || [];
-        const jailRecords = json.jailBookings || json.jailRecords || [];
+        const jailBookings = json.jailBookings || json.jailRecords || [];
+        const inmates = json.inmates || [];
+        const jailRecords = [...jailBookings, ...inmates];
         const hearings = json.hearings || [];
         const evidence = json.evidence || [];
 
@@ -1890,8 +1898,8 @@
           `<div style="background:#0a0a0a;border:1px solid #f5a62344;border-left:3px solid #f5a623;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(a.suspectName)}</strong> <span style="color:#aaa;font-size:0.72rem;">${fmt(a.id)}</span><br><span style="color:#aaa;">${fmt(a.charges)}</span><br>Officer: ${fmt(a.arrestingOfficer)} · Arrest Date: ${fmt(a.createdAt ? new Date(a.createdAt).toLocaleString() : '')} · Penalty: ${fmt(a.penalty)}${a.reportNotes || a.narrative ? `<br><span style="color:#888;font-style:italic;">${fmt(a.reportNotes || a.narrative)}</span>` : ''}</div>`);
         const cHtml = section('Related Citations', '🧾', citations, c =>
           `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(c.violation)}</strong> <span style="color:#aaa;">${fmt(c.status)}</span><br>Fine: ${fmt(c.fineAmount)} · Officer: ${fmt(c.issuingOfficer)} · ${fmt(c.location)}</div>`);
-        const jHtml = section('Related Jail Records', '🚔', jailRecords, j =>
-          `<div style="background:#0a0a0a;border:1px solid #9b59b644;border-left:3px solid #9b59b6;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(j.charges)}</strong> <span style="color:#aaa;">${fmt(j.status)}</span><br>Booking Officer: ${fmt(j.bookingOfficer)} · Cell: ${fmt(j.cellAssignment)} · Sentence: ${fmt(j.sentenceLength)} · Fine: ${fmt(j.fineAmount || j.bondAmount)}</div>`);
+        const jHtml = section('Related Jail/Custody Records', '🚔', jailRecords, j =>
+          `<div style="background:#0a0a0a;border:1px solid #9b59b644;border-left:3px solid #9b59b6;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(j.charges)}</strong> <span style="color:#aaa;">${fmt(j.status)}</span><br>Booking Officer: ${fmt(j.bookingOfficer || j.bookedBy)} · Cell: ${fmt(j.cellAssignment || j.cell)} · Sentence: ${fmt(j.sentenceLength || j.penalty)} · Fine: ${fmt(j.fineAmount || j.bondAmount)}</div>`);
         const hHtml = section('Related Hearings', '🏛', hearings, h =>
           `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(h.hearingType || 'Arraignment')}</strong> <span style="color:#aaa;">${fmt(h.status)}</span><br>${fmt(h.charges)} · Scheduled: ${fmt(h.scheduledAt)} · Outcome: ${fmt(h.outcome || 'Pending')}</div>`);
         const tHtml = section('Traffic Stops', '🚗', trafficStops, t =>
@@ -1905,7 +1913,8 @@
           ${criminalPresenceHtml}
           ${hasCriminalHistory ? `${wHtml}${aHtml}${cHtml}${jHtml}${hHtml}${tHtml}${eHtml}` : '<p style="color:var(--muted);font-size:0.85rem;margin-top:12px;">No criminal history on file.</p>'}`;
       } catch (err) {
-        output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Error: ${escapeHtml(err.message || 'Search failed.')}</p>`;
+        console.error('Criminal record lookup failed.', err);
+        output.innerHTML = `<p style="color:var(--accent);font-size:0.85rem;">Criminal record lookup failed: ${escapeHtml(err.message || 'Search failed.')}</p>`;
       } finally {
         this.disabled = false;
       }
