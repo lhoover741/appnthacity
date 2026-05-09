@@ -4214,6 +4214,408 @@ def release_vehicle_route(plate):
 
 
 # ---------------------------------------------------------------------------
+# DMV Vehicle CRUD Routes (Phase 1: Dedicated backend persistence)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/dmv/vehicles', methods=['GET'])
+def get_all_vehicles():
+    """List all vehicles in DMV database."""
+    try:
+        vehicles = Vehicle.query.order_by(Vehicle.created_at.desc()).all()
+        result = [vehicle_to_dict(v) for v in vehicles]
+        return jsonify({'success': True, 'vehicles': result, 'total': len(result)})
+    except Exception as e:
+        logger.error(f'Failed to get vehicles: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dmv/vehicles', methods=['POST'])
+def create_vehicle():
+    """Create a new vehicle registration in DMV."""
+    data = request.get_json(silent=True) or {}
+    
+    # Field mapping: frontend camelCase -> database snake_case
+    plate = (data.get('plateau Number') or data.get('plateNumber') or data.get('plate') or '').strip()
+    if not plate:
+        return jsonify({'success': False, 'error': 'plate number is required'}), 400
+    
+    # Check for duplicates
+    existing = Vehicle.query.filter_by(plate=plate).first()
+    if existing:
+        return jsonify({'success': False, 'error': f'Vehicle with plate {plate} already exists'}), 409
+    
+    try:
+        owner_civilian_id = data.get('ownerCivilianId') or data.get('owner_civilian_id') or ''
+        vehicle = Vehicle(
+            vehicle_id=f"VEH-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}",
+            owner_civilian_id=owner_civilian_id,
+            plate=plate,
+            vin=data.get('vin', ''),
+            make=(data.get('vehicleMake') or data.get('make') or '').strip(),
+            model=(data.get('vehicleModel') or data.get('model') or '').strip(),
+            color=(data.get('vehicleColor') or data.get('color') or '').strip(),
+            registration_status=(data.get('registrationStatus') or data.get('registration_status') or 'Valid').strip(),
+            insurance_status=(data.get('insuranceStatus') or data.get('insurance_status') or 'Valid').strip(),
+            notes=data.get('notes', ''),
+            owner_name=data.get('ownerName') or data.get('owner_name') or '',
+        )
+        db.session.add(vehicle)
+        db.session.commit()
+        
+        logger.info(f'Vehicle registered: {plate} owner={vehicle.owner_name}')
+        return jsonify({
+            'success': True,
+            'vehicle_id': vehicle.vehicle_id,
+            'vehicle': vehicle_to_dict(vehicle)
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to create vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dmv/vehicles/<plate>', methods=['PUT'])
+def update_vehicle(plate):
+    """Update an existing vehicle registration."""
+    data = request.get_json(silent=True) or {}
+    
+    try:
+        vehicle = Vehicle.query.filter_by(plate=plate).first()
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+        
+        # Update mappable fields from frontend -> database
+        if 'vehicleMake' in data or 'make' in data:
+            vehicle.make = (data.get('vehicleMake') or data.get('make') or '').strip()
+        if 'vehicleModel' in data or 'model' in data:
+            vehicle.model = (data.get('vehicleModel') or data.get('model') or '').strip()
+        if 'vehicleColor' in data or 'color' in data:
+            vehicle.color = (data.get('vehicleColor') or data.get('color') or '').strip()
+        if 'insuranceStatus' in data or 'insurance_status' in data:
+            vehicle.insurance_status = (data.get('insuranceStatus') or data.get('insurance_status') or 'Valid').strip()
+        if 'registrationStatus' in data or 'registration_status' in data:
+            vehicle.registration_status = (data.get('registrationStatus') or data.get('registration_status') or 'Valid').strip()
+        if 'ownerName' in data or 'owner_name' in data:
+            vehicle.owner_name = (data.get('ownerName') or data.get('owner_name') or '').strip()
+        if 'notes' in data:
+            vehicle.notes = data.get('notes', '')
+        if 'vin' in data:
+            vehicle.vin = data.get('vin', '')
+        
+        vehicle.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        logger.info(f'Vehicle updated: {plate}')
+        return jsonify({'success': True, 'vehicle': vehicle_to_dict(vehicle)})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to update vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dmv/vehicles/<plate>', methods=['DELETE'])
+def delete_vehicle(plate):
+    """Delete a vehicle registration (admin only)."""
+    try:
+        vehicle = Vehicle.query.filter_by(plate=plate).first()
+        if not vehicle:
+            return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
+        
+        db.session.delete(vehicle)
+        db.session.commit()
+        
+        logger.info(f'Vehicle deleted: {plate}')
+        return jsonify({'success': True, 'message': 'Vehicle deleted'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to delete vehicle: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# DMV License CRUD Routes (Phase 1: Dedicated backend persistence)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/dmv/licenses', methods=['GET'])
+def get_all_licenses():
+    """List all licenses in DMV database."""
+    try:
+        licenses = License.query.order_by(License.created_at.desc()).all()
+        result = [license_to_dict(l) for l in licenses]
+        return jsonify({'success': True, 'licenses': result, 'total': len(result)})
+    except Exception as e:
+        logger.error(f'Failed to get licenses: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dmv/licenses', methods=['POST'])
+def create_license():
+    """Create a new driver license in DMV."""
+    data = request.get_json(silent=True) or {}
+    
+    # Field mapping: frontend camelCase -> database snake_case
+    owner_name = (data.get('licenseName') or data.get('ownerName') or data.get('owner_name') or '').strip()
+    if not owner_name:
+        return jsonify({'success': False, 'error': 'owner name is required'}), 400
+    
+    license_type = (data.get('licenseClass') or data.get('licenseType') or data.get('license_type') or '').strip()
+    if not license_type:
+        return jsonify({'success': False, 'error': 'license class/type is required'}), 400
+    
+    try:
+        license_id = f"LIC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+        license_obj = License(
+            license_id=license_id,
+            owner_name=owner_name,
+            license_type=license_type,
+            status=(data.get('status') or 'Valid').strip(),
+            issued_date=data.get('licenseIssuedDate') or data.get('issued_date') or '',
+            expiry_date=data.get('licenseExpiration') or data.get('expiryDate') or data.get('expiry_date') or '',
+            notes=data.get('notes', '') or data.get('restrictions', ''),
+        )
+        db.session.add(license_obj)
+        db.session.commit()
+        
+        logger.info(f'License issued: {license_id} to {owner_name} class={license_type}')
+        return jsonify({
+            'success': True,
+            'license_id': license_id,
+            'license': license_to_dict(license_obj)
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to create license: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dmv/licenses/<license_id>', methods=['PUT'])
+def update_license_route(license_id):
+    """Update an existing driver license."""
+    data = request.get_json(silent=True) or {}
+    
+    try:
+        license_obj = License.query.filter_by(license_id=license_id).first()
+        if not license_obj:
+            return jsonify({'success': False, 'error': 'License not found'}), 404
+        
+        # Update mappable fields
+        if 'ownerName' in data or 'licenseName' in data or 'owner_name' in data:
+            val = data.get('ownerName') or data.get('licenseName') or data.get('owner_name')
+            if val:
+                license_obj.owner_name = val.strip()
+        if 'licenseClass' in data or 'licenseType' in data or 'license_type' in data:
+            val = data.get('licenseClass') or data.get('licenseType') or data.get('license_type')
+            if val:
+                license_obj.license_type = val.strip()
+        if 'status' in data:
+            license_obj.status = data.get('status', 'Valid').strip()
+        if 'licenseExpiration' in data or 'expiryDate' in data or 'expiry_date' in data:
+            license_obj.expiry_date = data.get('licenseExpiration') or data.get('expiryDate') or data.get('expiry_date') or ''
+        if 'notes' in data:
+            license_obj.notes = data.get('notes', '')
+        if 'restrictions' in data:
+            license_obj.notes = data.get('restrictions', '')
+        
+        license_obj.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        logger.info(f'License updated: {license_id}')
+        return jsonify({'success': True, 'license': license_to_dict(license_obj)})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to update license: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/dmv/licenses/<license_id>', methods=['DELETE'])
+def delete_license_route(license_id):
+    """Delete a driver license (admin only)."""
+    try:
+        license_obj = License.query.filter_by(license_id=license_id).first()
+        if not license_obj:
+            return jsonify({'success': False, 'error': 'License not found'}), 404
+        
+        db.session.delete(license_obj)
+        db.session.commit()
+        
+        logger.info(f'License deleted: {license_id}')
+        return jsonify({'success': True, 'message': 'License deleted'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to delete license: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Business CRUD Routes (Phase 1: Complete business persistence)
+# ---------------------------------------------------------------------------
+
+def business_to_dict(b):
+    """Convert Business model to JSON response dict."""
+    return {
+        'business_id': b.business_id,
+        'owner_civilian_id': b.owner_civilian_id or '',
+        'business_name': b.business_name or '',
+        'business_type': b.business_type or '',
+        'license_status': b.license_status or 'Active',
+        'address': b.address or '',
+        'employees': b.employees or 0,
+        'inspection_notes': b.inspection_notes or '',
+        'legal_flags': b.legal_flags or '',
+        'created_at': b.created_at.isoformat() if b.created_at else None,
+        'updated_at': b.updated_at.isoformat() if b.updated_at else None,
+    }
+
+
+@app.route('/api/businesses', methods=['GET'])
+def get_all_businesses():
+    """List all businesses in the system."""
+    try:
+        businesses = Business.query.order_by(Business.created_at.desc()).all()
+        result = [business_to_dict(b) for b in businesses]
+        return jsonify({'success': True, 'businesses': result, 'total': len(result)})
+    except Exception as e:
+        logger.error(f'Failed to get businesses: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/businesses', methods=['POST'])
+def create_business():
+    """Create a new business registration."""
+    data = request.get_json(silent=True) or {}
+    
+    business_name = (data.get('businessName') or data.get('business_name') or '').strip()
+    if not business_name:
+        return jsonify({'success': False, 'error': 'business_name is required'}), 400
+    
+    try:
+        business_id = f"BIZ-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+        business = Business(
+            business_id=business_id,
+            owner_civilian_id=data.get('ownerCivilianId') or data.get('owner_civilian_id') or '',
+            business_name=business_name,
+            business_type=(data.get('businessType') or data.get('business_type') or '').strip(),
+            license_status=(data.get('licenseStatus') or data.get('license_status') or 'Active').strip(),
+            address=data.get('address') or data.get('desiredLocation') or '',
+            employees=int(data.get('employees', 0)) if data.get('employees') else 0,
+            inspection_notes=data.get('inspectionNotes') or data.get('inspection_notes') or '',
+            legal_flags=data.get('legalFlags') or data.get('legal_flags') or data.get('illegalDisclosure') or '',
+        )
+        db.session.add(business)
+        db.session.commit()
+        
+        logger.info(f'Business registered: {business_id} name={business_name} type={business.business_type}')
+        
+        # Log audit trail
+        try:
+            from cad_helpers import log_audit
+            log_audit('business', 'create', 'Business', business_id)
+        except:
+            pass
+        
+        return jsonify({
+            'success': True,
+            'business_id': business_id,
+            'business': business_to_dict(business)
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to create business: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/businesses/<business_id>', methods=['GET'])
+def get_business(business_id):
+    """Get a specific business by ID."""
+    try:
+        business = Business.query.filter_by(business_id=business_id).first()
+        if not business:
+            return jsonify({'success': False, 'error': 'Business not found'}), 404
+        
+        return jsonify({'success': True, 'business': business_to_dict(business)})
+    except Exception as e:
+        logger.error(f'Failed to get business: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/businesses/<business_id>', methods=['PUT'])
+def update_business(business_id):
+    """Update an existing business."""
+    data = request.get_json(silent=True) or {}
+    
+    try:
+        business = Business.query.filter_by(business_id=business_id).first()
+        if not business:
+            return jsonify({'success': False, 'error': 'Business not found'}), 404
+        
+        # Update fields if provided
+        if 'businessName' in data or 'business_name' in data:
+            val = data.get('businessName') or data.get('business_name')
+            if val:
+                business.business_name = val.strip()
+        if 'businessType' in data or 'business_type' in data:
+            val = data.get('businessType') or data.get('business_type')
+            if val:
+                business.business_type = val.strip()
+        if 'licenseStatus' in data or 'license_status' in data:
+            val = data.get('licenseStatus') or data.get('license_status')
+            if val:
+                business.license_status = val.strip()
+        if 'address' in data or 'desiredLocation' in data:
+            business.address = (data.get('address') or data.get('desiredLocation') or '').strip()
+        if 'employees' in data:
+            try:
+                business.employees = int(data.get('employees', 0))
+            except:
+                pass
+        if 'inspectionNotes' in data or 'inspection_notes' in data:
+            business.inspection_notes = (data.get('inspectionNotes') or data.get('inspection_notes') or '').strip()
+        if 'legalFlags' in data or 'legal_flags' in data or 'illegalDisclosure' in data:
+            val = data.get('legalFlags') or data.get('legal_flags') or data.get('illegalDisclosure')
+            if val:
+                business.legal_flags = val.strip()
+        if 'ownerCivilianId' in data or 'owner_civilian_id' in data:
+            val = data.get('ownerCivilianId') or data.get('owner_civilian_id')
+            if val:
+                business.owner_civilian_id = val.strip()
+        
+        business.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        logger.info(f'Business updated: {business_id}')
+        return jsonify({'success': True, 'business': business_to_dict(business)})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to update business: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/businesses/<business_id>', methods=['DELETE'])
+def delete_business(business_id):
+    """Delete a business (admin only)."""
+    try:
+        business = Business.query.filter_by(business_id=business_id).first()
+        if not business:
+            return jsonify({'success': False, 'error': 'Business not found'}), 404
+        
+        db.session.delete(business)
+        db.session.commit()
+        
+        logger.info(f'Business deleted: {business_id}')
+        return jsonify({'success': True, 'message': 'Business deleted'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Failed to delete business: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/applications', methods=['GET'])
+@admin_required
+def list_applications_admin():
+    """List applications (admin endpoint)."""
+    return list_applications()
+
+# ---------------------------------------------------------------------------
 # World Realism Routes
 # ---------------------------------------------------------------------------
 

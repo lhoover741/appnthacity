@@ -82,28 +82,100 @@ async function addCivilian(record) {
   return data.civilian;
 }
 
-function addVehicle(record) {
-  record.id = generateId('veh');
-  record.createdAt = new Date().toISOString();
-  NThaCityData.vehicles.push(record);
-  saveData();
-  return record;
+// PHASE 1 REPLACEMENT: Use dedicated /api/dmv/vehicles route instead of legacy saveData
+async function addVehicle(record) {
+  try {
+    const payload = {
+      plateNumber: record.plateNumber || record.plate,
+      vehicleMake: record.vehicleMake || record.make,
+      vehicleModel: record.vehicleModel || record.model,
+      vehicleColor: record.vehicleColor || record.color,
+      insuranceStatus: record.insuranceStatus || 'Valid',
+      registrationStatus: record.registrationStatus || 'Valid',
+      ownerName: record.ownerName || '',
+      notes: record.notes || '',
+      ownerCivilianId: record.ownerCivilianId || '',
+    };
+    
+    const res = await fetch('/api/dmv/vehicles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Vehicle registration failed');
+    }
+    // Refresh data from backend after success
+    await loadData();
+    return data.vehicle;
+  } catch (error) {
+    console.error('Vehicle registration error:', error);
+    throw error;
+  }
 }
 
-function addLicense(record) {
-  record.id = generateId('lic');
-  record.createdAt = new Date().toISOString();
-  NThaCityData.licenses.push(record);
-  saveData();
-  return record;
+// PHASE 1 REPLACEMENT: Use dedicated /api/dmv/licenses route instead of legacy saveData
+async function addLicense(record) {
+  try {
+    const payload = {
+      licenseName: record.licenseName || record.ownerName,
+      licenseClass: record.licenseClass || record.licenseType,
+      testStatus: record.testStatus || 'Passed',
+      licenseExpiration: record.licenseExpiration || record.expiryDate,
+      restrictions: record.restrictions || '',
+      status: record.status || 'Valid',
+    };
+    
+    const res = await fetch('/api/dmv/licenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'License application failed');
+    }
+    // Refresh data from backend after success
+    await loadData();
+    return data.license;
+  } catch (error) {
+    console.error('License application error:', error);
+    throw error;
+  }
 }
 
-function add911Call(record) {
-  record.id = generateId('911');
-  record.createdAt = new Date().toISOString();
-  NThaCityData.calls911.push(record);
-  saveData();
-  return record;
+// PHASE 1 REPLACEMENT: Use dedicated /api/dispatch/calls route instead of legacy saveData
+async function add911Call(record) {
+  try {
+    const payload = {
+      caller_name: record.callerName || record.caller || '',
+      location: record.location || '',
+      call_type: record.incidentType || record.callType || '',
+      description: record.description || '',
+      priority: record.priority || 'Medium',
+    };
+    
+    if (!payload.caller_name || !payload.location || !payload.call_type) {
+      throw new Error('Missing required fields: caller_name, location, call_type');
+    }
+    
+    const res = await fetch('/api/dispatch/calls', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || '911 call creation failed');
+    }
+    // Refresh data from backend after success
+    await loadData();
+    return data;
+  } catch (error) {
+    console.error('911 call error:', error);
+    throw error;
+  }
 }
 
 function addTrafficStop(record) {
@@ -838,15 +910,42 @@ function handle911Form() {
   const form = document.getElementById('dispatch-form');
   if (!form) return;
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    add911Call(data);
-    updateDashboard();
-    renderCallQueue();
-    addActivity('911 Call', `New call created: ${data.incidentType} at ${data.location}`);
-    showToast('911 call logged successfully', 'success');
-    form.reset();
+    const statusEl = document.getElementById('dispatch-status');
+    const submitButton = form.querySelector('button[type="submit"]');
+    
+    try {
+      submitButton.disabled = true;
+      if (statusEl) {
+        statusEl.textContent = 'Creating dispatch call...';
+        statusEl.style.color = 'var(--muted)';
+        statusEl.style.display = 'block';
+      }
+      
+      const data = getFormData(form);
+      await add911Call(data);
+      
+      updateDashboard();
+      renderCallQueue();
+      addActivity('911 Call', `New call created: ${data.incidentType} at ${data.location}`);
+      showToast('911 call logged successfully', 'success');
+      
+      if (statusEl) {
+        statusEl.textContent = 'Call sent to dispatch successfully!';
+        statusEl.style.color = '#4caf50';
+      }
+      form.reset();
+    } catch (error) {
+      if (statusEl) {
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.style.color = '#ff6b6b';
+        statusEl.style.display = 'block';
+      }
+      showToast(`911 call failed: ${error.message}`, 'error');
+    } finally {
+      submitButton.disabled = false;
+    }
   });
 }
 
@@ -1010,12 +1109,31 @@ function handleLicenseForm() {
   const form = document.getElementById('license-form');
   if (!form) return;
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    addLicense(data);
-    showFormMessage(form, 'License application submitted successfully.');
-    form.reset();
+    const statusEl = document.getElementById('license-status');
+    const submitButton = form.querySelector('button[type="submit"]');
+    
+    try {
+      submitButton.disabled = true;
+      statusEl.textContent = 'Submitting...';
+      statusEl.style.color = 'var(--muted)';
+      statusEl.style.display = 'block';
+      
+      const data = getFormData(form);
+      const result = await addLicense(data);
+      
+      statusEl.textContent = 'License application submitted successfully!';
+      statusEl.style.color = '#4caf50';
+      showToast('License submitted successfully', 'success');
+      form.reset();
+    } catch (error) {
+      statusEl.textContent = `Error: ${error.message}`;
+      statusEl.style.color = '#ff6b6b';
+      showToast(`License submission failed: ${error.message}`, 'error');
+    } finally {
+      submitButton.disabled = false;
+    }
   });
 }
 
@@ -1023,12 +1141,31 @@ function handleVehicleForm() {
   const form = document.getElementById('vehicle-form');
   if (!form) return;
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    addVehicle(data);
-    showFormMessage(form, 'Vehicle registered successfully.');
-    form.reset();
+    const statusEl = document.getElementById('vehicle-status');
+    const submitButton = form.querySelector('button[type="submit"]');
+    
+    try {
+      submitButton.disabled = true;
+      statusEl.textContent = 'Submitting...';
+      statusEl.style.color = 'var(--muted)';
+      statusEl.style.display = 'block';
+      
+      const data = getFormData(form);
+      const result = await addVehicle(data);
+      
+      statusEl.textContent = 'Vehicle registered successfully!';
+      statusEl.style.color = '#4caf50';
+      showToast('Vehicle registered successfully', 'success');
+      form.reset();
+    } catch (error) {
+      statusEl.textContent = `Error: ${error.message}`;
+      statusEl.style.color = '#ff6b6b';
+      showToast(`Vehicle registration failed: ${error.message}`, 'error');
+    } finally {
+      submitButton.disabled = false;
+    }
   });
 }
 
@@ -1042,6 +1179,70 @@ function handleDMVPlateForm() {
     const results = lookupVehiclePlate(plate);
     renderLookupResults(document.getElementById('dmv-plate-results'), results, 'vehicle');
     showFormMessage(form, `Found ${results.length} vehicle record(s).`);
+  });
+}
+
+// PHASE 1: Business persistence via dedicated /api/businesses route
+async function createBusiness(record) {
+  try {
+    const payload = {
+      businessName: record.businessName || record.name,
+      businessType: record.businessType || record.type,
+      licenseStatus: record.licenseStatus || 'Active',
+      address: record.desiredLocation || record.address || '',
+      ownerCivilianId: record.ownerCivilianId || '',
+      employees: parseInt(record.employees) || 0,
+      inspectionNotes: record.inspectionNotes || '',
+      legalFlags: record.illegalDisclosure || record.legalFlags || '',
+    };
+    
+    const res = await fetch('/api/businesses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Business registration failed');
+    }
+    // Refresh data from backend after success
+    await loadData();
+    return data.business;
+  } catch (error) {
+    console.error('Business registration error:', error);
+    throw error;
+  }
+}
+
+function handleBusinessForm() {
+  const form = document.getElementById('business-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const statusEl = document.getElementById('business-status');
+    const submitButton = form.querySelector('button[type="submit"]');
+    
+    try {
+      submitButton.disabled = true;
+      statusEl.textContent = 'Processing business request...';
+      statusEl.style.color = 'var(--muted)';
+      statusEl.style.display = 'block';
+      
+      const data = getFormData(form);
+      const result = await createBusiness(data);
+      
+      statusEl.textContent = 'Business request submitted successfully! Staff will review it shortly.';
+      statusEl.style.color = '#4caf50';
+      showToast('Business request submitted successfully', 'success');
+      form.reset();
+    } catch (error) {
+      statusEl.textContent = `Error: ${error.message}`;
+      statusEl.style.color = '#ff6b6b';
+      showToast(`Business submission failed: ${error.message}`, 'error');
+    } finally {
+      submitButton.disabled = false;
+    }
   });
 }
 
@@ -1179,6 +1380,7 @@ async function initApp() {
   handleLicenseForm();
   handleVehicleForm();
   handleDMVPlateForm();
+  handleBusinessForm();
 
   // Initialize new components
   updateDashboard();
