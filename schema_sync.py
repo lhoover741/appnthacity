@@ -19,79 +19,82 @@ def sync_schema():
 
         from server import app
         from database import db
+        from tenant_schema import (
+            TENANT_SCHEMA_DEFINITIONS,
+            ensure_tenant_community_columns,
+            ensure_tenant_indexes,
+        )
 
         with app.app_context():
-            # Get database connection
             connection = db.engine.raw_connection()
             cursor = connection.cursor()
 
-            # Define columns that should exist (matching the Civilian SQLAlchemy model)
-            columns_to_add = [
-                ('date_of_birth', 'DATE'),
-                ('gender', 'VARCHAR(64)'),
-                ('phone_number', 'VARCHAR(64)'),
-                ('address', 'VARCHAR(255)'),
-                ('occupation', 'VARCHAR(255)'),
-                ('gang_affiliation', "VARCHAR(255) DEFAULT 'None'"),
-                ('emergency_contact_name', 'VARCHAR(255)'),
-                ('emergency_contact_phone', 'VARCHAR(64)'),
-                ('driver_license_status', "VARCHAR(64) DEFAULT 'Valid'"),
-                ('firearm_license_status', "VARCHAR(64) DEFAULT 'None'"),
-                ('business_license_status', "VARCHAR(64) DEFAULT 'None'"),
-                ('vehicle_make', 'VARCHAR(255)'),
-                ('vehicle_model', 'VARCHAR(255)'),
-                ('vehicle_year', 'INTEGER'),
-                ('vehicle_color', 'VARCHAR(64)'),
-                ('plate_number', 'VARCHAR(64)'),
-                ('insurance_status', "VARCHAR(64) DEFAULT 'Valid'"),
-                ('criminal_background_notes', 'TEXT'),
-                ('character_backstory', 'TEXT'),
-                ('updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'),
-            ]
+            # Define columns that should exist. community_id is intentionally
+            # represented as a hardcoded schema definition for every tenant table
+            # so validators never report "No definition for community_id".
+            columns_to_add = {table: defs.copy() for table, defs in TENANT_SCHEMA_DEFINITIONS.items()}
+            columns_to_add.setdefault('civilians', {}).update({
+                    'date_of_birth': {'type': 'DATE', 'nullable': True, 'index': False},
+                    'gender': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                    'phone_number': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                    'address': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                    'occupation': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                    'gang_affiliation': {'type': "VARCHAR(255) DEFAULT 'None'", 'nullable': True, 'index': False},
+                    'emergency_contact_name': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                    'emergency_contact_phone': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                    'driver_license_status': {'type': "VARCHAR(64) DEFAULT 'Valid'", 'nullable': True, 'index': False},
+                    'firearm_license_status': {'type': "VARCHAR(64) DEFAULT 'None'", 'nullable': True, 'index': False},
+                    'business_license_status': {'type': "VARCHAR(64) DEFAULT 'None'", 'nullable': True, 'index': False},
+                    'vehicle_make': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                    'vehicle_model': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                    'vehicle_year': {'type': 'INTEGER', 'nullable': True, 'index': False},
+                    'vehicle_color': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                    'plate_number': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                    'insurance_status': {'type': "VARCHAR(64) DEFAULT 'Valid'", 'nullable': True, 'index': False},
+                    'criminal_background_notes': {'type': 'TEXT', 'nullable': True, 'index': False},
+                    'character_backstory': {'type': 'TEXT', 'nullable': True, 'index': False},
+                    'updated_at': {'type': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'nullable': True, 'index': False},
+            })
 
-            # Check and add missing columns
-            logger.info('Checking for missing columns...')
-            missing_columns = []
-
-            for col_name, col_type in columns_to_add:
+            # Legacy civilian columns.
+            logger.info('Checking civilians for legacy missing columns...')
+            for col_name, definition in columns_to_add['civilians'].items():
+                col_type = definition['type']
                 try:
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         SELECT 1 FROM information_schema.columns
-                        WHERE table_name='civilians' AND column_name=%s
-                    """, (col_name,))
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'civilians'
+                          AND column_name = %s
+                        """,
+                        (col_name,),
+                    )
+                    if cursor.fetchone():
+                        logger.info(f'  ✓ civilians.{col_name} exists')
+                        continue
 
-                    if not cursor.fetchone():
-                        missing_columns.append((col_name, col_type))
-                        logger.info(f'  Missing: {col_name}')
-                    else:
-                        logger.info(f'  \u2713 {col_name} exists')
+                    cursor.execute(
+                        f'ALTER TABLE civilians ADD COLUMN IF NOT EXISTS {col_name} {col_type}'
+                    )
+                    logger.info(f'  ✓ Added civilians.{col_name}')
                 except Exception as e:
-                    logger.warning(f'  Error checking {col_name}: {e}')
+                    logger.error(f'  ✗ Failed to sync civilians.{col_name}: {e}')
 
-            # Add missing columns
-            if missing_columns:
-                logger.info(f'Adding {len(missing_columns)} missing columns...')
-                for col_name, col_type in missing_columns:
-                    try:
-                        sql = f'ALTER TABLE civilians ADD COLUMN IF NOT EXISTS {col_name} {col_type}'
-                        cursor.execute(sql)
-                        logger.info(f'  \u2713 Added {col_name}')
-                    except Exception as e:
-                        logger.error(f'  \u2717 Failed to add {col_name}: {e}')
+            logger.info('Checking tenant community_id columns...')
+            ensure_tenant_community_columns(cursor)
+            ensure_tenant_indexes(cursor)
+            logger.info('✓ Tenant indexes created')
 
-                connection.commit()
-                logger.info('\u2713 All missing columns added')
-            else:
-                logger.info('\u2713 All columns already exist')
-
+            connection.commit()
             cursor.close()
             connection.close()
 
-            logger.info('\u2713 Schema sync completed successfully')
+            logger.info('✓ Schema sync completed successfully')
             return True
 
     except Exception as e:
-        logger.error(f'\u2717 Schema sync failed: {e}', exc_info=True)
+        logger.error(f'✗ Schema sync failed: {e}', exc_info=True)
         return False
 
 

@@ -309,6 +309,11 @@ def main():
         return status
 
 
+def run_all_tests():
+    """Run all tenant isolation validation tests."""
+    return main()
+
+
 if __name__ == '__main__':
     success = main()
     sys.exit(0 if success else 1)
