@@ -3,6 +3,28 @@
 // sanitizer protects legacy innerHTML templates from executing tenant data.
 const NATIVE_INNERHTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
 
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+window.escapeHtml = escapeHtml;
+window.GTAVCAD_CONTEXT = window.GTAVCAD_CONTEXT || {
+  platformName: 'GTAVCAD',
+  communityName: '',
+  communitySlug: '',
+  cadName: '',
+  role: '',
+  department: '',
+  inviteCode: '',
+  colors: {}
+};
+
 function safeText(value) {
   return String(value ?? '');
 }
@@ -134,32 +156,109 @@ async function applyCommunityBranding() {
   });
 
   try {
-    const res = await fetch(`/api/communities/public/${CURRENT_COMMUNITY_SLUG}`);
+    const res = await fetch('/api/communities/context');
     const data = await res.json();
     if (!res.ok || !data.success) return null;
-    const community = data.community;
-    document.title = `${community.cad_name || community.name} | ${PLATFORM_CONTEXT.name}`;
-    document.documentElement.style.setProperty('--accent', community.primary_color || '#ff2d2d');
-    document.documentElement.style.setProperty('--accent-dark', community.secondary_color || '#8b0000');
-    document.querySelectorAll('[data-community-name]').forEach((el) => { el.textContent = community.name; });
-    document.querySelectorAll('[data-community-cad-name]').forEach((el) => { el.textContent = community.cad_name; });
-    document.querySelectorAll('.brand').forEach((el) => { el.textContent = PLATFORM_CONTEXT.name; });
+    const community = data.community || {};
+    const membership = data.membership || null;
+    window.GTAVCAD_CONTEXT = {
+      platformName: data.platform?.name || PLATFORM_CONTEXT.name,
+      communityName: community.name || '',
+      communitySlug: community.slug || CURRENT_COMMUNITY_SLUG,
+      cadName: community.cad_name || community.name || '',
+      role: membership?.role || '',
+      department: membership?.department || '',
+      inviteCode: data.invite_code || '',
+      colors: {
+        primary: community.primary_color || '#ff2d2d',
+        secondary: community.secondary_color || '#8b0000',
+      }
+    };
+
+    document.title = `${window.GTAVCAD_CONTEXT.cadName || window.GTAVCAD_CONTEXT.communityName} | ${window.GTAVCAD_CONTEXT.platformName}`;
+    document.documentElement.style.setProperty('--accent', window.GTAVCAD_CONTEXT.colors.primary);
+    document.documentElement.style.setProperty('--accent-dark', window.GTAVCAD_CONTEXT.colors.secondary);
+    document.querySelectorAll('[data-community-name]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.communityName; });
+    document.querySelectorAll('[data-community-cad-name]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.cadName; });
+    document.querySelectorAll('.brand').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.platformName; });
     const loginTitle = document.querySelector('.officer-login-title');
-    if (loginTitle) loginTitle.textContent = community.cad_name;
+    if (loginTitle) loginTitle.textContent = window.GTAVCAD_CONTEXT.cadName || `${window.GTAVCAD_CONTEXT.platformName} CAD`;
+
     const pageHeroTitle = document.querySelector('.page-hero h1, header h1');
-    if (pageHeroTitle && document.body.dataset.communityPage === 'true') {
-      pageHeroTitle.textContent = `${PLATFORM_CONTEXT.name} — Community: ${community.name}`;
+    if (pageHeroTitle && document.body.dataset.communityPage === 'true' && pageHeroTitle.dataset.keepTitle !== 'true') {
+      if (pageHeroTitle.dataset.tenantTitle) {
+        pageHeroTitle.textContent = pageHeroTitle.dataset.tenantTitle.replace('{community}', window.GTAVCAD_CONTEXT.communityName).replace('{cad}', window.GTAVCAD_CONTEXT.cadName);
+      }
     }
 
     const communityCtxName = document.querySelector('[data-context-community]');
-    if (communityCtxName) communityCtxName.textContent = community.name || 'Unknown Community';
+    if (communityCtxName) communityCtxName.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community';
     const communityCtxCad = document.querySelector('[data-context-cad]');
-    if (communityCtxCad) communityCtxCad.textContent = community.cad_name || 'CAD';
-
-    const activeOfficer = JSON.parse(localStorage.getItem('activeOfficer') || 'null');
-    const role = activeOfficer?.department || activeOfficer?.rank || activeOfficer?.callsign || 'Guest';
+    if (communityCtxCad) communityCtxCad.textContent = window.GTAVCAD_CONTEXT.cadName || 'CAD';
     const communityCtxRole = document.querySelector('[data-context-role]');
-    if (communityCtxRole) communityCtxRole.textContent = role;
+    if (communityCtxRole) communityCtxRole.textContent = membership ? window.GTAVCAD_CONTEXT.role : 'No membership';
+    const communityCtxInvite = document.querySelector('[data-context-invite]');
+    if (communityCtxInvite) communityCtxInvite.textContent = window.GTAVCAD_CONTEXT.inviteCode || 'Unavailable';
+    document.querySelectorAll('[data-context-department]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.department || '—'; });
+
+    document.querySelectorAll('[data-tenant-template]').forEach((el) => {
+      const template = el.getAttribute('data-tenant-template') || '';
+      el.textContent = template
+        .replaceAll('{platform}', window.GTAVCAD_CONTEXT.platformName)
+        .replaceAll('{community}', window.GTAVCAD_CONTEXT.communityName)
+        .replaceAll('{cad}', window.GTAVCAD_CONTEXT.cadName)
+        .replaceAll('{role}', window.GTAVCAD_CONTEXT.role || 'No membership')
+        .replaceAll('{invite}', window.GTAVCAD_CONTEXT.inviteCode || 'Unavailable');
+    });
+
+    const header = document.querySelector('[data-tenant-header]');
+    if (header && !header.querySelector('[data-copy-invite]')) {
+      const canManageInvite = ['Owner', 'Admin'].includes(window.GTAVCAD_CONTEXT.role);
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'button button-ghost';
+      copyBtn.dataset.copyInvite = 'true';
+      copyBtn.textContent = 'Copy Invite';
+      copyBtn.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(window.GTAVCAD_CONTEXT.inviteCode || '');
+        copyBtn.textContent = 'Invite Copied';
+        setTimeout(() => { copyBtn.textContent = 'Copy Invite'; }, 1600);
+      });
+      header.appendChild(copyBtn);
+      if (canManageInvite) {
+        const regenBtn = document.createElement('button');
+        regenBtn.type = 'button';
+        regenBtn.className = 'button button-secondary';
+        regenBtn.textContent = 'Regenerate Invite';
+        regenBtn.addEventListener('click', async () => {
+          regenBtn.disabled = true;
+          const regenRes = await fetch('/api/communities/invite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ regenerate: true }),
+          });
+          const regenData = await regenRes.json();
+          if (regenRes.ok && regenData.success) {
+            window.GTAVCAD_CONTEXT.inviteCode = regenData.invite.invite_code;
+            if (communityCtxInvite) communityCtxInvite.textContent = window.GTAVCAD_CONTEXT.inviteCode;
+          }
+          regenBtn.disabled = false;
+        });
+        header.appendChild(regenBtn);
+      }
+    }
+
+    if (!membership && document.body.dataset.communityPage === 'true') {
+      const target = document.querySelector('[data-tenant-header]') || document.querySelector('main') || document.body;
+      if (!document.getElementById('tenant-membership-error')) {
+        const error = document.createElement('div');
+        error.id = 'tenant-membership-error';
+        error.className = 'card';
+        error.style.borderColor = 'var(--accent)';
+        error.textContent = 'Membership not found for this community. Please join with an invite or ask an Owner/Admin to activate your access.';
+        target.insertAdjacentElement(target.matches('main') ? 'afterbegin' : 'afterend', error);
+      }
+    }
 
     return community;
   } catch (error) {
@@ -210,7 +309,7 @@ async function refreshAuthNavigation() {
 refreshAuthNavigation();
 
 // Shared frontend data model
-const NThaCityData = {
+const GTAVCADData = {
   civilians: [],
   vehicles: [],
   licenses: [],
@@ -229,6 +328,8 @@ const NThaCityData = {
   ],
   activityLog: []
 };
+const NThaCityData = GTAVCADData;
+window.NThaCityData = GTAVCADData;
 
 // Data persistence functions
 const CAD_API_URL = '/api/cad';
@@ -237,7 +338,7 @@ function saveData() {
   fetch(CAD_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(NThaCityData)
+    body: JSON.stringify(GTAVCADData)
   }).catch((error) => {
     console.warn('CAD save failed:', error);
   });
@@ -248,7 +349,7 @@ async function loadData() {
     const res = await fetch(CAD_API_URL);
     if (res.ok) {
       const data = await res.json();
-      Object.assign(NThaCityData, data);
+      Object.assign(GTAVCADData, data);
       return;
     }
     console.warn('CAD load failed:', res.status);
@@ -375,7 +476,7 @@ async function add911Call(record) {
 function addTrafficStop(record) {
   record.id = generateId('stop');
   record.createdAt = new Date().toISOString();
-  NThaCityData.trafficStops.push(record);
+  GTAVCADData.trafficStops.push(record);
   saveData();
   return record;
 }
@@ -398,7 +499,7 @@ async function addArrest(record) {
 function addEvidence(record) {
   record.id = generateId('evd');
   record.createdAt = new Date().toISOString();
-  NThaCityData.evidence.push(record);
+  GTAVCADData.evidence.push(record);
   saveData();
   return record;
 }
@@ -406,7 +507,7 @@ function addEvidence(record) {
 function addWarrant(record) {
   record.id = generateId('wrn');
   record.createdAt = new Date().toISOString();
-  NThaCityData.warrants.push(record);
+  GTAVCADData.warrants.push(record);
   saveData();
   return record;
 }
@@ -414,7 +515,7 @@ function addWarrant(record) {
 function addIncident(record) {
   record.id = generateId('inc');
   record.createdAt = new Date().toISOString();
-  NThaCityData.incidents.push(record);
+  GTAVCADData.incidents.push(record);
   saveData();
   return record;
 }
@@ -426,10 +527,10 @@ function addActivity(type, message) {
     message: message,
     timestamp: new Date().toISOString()
   };
-  NThaCityData.activityLog.unshift(activity);
+  GTAVCADData.activityLog.unshift(activity);
   // Keep only the last 50 activities
-  if (NThaCityData.activityLog.length > 50) {
-    NThaCityData.activityLog = NThaCityData.activityLog.slice(0, 50);
+  if (GTAVCADData.activityLog.length > 50) {
+    GTAVCADData.activityLog = GTAVCADData.activityLog.slice(0, 50);
   }
   saveData();
   renderActivityFeed();
@@ -452,7 +553,7 @@ function lookupVehiclePlate(plate) {
   if (!plate || plate.trim() === '') return [];
 
   const normalizedPlate = normalizePlate(plate);
-  return NThaCityData.vehicles.filter(veh =>
+  return GTAVCADData.vehicles.filter(veh =>
     normalizePlate(veh.plate) === normalizedPlate ||
     (veh.ownerName && veh.ownerName.toLowerCase().includes(plate.toLowerCase())) ||
     (veh.vehicleMake && veh.vehicleMake.toLowerCase().includes(plate.toLowerCase())) ||
@@ -629,7 +730,7 @@ function renderCallQueue() {
   const container = document.getElementById('call-queue');
   if (!container) return;
 
-  const activeCalls = NThaCityData.calls911.filter(c => c.status !== 'Closed');
+  const activeCalls = GTAVCADData.calls911.filter(c => c.status !== 'Closed');
 
   if (activeCalls.length === 0) {
     container.innerHTML = `
@@ -681,7 +782,7 @@ function renderActivityFeed() {
   const container = document.getElementById('activity-feed');
   if (!container) return;
 
-  const activities = NThaCityData.activityLog.slice(0, 10);
+  const activities = GTAVCADData.activityLog.slice(0, 10);
 
   if (activities.length === 0) {
     container.innerHTML = `
@@ -712,7 +813,7 @@ function renderWarrantsTable(filter = 'active') {
   const tbody = document.getElementById('warrants-tbody');
   if (!tbody) return;
 
-  let warrants = NThaCityData.warrants;
+  let warrants = GTAVCADData.warrants;
 
   switch (filter) {
     case 'active':
@@ -764,7 +865,7 @@ function renderArrestsTable() {
   const tbody = document.getElementById('arrests-tbody');
   if (!tbody) return;
 
-  const arrests = NThaCityData.arrests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const arrests = GTAVCADData.arrests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   if (arrests.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-row">No arrest records have been filed locally yet.</td></tr>`;
@@ -792,7 +893,7 @@ function renderTrafficTable() {
   const tbody = document.getElementById('traffic-tbody');
   if (!tbody) return;
 
-  const stops = NThaCityData.trafficStops.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const stops = GTAVCADData.trafficStops.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   if (stops.length === 0) {
     tbody.innerHTML = `<tr><td colspan="10" class="empty-row">No traffic stops logged yet.</td></tr>`;
@@ -835,7 +936,7 @@ function renderEvidenceTable() {
   const tbody = document.getElementById('evidence-tbody');
   if (!tbody) return;
 
-  const evidence = NThaCityData.evidence.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const evidence = GTAVCADData.evidence.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   if (evidence.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-row">No evidence submitted yet.</td></tr>`;
@@ -866,24 +967,28 @@ function renderOfficersBoard() {
   const container = document.getElementById('officers-board');
   if (!container) return;
 
-  const html = NThaCityData.officers.map(officer => `
+  const html = GTAVCADData.officers.map(officer => {
+    const officerId = escapeHtml(officer.id);
+    const officerStatus = String(officer.status || '');
+    return `
     <div class="officer-card">
       <div class="officer-header">
-        <span class="officer-callsign">${officer.id}</span>
-        <select class="officer-status-select" onchange="updateOfficerStatus('${officer.id}', this.value)">
-          <option value="Available" ${officer.status === 'Available' ? 'selected' : ''}>Available</option>
-          <option value="Assigned" ${officer.status === 'Assigned' ? 'selected' : ''}>Assigned</option>
-          <option value="En Route" ${officer.status === 'En Route' ? 'selected' : ''}>En Route</option>
-          <option value="On Scene" ${officer.status === 'On Scene' ? 'selected' : ''}>On Scene</option>
-          <option value="Busy" ${officer.status === 'Busy' ? 'selected' : ''}>Busy</option>
-          <option value="On Duty" ${officer.status === 'On Duty' ? 'selected' : ''}>On Duty</option>
-          <option value="Off Duty" ${officer.status === 'Off Duty' ? 'selected' : ''}>Off Duty</option>
+        <span class="officer-callsign">${officerId}</span>
+        <select class="officer-status-select" onchange="updateOfficerStatus('${officerId}', this.value)">
+          <option value="Available" ${officerStatus === 'Available' ? 'selected' : ''}>Available</option>
+          <option value="Assigned" ${officerStatus === 'Assigned' ? 'selected' : ''}>Assigned</option>
+          <option value="En Route" ${officerStatus === 'En Route' ? 'selected' : ''}>En Route</option>
+          <option value="On Scene" ${officerStatus === 'On Scene' ? 'selected' : ''}>On Scene</option>
+          <option value="Busy" ${officerStatus === 'Busy' ? 'selected' : ''}>Busy</option>
+          <option value="On Duty" ${officerStatus === 'On Duty' ? 'selected' : ''}>On Duty</option>
+          <option value="Off Duty" ${officerStatus === 'Off Duty' ? 'selected' : ''}>Off Duty</option>
         </select>
       </div>
-      <div class="officer-role">${officer.name}</div>
-      <div class="officer-last-update">Updated: ${formatTime(officer.lastUpdate)}</div>
+      <div class="officer-role">${escapeHtml(officer.name)}</div>
+      <div class="officer-last-update">Updated: ${escapeHtml(formatTime(officer.lastUpdate))}</div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   container.innerHTML = html;
 }
@@ -905,7 +1010,7 @@ function formatTime(dateString) {
 
 // Update call status
 function updateCallStatus(callId, newStatus) {
-  const call = NThaCityData.calls911.find(c => c.id === callId);
+  const call = GTAVCADData.calls911.find(c => c.id === callId);
   if (call) {
     call.status = newStatus;
     saveData();
@@ -918,7 +1023,7 @@ function updateCallStatus(callId, newStatus) {
 
 // Update warrant status
 function updateWarrantStatus(warrantId, newStatus) {
-  const warrant = NThaCityData.warrants.find(w => w.id === warrantId);
+  const warrant = GTAVCADData.warrants.find(w => w.id === warrantId);
   if (warrant) {
     warrant.status = newStatus;
     saveData();
@@ -931,7 +1036,7 @@ function updateWarrantStatus(warrantId, newStatus) {
 
 // Update officer status
 async function updateOfficerStatus(officerId, newStatus) {
-  const officer = NThaCityData.officers.find(o => o.id === officerId);
+  const officer = GTAVCADData.officers.find(o => o.id === officerId);
   if (officer) {
     officer.status = newStatus;
     officer.lastUpdate = new Date().toISOString();
@@ -1008,53 +1113,53 @@ function updateDashboard() {
   // Active Units - count officers that are not Off Duty
   const activeUnitsEl = document.getElementById('active-units');
   if (activeUnitsEl) {
-    const activeUnits = NThaCityData.officers.filter(o => o.status !== 'Off Duty').length;
+    const activeUnits = GTAVCADData.officers.filter(o => o.status !== 'Off Duty').length;
     activeUnitsEl.textContent = activeUnits;
   }
 
   // Pending Calls - calls not closed
   const pendingCallsEl = document.getElementById('pending-calls');
   if (pendingCallsEl) {
-    const pendingCalls = NThaCityData.calls911.filter(c => c.status !== 'Closed').length;
+    const pendingCalls = GTAVCADData.calls911.filter(c => c.status !== 'Closed').length;
     pendingCallsEl.textContent = pendingCalls;
   }
 
   // Critical Calls - calls with priority Critical
   const criticalCallsEl = document.getElementById('critical-calls');
   if (criticalCallsEl) {
-    const criticalCalls = NThaCityData.calls911.filter(c => c.priority === 'Critical' && c.status !== 'Closed').length;
+    const criticalCalls = GTAVCADData.calls911.filter(c => c.priority === 'Critical' && c.status !== 'Closed').length;
     criticalCallsEl.textContent = criticalCalls;
   }
 
   // Active Warrants - warrants with status Active
   const activeWarrantsEl = document.getElementById('active-warrants');
   if (activeWarrantsEl) {
-    const activeWarrants = NThaCityData.warrants.filter(w => w.status === 'Active').length;
+    const activeWarrants = GTAVCADData.warrants.filter(w => w.status === 'Active').length;
     activeWarrantsEl.textContent = activeWarrants;
   }
 
   // Recent Arrests - total arrests
   const recentArrestsEl = document.getElementById('recent-arrests');
   if (recentArrestsEl) {
-    recentArrestsEl.textContent = NThaCityData.arrests.length;
+    recentArrestsEl.textContent = GTAVCADData.arrests.length;
   }
 
   // Open Reports - total incidents
   const openReportsEl = document.getElementById('open-reports');
   if (openReportsEl) {
-    openReportsEl.textContent = NThaCityData.incidents.length;
+    openReportsEl.textContent = GTAVCADData.incidents.length;
   }
 
   // Evidence Items - total evidence
   const evidenceItemsEl = document.getElementById('evidence-items');
   if (evidenceItemsEl) {
-    evidenceItemsEl.textContent = NThaCityData.evidence.length;
+    evidenceItemsEl.textContent = GTAVCADData.evidence.length;
   }
 
   // Traffic Stops - total traffic stops
   const trafficStopsEl = document.getElementById('traffic-stops');
   if (trafficStopsEl) {
-    trafficStopsEl.textContent = NThaCityData.trafficStops.length;
+    trafficStopsEl.textContent = GTAVCADData.trafficStops.length;
   }
 }
 
@@ -1678,3 +1783,5 @@ function showCommunityCreatedModal() {
 }
 
 showCommunityCreatedModal();
+
+window.GTAVCADData = GTAVCADData;
