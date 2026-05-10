@@ -115,6 +115,16 @@ async function applyCommunityBranding() {
     'donations.html': 'donations.html',
     'join.html': 'join.html',
     'index.html': '',
+    'rules': 'rules.html',
+    'civilian': 'civilian.html',
+    'police': 'police.html',
+    'cad': 'cad.html',
+    'dmv': 'dmv.html',
+    'businesses': 'businesses.html',
+    'applications': 'applications.html',
+    'complaints': 'complaints.html',
+    'donations': 'donations.html',
+    'join': 'join.html',
   };
   document.querySelectorAll('a[href]').forEach((link) => {
     const href = link.getAttribute('href');
@@ -140,6 +150,17 @@ async function applyCommunityBranding() {
     if (pageHeroTitle && document.body.dataset.communityPage === 'true') {
       pageHeroTitle.textContent = `${PLATFORM_CONTEXT.name} — Community: ${community.name}`;
     }
+
+    const communityCtxName = document.querySelector('[data-context-community]');
+    if (communityCtxName) communityCtxName.textContent = community.name || 'Unknown Community';
+    const communityCtxCad = document.querySelector('[data-context-cad]');
+    if (communityCtxCad) communityCtxCad.textContent = community.cad_name || 'CAD';
+
+    const activeOfficer = JSON.parse(localStorage.getItem('activeOfficer') || 'null');
+    const role = activeOfficer?.department || activeOfficer?.rank || activeOfficer?.callsign || 'Guest';
+    const communityCtxRole = document.querySelector('[data-context-role]');
+    if (communityCtxRole) communityCtxRole.textContent = role;
+
     return community;
   } catch (error) {
     console.warn('Community branding load failed:', error);

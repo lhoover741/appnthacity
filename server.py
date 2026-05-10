@@ -6047,7 +6047,8 @@ def join_community_page():
 
 @app.route('/c/<community_slug>/')
 def community_home(community_slug):
-    return frontend_page('index.html')
+    # Tenant entry point should always land in full CAD/MDT shell.
+    return frontend_page('police.html')
 
 
 @app.route('/c/<community_slug>/<page>')
@@ -6075,7 +6076,7 @@ def community_page(community_slug, page):
         'applications': 'applications.html',
         'complaints': 'complaints.html',
         'civilian': 'civilian.html',
-        'cad': 'cad.html',
+        'cad': 'police.html',
         'join': 'join.html',
     }
     page = extensionless_aliases.get(page, page)
