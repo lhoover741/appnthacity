@@ -19,6 +19,7 @@ from security_service import (
     dispatch_required,
     judge_required,
     dmv_required,
+    require_auth,
     verify_password
 )
 from performance_service import cache, paginate_query
