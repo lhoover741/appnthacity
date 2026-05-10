@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify, send_from_directory, session, redirect
+from flask import Flask, request, jsonify, send_from_directory, session, redirect, abort
 from flask_migrate import Migrate
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -281,12 +281,19 @@ def internal_error(error):
 
 @app.errorhandler(404)
 def not_found_error(error):
-    """Handle 404 errors."""
-    return jsonify({
-        'success': False,
-        'error': 'Endpoint not found',
-        'code': 'NOT_FOUND'
-    }), 404
+    """Return JSON 404s only for API requests; let frontend paths render HTML."""
+    if request.path.startswith('/api/'):
+        return jsonify({
+            'success': False,
+            'error': 'Endpoint not found',
+            'code': 'NOT_FOUND'
+        }), 404
+
+    requested_path = request.path.lstrip('/')
+    if requested_path and requested_path.endswith('.html') and os.path.exists(os.path.join('.', requested_path)):
+        return send_from_directory('.', requested_path)
+
+    return send_from_directory('.', 'index.html')
 
 
 @app.errorhandler(403)
@@ -5989,7 +5996,81 @@ def mdt_dashboard_route():
     })
 
 
-@app.route('/', defaults={'path': ''})
+
+def frontend_page(filename):
+    """Serve a browser page from the app root."""
+    return send_from_directory('.', filename)
+
+
+@app.route('/')
+def home():
+    return frontend_page('index.html')
+
+
+@app.route('/login')
+def login_page():
+    return frontend_page('login.html')
+
+
+@app.route('/register')
+def register_page():
+    return frontend_page('register.html')
+
+
+@app.route('/communities')
+def communities_page():
+    return frontend_page('communities.html')
+
+
+@app.route('/create-community')
+def create_community_page():
+    return frontend_page('create-community.html')
+
+
+@app.route('/join-community')
+def join_community_page():
+    return frontend_page('join-community.html')
+
+
+@app.route('/c/<community_slug>/')
+def community_home(community_slug):
+    return frontend_page('index.html')
+
+
+@app.route('/c/<community_slug>/<page>')
+def community_page(community_slug, page):
+    allowed_pages = {
+        'index.html',
+        'rules.html',
+        'police.html',
+        'dmv.html',
+        'donations.html',
+        'businesses.html',
+        'applications.html',
+        'complaints.html',
+        'civilian.html',
+        'cad.html',
+        'join.html',
+    }
+    extensionless_aliases = {
+        'index': 'index.html',
+        'rules': 'rules.html',
+        'police': 'police.html',
+        'dmv': 'dmv.html',
+        'donations': 'donations.html',
+        'businesses': 'businesses.html',
+        'applications': 'applications.html',
+        'complaints': 'complaints.html',
+        'civilian': 'civilian.html',
+        'cad': 'cad.html',
+        'join': 'join.html',
+    }
+    page = extensionless_aliases.get(page, page)
+    if page in allowed_pages:
+        return frontend_page(page)
+    abort(404)
+
+
 @app.route('/<path:path>')
 def serve_static(path):
     route_aliases = {
@@ -6001,50 +6082,29 @@ def serve_static(path):
         'join-community': 'join-community.html',
     }
     if path in route_aliases:
-        return send_from_directory('.', route_aliases[path])
+        return frontend_page(route_aliases[path])
 
     legacy_tenant_pages = {
-        'rules.html': 'rules',
-        'civilian.html': 'civilian',
-        'police.html': 'police',
-        'cad.html': 'cad',
-        'dmv.html': 'dmv',
-        'businesses.html': 'businesses',
-        'applications.html': 'applications',
-        'donations.html': 'donations',
-        'complaints.html': 'complaints',
-        'join.html': '',
+        'rules.html': 'rules.html',
+        'civilian.html': 'civilian.html',
+        'police.html': 'police.html',
+        'cad.html': 'cad.html',
+        'dmv.html': 'dmv.html',
+        'businesses.html': 'businesses.html',
+        'applications.html': 'applications.html',
+        'donations.html': 'donations.html',
+        'complaints.html': 'complaints.html',
+        'join.html': 'join.html',
     }
     if path in legacy_tenant_pages:
-        suffix = legacy_tenant_pages[path]
-        target = f'/c/{DEFAULT_COMMUNITY_SLUG}' + (f'/{suffix}' if suffix else '')
+        target = f'/c/{DEFAULT_COMMUNITY_SLUG}/{legacy_tenant_pages[path]}'
         return redirect(target, code=302)
 
     parts = path.strip('/').split('/') if path else []
-    if len(parts) >= 2 and parts[0] == 'c':
-        if len(parts) >= 3 and parts[2] in {'assets', 'static'}:
-            asset_path = '/'.join(parts[2:])
-            if os.path.exists(os.path.join('.', asset_path)):
-                return send_from_directory('.', asset_path)
-
-        community_page = parts[2] if len(parts) >= 3 else ''
-        if community_page.endswith('.html'):
-            community_page = community_page[:-5]
-        community_aliases = {
-            '': 'community.html',
-            'index': 'community.html',
-            'cad': 'police.html',
-            'police': 'police.html',
-            'dmv': 'dmv.html',
-            'civilian': 'civilian.html',
-            'rules': 'rules.html',
-            'businesses': 'businesses.html',
-            'applications': 'applications.html',
-            'donations': 'donations.html',
-            'complaints': 'complaints.html',
-        }
-        if community_page in community_aliases:
-            return send_from_directory('.', community_aliases[community_page])
+    if len(parts) >= 3 and parts[0] == 'c' and parts[2] in {'assets', 'static'}:
+        asset_path = '/'.join(parts[2:])
+        if os.path.exists(os.path.join('.', asset_path)):
+            return frontend_page(asset_path)
 
     if path.startswith('api/'):
         return jsonify({
@@ -6054,8 +6114,8 @@ def serve_static(path):
         }), 404
 
     if os.path.exists(os.path.join('.', path)):
-        return send_from_directory('.', path)
-    return send_from_directory('.', 'index.html')
+        return frontend_page(path)
+    return frontend_page('index.html')
 
 
 if __name__ == '__main__':
