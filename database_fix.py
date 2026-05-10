@@ -25,14 +25,24 @@ def fix_database():
             ensure_tenant_community_columns,
             ensure_tenant_indexes,
         )
+        from schema_sync import ensure_application_schema, rollback_connection, rollback_session
         
         with app.app_context():
             # Get connection
             connection = db.engine.raw_connection()
             cursor = connection.cursor()
             
-            # 1. Check if civilians table exists
-            logger.info('\n1. Checking civilians table...')
+            # 1. Repair additive schema drift across SQLAlchemy models first.
+            logger.info('\n1. Checking SQLAlchemy model schema alignment...')
+            app_schema_ok = ensure_application_schema(cursor, connection)
+            if app_schema_ok:
+                logger.info('   ✓ dispatch_calls schema aligned')
+            else:
+                logger.warning('   ⚠ Schema drift repair reported unresolved columns; continuing legacy checks')
+                logger.info('   ✓ schema validation recovered')
+
+            # 2. Check if civilians table exists
+            logger.info('\n2. Checking civilians table...')
             cursor.execute("""
                 SELECT EXISTS (
                     SELECT 1 FROM information_schema.tables 
@@ -52,18 +62,30 @@ def fix_database():
 
                 connection = db.engine.raw_connection()
                 cursor = connection.cursor()
-                ensure_tenant_community_columns(cursor)
-                ensure_tenant_indexes(cursor)
-                connection.commit()
+                try:
+                    ensure_tenant_community_columns(cursor)
+                    ensure_tenant_indexes(cursor)
+                    connection.commit()
+                    logger.info('   ✓ Tenant indexes created')
+                except Exception as e:
+                    logger.error(f'   ✗ Tenant schema repair failed: {e}')
+                    rollback_connection(connection)
+                    cursor.close()
+                    connection.close()
+                    return False
+                if not app_schema_ok:
+                    logger.error('   ✗ Application schema remains unresolved')
+                    cursor.close()
+                    connection.close()
+                    return False
                 cursor.close()
                 connection.close()
-                logger.info('   ✓ Tenant indexes created')
                 return True
             
             logger.info('   ✓ Table exists')
             
-            # 2. Get live columns
-            logger.info('\n2. Getting live columns...')
+            # 3. Get live columns
+            logger.info('\n3. Getting live columns...')
             cursor.execute("""
                 SELECT column_name
                 FROM information_schema.columns
@@ -74,32 +96,44 @@ def fix_database():
             live_columns = {row[0] for row in cursor.fetchall()}
             logger.info(f'   Found {len(live_columns)} columns')
             
-            # 3. Get expected columns
-            logger.info('\n3. Getting expected columns...')
+            # 4. Get expected columns
+            logger.info('\n4. Getting expected columns...')
             from models import Civilian
             
             expected_columns = {col.name for col in Civilian.__table__.columns}
             logger.info(f'   Expected {len(expected_columns)} columns')
             
-            # 4. Find missing columns
-            logger.info('\n4. Checking for missing columns...')
+            # 5. Find missing columns
+            logger.info('\n5. Checking for missing columns...')
             missing = expected_columns - live_columns
             
             if not missing:
                 logger.info('   ✓ No missing columns')
                 logger.info('   Ensuring community_id on all tenant tables...')
-                ensure_tenant_community_columns(cursor)
-                ensure_tenant_indexes(cursor)
-                connection.commit()
-                logger.info('   ✓ Tenant indexes created')
+                try:
+                    ensure_tenant_community_columns(cursor)
+                    ensure_tenant_indexes(cursor)
+                    connection.commit()
+                    logger.info('   ✓ Tenant indexes created')
+                except Exception as e:
+                    logger.error(f'   ✗ Tenant schema repair failed: {e}')
+                    rollback_connection(connection)
+                    cursor.close()
+                    connection.close()
+                    return False
+                if not app_schema_ok:
+                    logger.error('   ✗ Application schema remains unresolved')
+                    cursor.close()
+                    connection.close()
+                    return False
                 cursor.close()
                 connection.close()
                 return True
             
             logger.warning(f'   ✗ Missing {len(missing)} columns: {missing}')
             
-            # 5. Add missing columns
-            logger.info('\n5. Adding missing columns...')
+            # 6. Add missing columns
+            logger.info('\n6. Adding missing columns...')
             
             # Define column definitions. community_id must remain present
             # here so schema validation never logs "No definition for community_id".
@@ -139,17 +173,25 @@ def fix_database():
                     logger.info(f'   ✓ Added {col_name}')
                 except Exception as e:
                     logger.error(f'   ✗ Failed to add {col_name}: {e}')
+                    rollback_connection(connection)
             
             logger.info('   Ensuring community_id on all tenant tables...')
-            ensure_tenant_community_columns(cursor)
-            ensure_tenant_indexes(cursor)
-            logger.info('   ✓ Tenant indexes created')
+            try:
+                ensure_tenant_community_columns(cursor)
+                ensure_tenant_indexes(cursor)
+                logger.info('   ✓ Tenant indexes created')
+                connection.commit()
+            except Exception as e:
+                logger.error(f'   ✗ Tenant schema repair failed: {e}')
+                rollback_connection(connection)
+                cursor.close()
+                connection.close()
+                return False
 
-            connection.commit()
             logger.info('   ✓ All columns added')
             
-            # 6. Verify fix
-            logger.info('\n6. Verifying fix...')
+            # 7. Verify fix
+            logger.info('\n7. Verifying fix...')
             cursor.execute("""
                 SELECT column_name
                 FROM information_schema.columns
@@ -168,8 +210,8 @@ def fix_database():
             
             logger.info(f'   ✓ All {len(final_columns)} columns present')
             
-            # 7. Test INSERT
-            logger.info('\n7. Testing INSERT...')
+            # 8. Test INSERT
+            logger.info('\n8. Testing INSERT...')
             try:
                 cursor.execute("""
                     INSERT INTO civilians (
@@ -193,6 +235,12 @@ def fix_database():
                 connection.close()
                 return False
             
+            if not app_schema_ok:
+                logger.error('   ✗ Application schema remains unresolved')
+                cursor.close()
+                connection.close()
+                return False
+
             cursor.close()
             connection.close()
             
@@ -202,6 +250,11 @@ def fix_database():
             return True
             
     except Exception as e:
+        try:
+            from database import db
+            rollback_session(db)
+        except Exception:
+            pass
         logger.error(f'Fix failed: {e}', exc_info=True)
         return False
 

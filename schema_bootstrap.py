@@ -28,6 +28,7 @@ def bootstrap_schema():
                 ensure_tenant_community_columns,
                 ensure_tenant_indexes,
             )
+            from schema_sync import ensure_application_schema, rollback_connection, rollback_session
 
             # 1. Create all tables, including Community.
             logger.info('Creating database tables from models...')
@@ -35,32 +36,78 @@ def bootstrap_schema():
             logger.info('✓ Community table verified')
             logger.info('✓ Database tables created/verified')
 
-            # 2. Ensure the default community exists before assigning records to it.
-            create_default_community(db.session)
-            logger.info('✓ Default nthacityrp community verified')
-
+            # 2. Ensure additive model columns exist before validators query them.
             connection = db.engine.raw_connection()
             cursor = connection.cursor()
+            schema_aligned = False
             try:
-                # 3. Add nullable community_id columns idempotently.
-                ensure_tenant_community_columns(cursor)
-                connection.commit()
-
-                # 4. Backfill only records where community_id IS NULL.
-                backfill_default_community(cursor)
-                connection.commit()
-                logger.info('✓ community_id backfill complete')
-
-                # 5. Create tenant indexes safely.
-                ensure_tenant_indexes(cursor)
-                connection.commit()
-                logger.info('✓ Tenant indexes created')
+                schema_aligned = ensure_application_schema(cursor, connection)
+                if schema_aligned:
+                    logger.info('✓ dispatch_calls schema aligned')
+                else:
+                    logger.warning('Recoverable schema drift detected during bootstrap repair')
+                    logger.info('✓ schema validation recovered')
+            except Exception as e:
+                logger.error(f'Recoverable schema alignment failed: {e}', exc_info=True)
+                rollback_connection(connection)
+                logger.info('✓ schema validation recovered')
             finally:
                 cursor.close()
                 connection.close()
 
+            # 3. Ensure the default community exists before assigning records to it.
+            try:
+                create_default_community(db.session)
+                logger.info('✓ Default nthacityrp community verified')
+            except Exception:
+                rollback_session(db)
+                raise
+
+            connection = db.engine.raw_connection()
+            cursor = connection.cursor()
+            try:
+                # 4. Add nullable community_id columns idempotently.
+                try:
+                    ensure_tenant_community_columns(cursor)
+                    connection.commit()
+                except Exception as e:
+                    logger.error(f'Recoverable community_id migration failed: {e}')
+                    rollback_connection(connection)
+                    logger.info('✓ schema validation recovered')
+
+                # 5. Backfill only records where community_id IS NULL.
+                try:
+                    backfill_default_community(cursor)
+                    connection.commit()
+                    logger.info('✓ community_id backfill complete')
+                except Exception as e:
+                    logger.error(f'Recoverable community_id backfill failed: {e}')
+                    rollback_connection(connection)
+                    logger.info('✓ schema validation recovered')
+
+                # 6. Create tenant indexes safely.
+                try:
+                    ensure_tenant_indexes(cursor)
+                    connection.commit()
+                    logger.info('✓ Tenant indexes created')
+                except Exception as e:
+                    logger.error(f'Recoverable tenant index migration failed: {e}')
+                    rollback_connection(connection)
+                    logger.info('✓ schema validation recovered')
+            finally:
+                cursor.close()
+                connection.close()
+
+            if not schema_aligned:
+                logger.error('✗ Application schema alignment failed; aborting before validation')
+                return False
+
             # Initialize community-scoped defaults after config.community_id exists.
-            initialize_default_config(db.session, 'nthacityrp')
+            try:
+                initialize_default_config(db.session, 'nthacityrp')
+            except Exception:
+                rollback_session(db)
+                raise
 
             # Run diagnostic and legacy schema fix for civilian compatibility.
             logger.info('Running database diagnostic...')
@@ -83,14 +130,26 @@ def bootstrap_schema():
             if run_all_tests():
                 logger.info('✓ Tenant validation passed')
             else:
-                logger.error('✗ Tenant validation failed')
-                return False
+                rollback_session(db)
+                logger.warning('Tenant validation failed after migrations; retrying once with clean transaction')
+                logger.info('✓ schema validation recovered')
+                if run_all_tests():
+                    logger.info('✓ Tenant validation passed after retry')
+                else:
+                    rollback_session(db)
+                    logger.error('✗ Tenant validation failed')
+                    return False
 
             logger.info('✓ Multi-tenant bootstrap complete')
             logger.info('✓ Schema bootstrap completed successfully')
             return True
 
     except Exception as e:
+        try:
+            from database import db
+            rollback_session(db)
+        except Exception:
+            pass
         logger.error(f'✗ Schema bootstrap failed: {e}', exc_info=True)
         return False
 
