@@ -21,11 +21,12 @@ def upgrade():
     op.create_table('config',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('key', sa.String(length=255), nullable=False),
+        sa.Column('community_id', sa.String(length=64), nullable=True),
         sa.Column('value', sa.Text(), nullable=True),
         sa.Column('description', sa.Text(), nullable=True),
         sa.Column('updated_at', sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('key')
+        sa.UniqueConstraint('key', 'community_id', name='uq_config_key_community')
     )
 
 

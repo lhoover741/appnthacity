@@ -346,7 +346,7 @@ class Config(db.Model):
     description = db.Column(db.Text, nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     # Unique constraint: (key, community_id) - allows same key for different communities
-    __table_args__ = (db.UniqueConstraint('key', 'community_id', name='unique_config_per_community'),)
+    __table_args__ = (db.UniqueConstraint('key', 'community_id', name='uq_config_key_community'),)
 
     def to_dict(self):
         return {
