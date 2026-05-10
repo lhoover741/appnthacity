@@ -3,6 +3,7 @@ import random
 import logging
 from datetime import datetime, timedelta
 from database import db
+from community_service import get_current_community_id, scoped_query
 from models import DispatchCall, Civilian, Vehicle, Bolo, Warrant
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ def generate_smart_call(call_type=None):
             suspect_description = f"{linked_civilian.gender}, {linked_civilian.age} years old, {linked_civilian.race}"
 
             # Check if they have vehicles
-            vehicles = Vehicle.query.filter_by(owner_civilian_id=linked_civilian.civilian_id).all()
+            vehicles = scoped_query(Vehicle).filter_by(owner_civilian_id=linked_civilian.civilian_id).all()
             if vehicles:
                 linked_vehicle = random.choice(vehicles)
 
@@ -129,6 +130,7 @@ def generate_smart_call(call_type=None):
     )
 
     call = DispatchCall(
+        community_id=get_current_community_id(),
         call_id=call_id,
         caller_name=f"Caller {secrets.token_hex(2).upper()}",
         location=location,
@@ -191,7 +193,7 @@ def get_active_calls_with_context():
         if call.notes:
             if 'Suspect:' in call.notes:
                 civ_id = call.notes.split('Suspect: ')[1].split('\n')[0]
-                civ = Civilian.query.filter_by(civilian_id=civ_id).first()
+                civ = scoped_query(Civilian).filter_by(civilian_id=civ_id).first()
                 if civ:
                     call_data['context']['linked_civilian'] = {
                         'civilian_id': civ.civilian_id,
@@ -208,7 +210,7 @@ def get_active_calls_with_context():
 
             if 'Vehicle:' in call.notes:
                 plate = call.notes.split('Vehicle: ')[1].split('\n')[0]
-                veh = Vehicle.query.filter_by(plate=plate).first()
+                veh = scoped_query(Vehicle).filter_by(plate=plate).first()
                 if veh:
                     call_data['context']['linked_vehicle'] = {
                         'vehicle_id': veh.vehicle_id,
@@ -220,7 +222,7 @@ def get_active_calls_with_context():
 
             if 'BOLO:' in call.notes:
                 bolo_id = call.notes.split('BOLO: ')[1].split('\n')[0]
-                bolo = Bolo.query.filter_by(bolo_id=bolo_id).first()
+                bolo = scoped_query(Bolo).filter_by(bolo_id=bolo_id).first()
                 if bolo:
                     call_data['context']['linked_bolo'] = {
                         'bolo_id': bolo.bolo_id,

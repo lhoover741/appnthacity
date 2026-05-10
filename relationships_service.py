@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime
 from database import db
+from community_service import get_current_community_id, scoped_query
 from models import Civilian, Vehicle, Warrant, Arrest, Bolo, KnownAssociate
 
 logger = logging.getLogger(__name__)
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def link_civilian_to_vehicle(civilian_id, vehicle_id):
     """Link a civilian as owner of a vehicle."""
-    vehicle = Vehicle.query.filter_by(vehicle_id=vehicle_id).first()
+    vehicle = scoped_query(Vehicle).filter_by(vehicle_id=vehicle_id).first()
     if not vehicle:
         return None
 
@@ -30,6 +31,7 @@ def create_known_associate(civilian_id, associated_id, relationship_type):
     associate_id = f"ASSOC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
     associate = KnownAssociate(
+        community_id=get_current_community_id(),
         associate_id=associate_id,
         civilian_id=civilian_id,
         associated_civilian_id=associated_id,
@@ -48,11 +50,11 @@ def create_known_associate(civilian_id, associated_id, relationship_type):
 
 def get_gang_crew(gang_name):
     """Get all members of a gang as a connected crew."""
-    members = Civilian.query.filter_by(gang_affiliation=gang_name).all()
+    members = scoped_query(Civilian).filter_by(gang_affiliation=gang_name).all()
 
     crew = []
     for member in members:
-        associates = KnownAssociate.query.filter_by(civilian_id=member.civilian_id).all()
+        associates = scoped_query(KnownAssociate).filter_by(civilian_id=member.civilian_id).all()
 
         crew.append({
             'civilian_id': member.civilian_id,
@@ -60,7 +62,7 @@ def get_gang_crew(gang_name):
             'rank': member.gang_rank or 'Member',
             'risk_level': member.risk_level,
             'known_associates': [a.associated_civilian_id for a in associates],
-            'vehicles': [v.vehicle_id for v in Vehicle.query.filter_by(owner_civilian_id=member.civilian_id).all()],
+            'vehicles': [v.vehicle_id for v in scoped_query(Vehicle).filter_by(owner_civilian_id=member.civilian_id).all()],
         })
 
     return crew
@@ -70,9 +72,10 @@ def create_arrest_record(civilian_id, charges, arresting_officer, location, narr
     """Create arrest and update civilian criminal history."""
     arrest_id = f"ARR-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
 
     arrest = Arrest(
+        community_id=get_current_community_id(),
         arrest_id=arrest_id,
         civilian_id=civilian_id,
         suspect_name=civilian.full_name if civilian else None,
@@ -106,9 +109,10 @@ def create_warrant_from_arrest(arrest_id, civilian_id, charges, probable_cause):
     """Create warrant from arrest."""
     warrant_id = f"WAR-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
 
     warrant = Warrant(
+        community_id=get_current_community_id(),
         warrant_id=warrant_id,
         civilian_id=civilian_id,
         warrant_name=civilian.full_name if civilian else 'Unknown',
@@ -135,7 +139,7 @@ def create_warrant_from_arrest(arrest_id, civilian_id, charges, probable_cause):
 
 def check_warrant_on_traffic_stop(plate):
     """Check if vehicle owner has active warrants."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle or not vehicle.owner_civilian_id:
         return None
 
@@ -156,13 +160,13 @@ def get_civilian_criminal_history(civilian_id):
     """Get complete criminal history for a civilian."""
     from models import Citation
 
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return None
 
-    arrests = Arrest.query.filter_by(civilian_id=civilian_id).all()
-    citations = Citation.query.filter_by(civilian_id=civilian_id).all()
-    warrants = Warrant.query.filter_by(civilian_id=civilian_id).all()
+    arrests = scoped_query(Arrest).filter_by(civilian_id=civilian_id).all()
+    citations = scoped_query(Citation).filter_by(civilian_id=civilian_id).all()
+    warrants = scoped_query(Warrant).filter_by(civilian_id=civilian_id).all()
 
     return {
         'civilian_id': civilian_id,
@@ -181,7 +185,7 @@ def link_bolo_to_dispatch_call(bolo_id, call_id):
     """Link a BOLO to a dispatch call."""
     from models import DispatchCall
 
-    bolo = Bolo.query.filter_by(bolo_id=bolo_id).first()
+    bolo = scoped_query(Bolo).filter_by(bolo_id=bolo_id).first()
     call = DispatchCall.query.filter_by(call_id=call_id).first()
 
     if not bolo or not call:
@@ -201,7 +205,7 @@ def link_bolo_to_dispatch_call(bolo_id, call_id):
 
 def update_dmv_status_from_citation(civilian_id, citation_count):
     """Update DMV status based on citation count."""
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return None
 

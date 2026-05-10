@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime
 from database import db
+from community_service import scoped_query
 from models import Arrest, Warrant, Bolo, Evidence
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ GANG_AFFILIATIONS = [
 def get_civilian_charges(civilian_id):
     """Get all charges for a civilian by matching suspect_name via civilian lookup."""
     from models import Civilian
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return []
 
@@ -47,7 +48,7 @@ def get_civilian_charges(civilian_id):
 def get_civilian_warrants(civilian_id):
     """Get all active warrants for a civilian by matching warrant_name."""
     from models import Civilian
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return []
 
@@ -73,7 +74,7 @@ def get_civilian_warrants(civilian_id):
 def get_civilian_bolos(civilian_id):
     """Get all active BOLOs for a civilian by matching suspect_name."""
     from models import Civilian
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return []
 
@@ -183,7 +184,7 @@ def get_gang_members(gang_name):
     """Get all known members of a gang."""
     from models import Civilian
 
-    members = Civilian.query.filter_by(gang_affiliation=gang_name).all()
+    members = scoped_query(Civilian).filter_by(gang_affiliation=gang_name).all()
 
     result = []
     for member in members:
@@ -222,7 +223,7 @@ def get_gang_statistics():
 
 def archive_bolo(bolo_id, resolution):
     """Archive a BOLO."""
-    bolo = Bolo.query.filter_by(bolo_id=bolo_id).first()
+    bolo = scoped_query(Bolo).filter_by(bolo_id=bolo_id).first()
     if not bolo:
         return None
 
@@ -242,7 +243,7 @@ def archive_bolo(bolo_id, resolution):
 
 def archive_warrant(warrant_id, resolution):
     """Archive a warrant."""
-    warrant = Warrant.query.filter_by(warrant_id=warrant_id).first()
+    warrant = scoped_query(Warrant).filter_by(warrant_id=warrant_id).first()
     if not warrant:
         return None
 

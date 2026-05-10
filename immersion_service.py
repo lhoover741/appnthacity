@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from database import db
+from community_service import scoped_query
 from models import Civilian, Vehicle, Warrant, Bolo, DispatchCall, AuditLog
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ ALERT_TYPES = {
 
 def generate_officer_safety_assessment(civilian_id):
     """Build an officer safety assessment from existing civilian model fields."""
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return None
 
@@ -54,7 +55,7 @@ def generate_officer_safety_assessment(civilian_id):
     risk_score += risk_map.get(civilian.risk_level or 'Low', 1)
 
     # Active warrants
-    warrants = Warrant.query.filter_by(
+    warrants = scoped_query(Warrant).filter_by(
         civilian_id=civilian_id, warrant_status='Active'
     ).all()
     if warrants:
@@ -137,11 +138,11 @@ def create_mdt_alert(alert_type, officer_id, title, message, data=None):
 
 def generate_warrant_hit_alert(plate):
     """Generate alert when vehicle owner has active warrants."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle or not vehicle.owner_civilian_id:
         return None
 
-    warrants = Warrant.query.filter_by(
+    warrants = scoped_query(Warrant).filter_by(
         civilian_id=vehicle.owner_civilian_id,
         warrant_status='Active'
     ).all()
@@ -149,7 +150,7 @@ def generate_warrant_hit_alert(plate):
     if not warrants:
         return None
 
-    civilian = Civilian.query.filter_by(civilian_id=vehicle.owner_civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=vehicle.owner_civilian_id).first()
 
     return create_mdt_alert(
         'warrant_hit',
@@ -168,7 +169,7 @@ def generate_warrant_hit_alert(plate):
 
 def generate_stolen_vehicle_alert(plate):
     """Generate alert when stolen vehicle is spotted."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle or not vehicle.stolen_flag:
         return None
 
@@ -190,7 +191,7 @@ def generate_stolen_vehicle_alert(plate):
 
 def generate_bolo_match_alert(civilian_id):
     """Generate alert when BOLO suspect is identified."""
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
     if not civilian:
         return None
 
@@ -275,7 +276,7 @@ def get_active_alerts(officer_id=None, limit=20):
     alerts = []
 
     # Get all active warrants and generate alerts
-    warrants = Warrant.query.filter_by(warrant_status='Active').limit(5).all()
+    warrants = scoped_query(Warrant).filter_by(warrant_status='Active').limit(5).all()
     for warrant in warrants:
         alert = create_mdt_alert(
             'warrant_hit',
@@ -290,7 +291,7 @@ def get_active_alerts(officer_id=None, limit=20):
         alerts.append(alert)
 
     # Get all active BOLOs and generate alerts
-    bolos = Bolo.query.filter_by(status='Active').limit(5).all()
+    bolos = scoped_query(Bolo).filter_by(status='Active').limit(5).all()
     for bolo in bolos:
         alert = create_mdt_alert(
             'bolo_match',

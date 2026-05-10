@@ -13,7 +13,12 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/`/g, '&#096;');
+}
+
 window.escapeHtml = escapeHtml;
+window.escapeAttr = escapeAttr;
 window.GTAVCAD_CONTEXT = window.GTAVCAD_CONTEXT || {
   platformName: 'GTAVCAD',
   communityName: '',
@@ -48,12 +53,12 @@ function sanitizeHTML(html) {
       Array.from(child.attributes).forEach((attr) => {
         const name = attr.name.toLowerCase();
         const value = String(attr.value || '').trim().toLowerCase();
-        if (name.startsWith('on') || ((name === 'href' || name === 'src' || name === 'xlink:href') && value.startsWith('javascript:'))) {
-          unsafe = true;
+        if ((name === 'href' || name === 'src' || name === 'xlink:href') && value.startsWith('javascript:')) {
+          child.removeAttribute(attr.name);
         }
       });
       if (unsafe) {
-        child.replaceWith(document.createTextNode(child.outerHTML));
+        child.remove();
       } else {
         walk(child);
       }
@@ -89,6 +94,57 @@ function getCommunitySlugFromPath() {
 }
 
 const CURRENT_COMMUNITY_SLUG = getCommunitySlugFromPath();
+
+const OFFICER_CAD_ROLES = ['Owner', 'Admin', 'Police', 'EMS', 'Dispatch', 'DOJ', 'Staff', 'LEO'];
+const CAD_ADMIN_BYPASS_ROLES = ['Owner', 'Admin'];
+
+function normalizeRole(role) {
+  return String(role || '').trim();
+}
+
+function canAccessOfficerCad() {
+  return OFFICER_CAD_ROLES.includes(normalizeRole(window.GTAVCAD_CONTEXT?.role));
+}
+
+function isCadAdminBypass() {
+  return CAD_ADMIN_BYPASS_ROLES.includes(normalizeRole(window.GTAVCAD_CONTEXT?.role));
+}
+
+function isOfficerCadPage() {
+  const leaf = window.location.pathname.split('/').pop().toLowerCase();
+  return leaf === 'police.html' || leaf === 'police' || leaf === 'cad.html' || leaf === 'cad';
+}
+
+function enforceCadRoleVisibility() {
+  if (!isOfficerCadPage() || !document.body || document.body.dataset.platformPage === 'true') return true;
+  const allowed = canAccessOfficerCad();
+  document.body.classList.toggle('cad-police-access', allowed);
+  document.body.classList.toggle('cad-admin-bypass', isCadAdminBypass());
+  if (allowed) return true;
+  const overlay = document.getElementById('officer-login-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const main = document.querySelector('main');
+  if (main) {
+    main.innerHTML = `
+      <section class="container section">
+        <div class="card notice-card">
+          <h1>Police CAD Restricted</h1>
+          <p>Regular civilian accounts can use civilian registry, DMV, businesses, applications, complaints, and public rules. Police CAD tools require Owner, Admin, Police, EMS, Dispatch, DOJ, Staff, or approved LEO access.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="civilian.html">Civilian Registry</a>
+            <a class="button button-secondary" href="dmv.html">DMV</a>
+            <a class="button button-secondary" href="businesses.html">Businesses</a>
+          </div>
+        </div>
+      </section>`;
+  }
+  return false;
+}
+
+window.canAccessOfficerCad = canAccessOfficerCad;
+window.isCadAdminBypass = isCadAdminBypass;
+window.enforceCadRoleVisibility = enforceCadRoleVisibility;
+
 
 if (CURRENT_COMMUNITY_SLUG && window.fetch) {
   const nativeFetch = window.fetch.bind(window);
@@ -200,6 +256,8 @@ async function applyCommunityBranding() {
     const communityCtxInvite = document.querySelector('[data-context-invite]');
     if (communityCtxInvite) communityCtxInvite.textContent = window.GTAVCAD_CONTEXT.inviteCode || 'Unavailable';
     document.querySelectorAll('[data-context-department]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.department || '—'; });
+    enforceCadRoleVisibility();
+    window.dispatchEvent(new CustomEvent('gtavcad:context-ready', { detail: window.GTAVCAD_CONTEXT }));
 
     document.querySelectorAll('[data-tenant-template]').forEach((el) => {
       const template = el.getAttribute('data-tenant-template') || '';
@@ -348,7 +406,8 @@ async function loadData() {
   try {
     const res = await fetch(CAD_API_URL);
     if (res.ok) {
-      const data = await res.json();
+      const payload = await res.json();
+      const data = payload && payload.data ? payload.data : payload;
       Object.assign(GTAVCADData, data);
       return;
     }
@@ -373,7 +432,7 @@ async function addCivilian(record) {
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Civilian save failed');
   }
-  await loadData();
+  if (isOfficerCadPage() && canAccessOfficerCad()) await loadData();
   return data.civilian;
 }
 
@@ -1672,7 +1731,12 @@ async function initApp() {
     setActiveNav();
     return;
   }
-  await loadData();
+  if (isOfficerCadPage() && !enforceCadRoleVisibility()) {
+    setActiveNav();
+    return;
+  }
+  const shouldLoadCadData = isOfficerCadPage() && canAccessOfficerCad();
+  if (shouldLoadCadData) await loadData();
   handleCivilianForm();
   handle911Form();
   handleTrafficForm();
@@ -1686,15 +1750,17 @@ async function initApp() {
   handleDMVPlateForm();
   handleBusinessForm();
 
-  // Initialize new components
-  updateDashboard();
-  renderCallQueue();
-  renderActivityFeed();
-  renderWarrantsTable();
-  renderArrestsTable();
-  renderTrafficTable();
-  renderEvidenceTable();
-  renderOfficersBoard();
+  // Initialize police CAD components only for authorized officer CAD pages.
+  if (shouldLoadCadData) {
+    updateDashboard();
+    renderCallQueue();
+    renderActivityFeed();
+    renderWarrantsTable();
+    renderArrestsTable();
+    renderTrafficTable();
+    renderEvidenceTable();
+    renderOfficersBoard();
+  }
 
   setActiveNav();
 }

@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime
 from database import db
+from community_service import get_current_community_id, scoped_query
 from models import DispatchCall, OfficerSession
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ def create_dispatch_call(caller_name, location, call_type, description, priority
     call_id = f"CALL-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
     call = DispatchCall(
+        community_id=get_current_community_id(),
         call_id=call_id,
         caller_name=caller_name,
         location=location,
@@ -153,7 +155,7 @@ def create_dispatch_call(caller_name, location, call_type, description, priority
 
 def get_active_calls():
     """Get all active dispatch calls."""
-    calls = DispatchCall.query.filter(
+    calls = scoped_query(DispatchCall).filter(
         DispatchCall.status.in_(['New', 'Assigned', 'En Route', 'On Scene'])
     ).order_by(DispatchCall.created_at.desc()).all()
 
@@ -172,7 +174,7 @@ def get_active_calls():
 
 def get_officer_status(callsign):
     """Get officer status."""
-    officer_session = OfficerSession.query.filter_by(callsign=callsign).first()
+    officer_session = scoped_query(OfficerSession).filter_by(callsign=callsign).first()
     if not officer_session:
         return None
 
@@ -187,7 +189,7 @@ def get_officer_status(callsign):
 
 def update_officer_status(callsign, new_status):
     """Update officer status."""
-    officer_session = OfficerSession.query.filter_by(callsign=callsign).first()
+    officer_session = scoped_query(OfficerSession).filter_by(callsign=callsign).first()
     if not officer_session:
         return None
 
@@ -205,7 +207,7 @@ def update_officer_status(callsign, new_status):
 
 def assign_units_to_call(call_id, units):
     """Assign units to a dispatch call."""
-    call = DispatchCall.query.filter_by(call_id=call_id).first()
+    call = scoped_query(DispatchCall).filter_by(call_id=call_id).first()
     if not call:
         return None
 
@@ -224,7 +226,7 @@ def assign_units_to_call(call_id, units):
 
 def close_dispatch_call(call_id, resolution):
     """Close a dispatch call."""
-    call = DispatchCall.query.filter_by(call_id=call_id).first()
+    call = scoped_query(DispatchCall).filter_by(call_id=call_id).first()
     if not call:
         return None
 

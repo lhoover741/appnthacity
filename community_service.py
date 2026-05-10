@@ -29,9 +29,8 @@ def get_current_community_id():
     1. From URL/query tenant slug (explicit /c/<slug>/ context)
     2. From request middleware context
     3. From session['selected_community_id'] for non-tenant APIs
-    4. From default (nthacityrp) during compatibility mode
-    
-    Behind MULTI_TENANT_ENABLED feature flag.
+
+    There is intentionally no default-community fallback for tenant data APIs.
     """
     # 1. Explicit tenant routing/query context must win over an older selected session.
     community_slug = request.args.get('community_slug') or resolve_community_slug_from_path()
@@ -48,8 +47,8 @@ def get_current_community_id():
     if 'selected_community_id' in session:
         return session['selected_community_id']
 
-    # 4. Fallback to the migrated default tenant for legacy API compatibility
-    return DEFAULT_COMMUNITY_ID
+    # No hardcoded or first-row tenant fallback: callers must provide selected community context.
+    return None
 
 
 def resolve_community_slug_from_path():
@@ -118,6 +117,21 @@ def community_context_middleware():
 # ========================================
 # Community-Scoped Query Helpers
 # ========================================
+
+def scoped_query(model, community_id=None):
+    """Return a SQLAlchemy query hard-scoped to one tenant community."""
+    if community_id is None:
+        community_id = get_current_community_id()
+
+    if not community_id:
+        raise ValueError('community_id is required for tenant-scoped queries')
+
+    if not hasattr(model, 'community_id'):
+        logger.warning(f'Model {model.__name__} does not have community_id field')
+        return model.query
+
+    return model.query.filter_by(community_id=community_id)
+
 
 def scope_query_to_community(query_obj, model_class, community_id=None):
     """
@@ -255,6 +269,7 @@ __all__ = [
     'get_current_community_id',
     'resolve_community_slug_from_path',
     'community_context_middleware',
+    'scoped_query',
     'scope_query_to_community',
     'community_required',
     'community_member_required',
