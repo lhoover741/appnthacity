@@ -9,13 +9,15 @@ Provides:
 - Community selection
 """
 
+import json
 import secrets
+import string
 import logging
 from datetime import datetime, timedelta
 from flask import Blueprint, request, session, jsonify, g
 from database import db
 from models import (
-    User, Community, CommunityMember, CommunityInvite
+    User, Config, Community, CommunityMember, CommunityInvite
 )
 from community_service import (
     get_current_community_id, get_user_communities,
@@ -28,6 +30,88 @@ logger = logging.getLogger(__name__)
 
 # Create blueprint
 community_bp = Blueprint('communities', __name__, url_prefix='/api/communities')
+
+DEFAULT_DEPARTMENTS = {
+    'LSPD': 'Los Santos Police Department',
+    'BCSO': "Blaine County Sheriff's Office",
+    'SAST': 'San Andreas State Troopers',
+    'SAFR': 'San Andreas Fire Rescue',
+    'Dispatch': 'Communications / Dispatch',
+}
+
+DEFAULT_RANKS = ['Cadet', 'Officer', 'Corporal', 'Sergeant', 'Lieutenant', 'Captain', 'Chief']
+
+DEFAULT_PENAL_CODES = {
+    '1.01': 'Reckless Driving',
+    '1.02': 'Speeding',
+    '2.01': 'Assault',
+    '2.02': 'Battery',
+    '3.01': 'Theft',
+    '3.02': 'Burglary',
+}
+
+DEFAULT_DISPATCH_CATEGORIES = ['Emergency', 'Non-Emergency', 'Traffic', 'Medical', 'Fire']
+
+
+def generate_invite_code(length=8):
+    """Generate a unique uppercase alphanumeric invite code."""
+    alphabet = string.ascii_uppercase + string.digits
+    for _ in range(100):
+        invite_code = ''.join(secrets.choice(alphabet) for _ in range(length))
+        if not CommunityInvite.query.filter_by(invite_code=invite_code).first():
+            return invite_code
+    raise RuntimeError('Unable to generate a unique invite code')
+
+
+def create_config_if_missing(key, community_id, value, description):
+    """Create a tenant config row without overwriting existing configuration."""
+    existing = Config.query.filter_by(key=key, community_id=community_id).first()
+    if existing:
+        return existing
+
+    config = Config(
+        key=key,
+        community_id=community_id,
+        value=json.dumps(value),
+        description=description,
+    )
+    db.session.add(config)
+    return config
+
+
+def initialize_community_config(community):
+    """Seed default tenant configuration so new communities never render empty UI."""
+    branding = {
+        'primary_color': community.primary_color,
+        'secondary_color': community.secondary_color,
+        'logo_url': community.logo_url,
+    }
+    defaults = {
+        'server_name': (community.name, 'Community display name'),
+        'cad_name': (community.cad_name, 'Community CAD name'),
+        'branding_colors': (branding, 'Community branding colors and logo'),
+        'departments': (DEFAULT_DEPARTMENTS, 'Available departments for this community'),
+        'officer_ranks': (DEFAULT_RANKS, 'Available officer ranks for this community'),
+        'penal_codes': (DEFAULT_PENAL_CODES, 'Starter penal code template for this community'),
+        'call_types': (DEFAULT_DISPATCH_CATEGORIES, 'Dispatch call categories for this community'),
+        'dispatch_categories': (DEFAULT_DISPATCH_CATEGORIES, 'Dispatch categories for this community'),
+        'agency_names': (DEFAULT_DEPARTMENTS, 'Agency name mappings for this community'),
+        'default_officers': ([
+            {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available', 'department': 'LSPD'},
+            {'id': '2L-12', 'name': 'Patrol Unit', 'status': 'Available', 'department': 'LSPD'},
+            {'id': 'D-04', 'name': 'Dispatch', 'status': 'Active', 'department': 'Dispatch'},
+        ], 'Starter officer/dispatch units for this community'),
+    }
+
+    for key, (value, description) in defaults.items():
+        create_config_if_missing(key, community.community_id, value, description)
+
+
+def set_selected_community_session(community):
+    """Persist the active community in the current browser session."""
+    session['selected_community_id'] = community.community_id
+    session['selected_community_slug'] = community.slug
+    session.modified = True
 
 
 # ========================================
@@ -46,21 +130,23 @@ def list_user_communities():
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
 
-    memberships = CommunityMember.query.filter_by(
-        user_id=user_id,
-        status='Active'
-    ).all()
+    memberships = (
+        CommunityMember.query
+        .join(Community, Community.community_id == CommunityMember.community_id)
+        .filter(
+            CommunityMember.user_id == user_id,
+            CommunityMember.status == 'Active',
+            Community.status == 'Active',
+        )
+        .all()
+    )
 
     communities_data = []
     for membership in memberships:
-        community = Community.query.filter_by(
-            community_id=membership.community_id
-        ).first()
-        if community:
-            communities_data.append({
-                'community': community.to_dict(),
-                'membership': membership.to_dict(),
-            })
+        communities_data.append({
+            'community': membership.community.to_dict(),
+            'membership': membership.to_dict(),
+        })
 
     return jsonify({
         'success': True,
@@ -105,11 +191,10 @@ def select_community():
             'error': f'You are not a member of community {community_id}'
         }), 403
 
-    # Set in session
-    session['selected_community_id'] = community_id
-    session.modified = True
-
     community = Community.query.filter_by(community_id=community_id).first()
+    if community:
+        set_selected_community_session(community)
+
 
     return jsonify({
         'success': True,
@@ -182,9 +267,8 @@ def create_community():
             status='Active',
         )
         db.session.add(community)
-        db.session.commit()
 
-        # Add creator as Owner
+        # Add creator as Owner. Owner is treated as an admin-capable role by community guards.
         membership = CommunityMember(
             community_id=community_id,
             user_id=user_id,
@@ -192,18 +276,34 @@ def create_community():
             status='Active',
         )
         db.session.add(membership)
+
+        invite = CommunityInvite(
+            invite_code=generate_invite_code(),
+            community_id=community_id,
+            role='Civilian',
+            created_by=user_id,
+            max_uses=None,
+            uses=0,
+            active=True,
+        )
+        db.session.add(invite)
+
+        initialize_community_config(community)
         db.session.commit()
 
-        # Set as selected community
-        session['selected_community_id'] = community_id
-        session.modified = True
+        set_selected_community_session(community)
 
         logger.info(f'✅ Created community {slug} (ID: {community_id}) by user {user_id}')
 
+        redirect_url = f'/c/{community.slug}/'
         return jsonify({
             'success': True,
             'message': 'Community created successfully',
             'community': community.to_dict(),
+            'membership': membership.to_dict(),
+            'invite': invite.to_dict(),
+            'invite_code': invite.invite_code,
+            'redirect_url': redirect_url,
         }), 201
 
     except Exception as e:
@@ -266,7 +366,7 @@ def create_invite_for_selected_community():
     expires_in_days = data.get('expires_in_days')
 
     try:
-        invite_code = secrets.token_urlsafe(16)
+        invite_code = generate_invite_code()
         expires_at = None
         if expires_in_days:
             expires_at = datetime.utcnow() + timedelta(days=int(expires_in_days))
@@ -406,11 +506,10 @@ def join_with_invite():
             invite.active = False
         db.session.commit()
 
-        # Set as selected community
-        session['selected_community_id'] = community_id
-        session.modified = True
-
         community = Community.query.filter_by(community_id=community_id).first()
+        if community:
+            set_selected_community_session(community)
+
 
         logger.info(
             f'✅ User {user_id} joined community {community_id} via invite'
@@ -498,7 +597,7 @@ def create_invite_code(community_id):
     expires_in_days = data.get('expires_in_days')
 
     try:
-        invite_code = secrets.token_urlsafe(32)
+        invite_code = generate_invite_code()
 
         expires_at = None
         if expires_in_days:

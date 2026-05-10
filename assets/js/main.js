@@ -1585,3 +1585,75 @@ const setActiveNav = () => {
 };
 
 initApp();
+
+function showCommunityCreatedModal() {
+  if (!CURRENT_COMMUNITY_SLUG || !window.sessionStorage) return;
+  const rawPayload = sessionStorage.getItem('gtavcadCommunityCreated');
+  if (!rawPayload) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(rawPayload);
+  } catch (error) {
+    sessionStorage.removeItem('gtavcadCommunityCreated');
+    return;
+  }
+
+  if (!payload || payload.communitySlug !== CURRENT_COMMUNITY_SLUG) return;
+  sessionStorage.removeItem('gtavcadCommunityCreated');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'success-modal-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'community-created-title');
+
+  const modal = document.createElement('section');
+  modal.className = 'success-modal card';
+
+  const eyebrow = createSafeElement('p', 'Community Created Successfully', 'eyebrow');
+  const title = createSafeElement('h2', payload.communityName || 'New Community');
+  title.id = 'community-created-title';
+
+  const communityLabel = createSafeElement('p', 'Community:', 'success-modal-label');
+  const communityName = createSafeElement('p', payload.communityName || 'Community', 'success-modal-value');
+  const inviteLabel = createSafeElement('p', 'Invite Code:', 'success-modal-label');
+  const inviteCode = createSafeElement('p', payload.inviteCode || 'Unavailable', 'invite-code-display');
+
+  const actions = document.createElement('div');
+  actions.className = 'hero-actions success-modal-actions';
+
+  const enterCad = document.createElement('a');
+  enterCad.className = 'button button-primary';
+  enterCad.href = payload.redirectUrl || `/c/${CURRENT_COMMUNITY_SLUG}/`;
+  enterCad.textContent = 'Enter CAD';
+
+  const copyInvite = document.createElement('button');
+  copyInvite.className = 'button button-secondary';
+  copyInvite.type = 'button';
+  copyInvite.textContent = 'Copy Invite Code';
+  copyInvite.addEventListener('click', async () => {
+    if (!payload.inviteCode || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(payload.inviteCode);
+    copyInvite.textContent = 'Invite Code Copied';
+  });
+
+  const manage = document.createElement('a');
+  manage.className = 'button button-ghost';
+  manage.href = `/c/${CURRENT_COMMUNITY_SLUG}/cad`;
+  manage.textContent = 'Manage Community';
+
+  const close = document.createElement('button');
+  close.className = 'modal-close-button';
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Close success message');
+  close.textContent = '×';
+  close.addEventListener('click', () => overlay.remove());
+
+  actions.append(enterCad, copyInvite, manage);
+  modal.append(close, eyebrow, title, communityLabel, communityName, inviteLabel, inviteCode, actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+showCommunityCreatedModal();
