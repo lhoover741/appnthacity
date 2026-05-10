@@ -2004,13 +2004,13 @@ def admin_session():
 @app.route('/api/auth/login', methods=['POST'])
 def user_login():
     data = request.get_json(silent=True) or {}
-    username = data.get('username', '').strip()
+    identifier = (data.get('username') or data.get('email') or '').strip()
     password = data.get('password', '').strip()
 
-    if not username or not password:
-        return jsonify({'success': False, 'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
+    if not identifier or not password:
+        return jsonify({'success': False, 'error': 'Username/email and password required', 'code': 'MISSING_CREDENTIALS'}), 400
 
-    user = User.query.filter_by(username=username, active=True).first()
+    user = User.query.filter(((User.username == identifier) | (User.email == identifier)), User.active == True).first()
     if not user or not verify_password(user.password_hash, password):
         return jsonify({'success': False, 'error': 'Invalid username or password', 'code': 'INVALID_CREDENTIALS'}), 401
 
@@ -2040,8 +2040,8 @@ def user_login():
         redirect_url = f"/c/{communities[0]['community']['slug']}"
         next_step = 'enter_community'
     elif not communities:
-        redirect_url = '/communities?onboarding=1'
-        next_step = 'onboarding'
+        redirect_url = '/create-community'
+        next_step = 'create_or_join_community'
     session.modified = True
 
     return jsonify({
@@ -2095,8 +2095,8 @@ def user_register():
         'user': user.to_dict(),
         'communities': [],
         'community_count': 0,
-        'next_step': 'onboarding',
-        'redirect_url': '/communities?onboarding=1',
+        'next_step': 'create_or_join_community',
+        'redirect_url': '/create-community',
         'message': 'Registration successful',
     }), 201
 
@@ -6011,7 +6011,7 @@ def serve_static(path):
         'dmv.html': 'dmv',
         'businesses.html': 'businesses',
         'applications.html': 'applications',
-        'donations.html': '',
+        'donations.html': 'donations',
         'complaints.html': 'complaints',
         'join.html': '',
     }
@@ -6028,8 +6028,11 @@ def serve_static(path):
                 return send_from_directory('.', asset_path)
 
         community_page = parts[2] if len(parts) >= 3 else ''
+        if community_page.endswith('.html'):
+            community_page = community_page[:-5]
         community_aliases = {
             '': 'community.html',
+            'index': 'community.html',
             'cad': 'police.html',
             'police': 'police.html',
             'dmv': 'dmv.html',
@@ -6037,6 +6040,7 @@ def serve_static(path):
             'rules': 'rules.html',
             'businesses': 'businesses.html',
             'applications': 'applications.html',
+            'donations': 'donations.html',
             'complaints': 'complaints.html',
         }
         if community_page in community_aliases:

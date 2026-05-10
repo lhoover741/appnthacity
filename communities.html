@@ -34,7 +34,14 @@
     try {
       const sessionRes = await fetch('/api/auth/session');
       if (sessionRes.status === 401) {
-        status.innerHTML = 'Please <a href="/login">login</a> or <a href="/register">register</a> to see your communities.';
+        status.textContent = 'Please login or register to see your communities.';
+        const loginLink = document.createElement('a');
+        loginLink.href = '/login';
+        loginLink.textContent = ' Login';
+        const registerLink = document.createElement('a');
+        registerLink.href = '/register';
+        registerLink.textContent = ' Register';
+        status.append(loginLink, ' or', registerLink, '.');
         onboarding.hidden = false;
         return;
       }
@@ -46,13 +53,21 @@
         return;
       }
       status.textContent = `Found ${communities.length} communit${communities.length === 1 ? 'y' : 'ies'}.`;
-      list.innerHTML = communities.map(({community, membership}) => `
-        <article class="card feature-card">
-          <h3>${community.name}</h3>
-          <p>${community.cad_name || 'Community CAD'} · Role: ${membership.role}</p>
-          <a class="card-link" href="/c/${community.slug}">Enter CAD</a>
-        </article>
-      `).join('');
+      list.replaceChildren();
+      communities.forEach(({community, membership}) => {
+        const card = document.createElement('article');
+        card.className = 'card feature-card';
+        const title = document.createElement('h3');
+        title.textContent = community.name || 'Community';
+        const meta = document.createElement('p');
+        meta.textContent = `${community.cad_name || 'Community CAD'} · Role: ${membership.role || 'Member'}`;
+        const link = document.createElement('a');
+        link.className = 'card-link';
+        link.href = `/c/${encodeURIComponent(community.slug)}`;
+        link.textContent = 'Enter CAD';
+        card.append(title, meta, link);
+        list.appendChild(card);
+      });
     } catch (error) {
       status.textContent = 'Unable to load communities right now.';
       console.warn(error);

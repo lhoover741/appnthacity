@@ -14,9 +14,9 @@
     <article class="card info-card">
       <h2>Account Login</h2>
       <form id="login-form" class="system-form">
-        <label>Username <input name="username" autocomplete="username" required /></label>
+        <label>Username or Email <input name="username" autocomplete="username" required /></label>
         <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
-        <button class="button button-primary" type="submit">Login</button>
+        <button class="button button-primary" id="login-submit" type="submit">Login</button>
       </form>
       <p id="login-status" role="status"></p>
       <p>Need an account? <a href="/register">Register here</a>.</p>
@@ -29,10 +29,14 @@
 document.getElementById('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const status = document.getElementById('login-status');
+  const button = document.getElementById('login-submit');
+  button.disabled = true;
+  button.textContent = 'Logging in…';
+  status.textContent = '';
   const form = new FormData(event.target);
   const res = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
   const data = await res.json();
-  if (!res.ok || !data.success) { status.textContent = data.error || 'Login failed'; return; }
+  if (!res.ok || !data.success) { status.textContent = data.error || 'Login failed'; button.disabled = false; button.textContent = 'Login'; return; }
   status.textContent = 'Login successful. Redirecting…';
   window.location.href = data.redirect_url || '/communities';
 });
