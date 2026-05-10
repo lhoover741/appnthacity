@@ -43,6 +43,30 @@ def create_app():
     return app
 
 
+
+def rollback_after_validation_error():
+    """Clear failed PostgreSQL transaction state after validator exceptions."""
+    try:
+        db.session.rollback()
+        logger.info('✓ transaction rollback handled')
+    except Exception as rollback_error:
+        logger.warning('Unable to rollback validator transaction cleanly: %s', rollback_error)
+
+
+def run_validation_step(name, func):
+    """Run one validation step with rollback safety around failures."""
+    try:
+        result = func()
+        db.session.rollback()
+        return (name, result)
+    except Exception as exc:
+        rollback_after_validation_error()
+        logger.error('Validation step failed and recovered: %s', exc, exc_info=True)
+        print_test(name, False, str(exc))
+        logger.info('✓ schema validation recovered')
+        return (name, False)
+
+
 def print_test(name, passed, message=''):
     """Print formatted test result."""
     status = f'{TestColorCodes.PASSED}✓ PASS{TestColorCodes.RESET}' if passed else f'{TestColorCodes.FAILED}✗ FAIL{TestColorCodes.RESET}'
@@ -101,7 +125,9 @@ def test_data_backfilled():
                 print_test(f'{table_name} backfilled', False, f'{count_empty} of {total} missing community_id')
                 all_passed = False
         except Exception as e:
+            rollback_after_validation_error()
             print_test(f'{table_name}', False, str(e))
+            logger.info('✓ schema validation recovered')
             all_passed = False
     
     return all_passed
@@ -270,19 +296,20 @@ def main():
         
         results = []
         
-        # Run all tests
-        try:
-            results.append(('Communities organized', test_community_count()))
-            results.append(('Default community created', test_default_community()))
-            results.append(('Data backfilled correctly', test_data_backfilled()))
-            results.append(('No cross-community joins', test_no_cross_community_joins()))
-            results.append(('Audit logs scoped', test_audit_logs_scoped()))
-            results.append(('Config properly scoped', test_config_scoped()))
-            results.append(('Query safety patterns', test_isolation_query_safety()))
-            results.append(('Member isolation', test_member_isolation()))
-        except Exception as e:
-            logger.error(f'Test execution failed: {e}', exc_info=True)
-            return False
+        # Run all tests with rollback safety so one failed PostgreSQL
+        # statement never poisons later validator queries.
+        validation_steps = [
+            ('Communities organized', test_community_count),
+            ('Default community created', test_default_community),
+            ('Data backfilled correctly', test_data_backfilled),
+            ('No cross-community joins', test_no_cross_community_joins),
+            ('Audit logs scoped', test_audit_logs_scoped),
+            ('Config properly scoped', test_config_scoped),
+            ('Query safety patterns', test_isolation_query_safety),
+            ('Member isolation', test_member_isolation),
+        ]
+        for name, func in validation_steps:
+            results.append(run_validation_step(name, func))
         
         # Summary
         print()
@@ -306,6 +333,8 @@ def main():
             print(f'{TestColorCodes.FAILED}⚠️  Isolation issues detected. Review above.{TestColorCodes.RESET}')
         
         print()
+        if status:
+            logger.info('✓ schema validation recovered')
         return status
 
 
