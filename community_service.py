@@ -8,11 +8,11 @@ Handles:
 - Query scoping helpers
 """
 
-import os
 import logging
 from functools import wraps
 from flask import request, session, g, abort, jsonify
 from models import Community, CommunityMember, User
+from platform_config import DEFAULT_COMMUNITY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,6 @@ def get_current_community_id():
     
     Behind MULTI_TENANT_ENABLED feature flag.
     """
-    # Check if multi-tenant is enabled
-    multi_tenant_enabled = os.environ.get('MULTI_TENANT_ENABLED', 'false').lower() == 'true'
-
     # 1. Check session first
     if 'selected_community_id' in session:
         return session['selected_community_id']
@@ -51,8 +48,8 @@ def get_current_community_id():
     if hasattr(g, 'community_id'):
         return g.community_id
 
-    # 4. Fallback to nthacityrp during compatibility mode
-    return 'nthacityrp'
+    # 4. Fallback to the migrated default tenant for legacy API compatibility
+    return DEFAULT_COMMUNITY_ID
 
 
 def resolve_community_slug_from_path():
@@ -82,10 +79,14 @@ def community_context_middleware():
             abort(404, description=f'Community {community_slug} not found')
         g.community_id = community.community_id
         g.community = community
-    else:
-        # Use session or default
-        g.community_id = get_current_community_id()
+    elif 'selected_community_id' in session:
+        # Use the tenant explicitly selected by the authenticated user.
+        g.community_id = session['selected_community_id']
         g.community = Community.query.filter_by(community_id=g.community_id).first()
+    else:
+        # Global platform pages intentionally have no tenant context.
+        g.community_id = None
+        g.community = None
 
     # Validate user membership if authenticated
     user_id = session.get('user_id')
@@ -124,7 +125,7 @@ def scope_query_to_community(query_obj, model_class, community_id=None):
     
     Usage:
         civilians = scope_query_to_community(
-            Civilian.query, Civilian, 'nthacityrp'
+            Civilian.query, Civilian, DEFAULT_COMMUNITY_ID
         ).all()
     """
     if community_id is None:
@@ -146,6 +147,9 @@ def community_required(f):
     """Decorator ensuring request has valid community context."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if (not hasattr(g, 'community_id') or not g.community_id) and kwargs.get('community_id'):
+            g.community_id = kwargs['community_id']
+            g.community = Community.query.filter_by(community_id=g.community_id).first()
         if not hasattr(g, 'community_id') or not g.community_id:
             return jsonify({'error': 'Invalid community context'}), 400
         return f(*args, **kwargs)
@@ -156,17 +160,47 @@ def community_member_required(f):
     """Decorator ensuring user is a member of current community."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        user_id = session.get('user_id')
+        target_community_id = kwargs.get('community_id') or getattr(g, 'community_id', None)
+        if target_community_id and user_id and (not hasattr(g, 'current_membership') or not g.current_membership):
+            membership = CommunityMember.query.filter_by(
+                user_id=user_id,
+                community_id=target_community_id,
+                status='Active'
+            ).first()
+            if membership:
+                g.community_id = target_community_id
+                g.current_membership = membership
+                g.current_role = membership.role
+                g.current_department = membership.department
         if not hasattr(g, 'current_membership') or not g.current_membership:
             return jsonify({'error': 'Not a member of this community'}), 403
         return f(*args, **kwargs)
     return decorated_function
 
 
+def community_admin_required_scoped(f):
+    """Decorator ensuring user is Owner/Admin in the current community."""
+    return community_admin_required(f)
+
+
 def community_admin_required(f):
     """Decorator ensuring user is admin in current community."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not hasattr(g, 'current_role'):
+        user_id = session.get('user_id')
+        target_community_id = kwargs.get('community_id') or getattr(g, 'community_id', None)
+        if target_community_id and user_id and (not hasattr(g, 'current_role') or not g.current_role):
+            membership = CommunityMember.query.filter_by(
+                user_id=user_id,
+                community_id=target_community_id,
+                status='Active'
+            ).first()
+            if membership:
+                g.community_id = target_community_id
+                g.current_membership = membership
+                g.current_role = membership.role
+        if not hasattr(g, 'current_role') or not g.current_role:
             return jsonify({'error': 'No community role'}), 403
 
         if g.current_role not in ['Owner', 'Admin']:
@@ -225,6 +259,7 @@ __all__ = [
     'community_required',
     'community_member_required',
     'community_admin_required',
+    'community_admin_required_scoped',
     'get_user_communities',
     'get_community_members',
     'can_user_access_community',

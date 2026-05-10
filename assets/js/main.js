@@ -1,3 +1,88 @@
+
+const PLATFORM_CONTEXT = {
+  name: 'GTAVCAD',
+  domain: 'gtavcad.app',
+  tagline: 'Multi-Community RP/CAD Platform',
+  cta: 'Create or Join a Community'
+};
+
+function getCommunitySlugFromPath() {
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  return parts[0] === 'c' && parts[1] ? parts[1] : null;
+}
+
+const CURRENT_COMMUNITY_SLUG = getCommunitySlugFromPath();
+
+if (CURRENT_COMMUNITY_SLUG && window.fetch) {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    let url = typeof input === 'string' ? input : input && input.url;
+    if (url && url.startsWith('/api/')) {
+      const separator = url.includes('?') ? '&' : '?';
+      url = `${url}${separator}community_slug=${encodeURIComponent(CURRENT_COMMUNITY_SLUG)}`;
+      if (typeof input === 'string') {
+        input = url;
+      } else {
+        input = new Request(url, input);
+      }
+    }
+    return nativeFetch(input, init);
+  };
+}
+
+async function applyCommunityBranding() {
+  if (!CURRENT_COMMUNITY_SLUG) return null;
+
+  const communityLinks = document.querySelectorAll('[data-community-link]');
+  communityLinks.forEach((link) => {
+    const target = link.getAttribute('data-community-link') || '';
+    link.href = target ? `/c/${CURRENT_COMMUNITY_SLUG}/${target}` : `/c/${CURRENT_COMMUNITY_SLUG}`;
+  });
+
+  const tenantPageMap = {
+    'rules.html': 'rules',
+    'civilian.html': 'civilian',
+    'police.html': 'police',
+    'cad.html': 'cad',
+    'dmv.html': 'dmv',
+    'businesses.html': 'businesses',
+    'applications.html': 'applications',
+    'complaints.html': 'complaints',
+    'join.html': '',
+    'index.html': '',
+  };
+  document.querySelectorAll('a[href]').forEach((link) => {
+    const href = link.getAttribute('href');
+    if (Object.prototype.hasOwnProperty.call(tenantPageMap, href)) {
+      const target = tenantPageMap[href];
+      link.href = `/c/${CURRENT_COMMUNITY_SLUG}${target ? `/${target}` : ''}`;
+    }
+  });
+
+  try {
+    const res = await fetch(`/api/communities/public/${CURRENT_COMMUNITY_SLUG}`);
+    const data = await res.json();
+    if (!res.ok || !data.success) return null;
+    const community = data.community;
+    document.title = `${community.cad_name || community.name} | ${PLATFORM_CONTEXT.name}`;
+    document.documentElement.style.setProperty('--accent', community.primary_color || '#ff2d2d');
+    document.documentElement.style.setProperty('--accent-dark', community.secondary_color || '#8b0000');
+    document.querySelectorAll('[data-community-name]').forEach((el) => { el.textContent = community.name; });
+    document.querySelectorAll('[data-community-cad-name]').forEach((el) => { el.textContent = community.cad_name; });
+    document.querySelectorAll('.brand').forEach((el) => { el.textContent = PLATFORM_CONTEXT.name; });
+    const loginTitle = document.querySelector('.officer-login-title');
+    if (loginTitle) loginTitle.textContent = community.cad_name;
+    const pageHeroTitle = document.querySelector('.page-hero h1, header h1');
+    if (pageHeroTitle && document.body.dataset.communityPage === 'true') {
+      pageHeroTitle.textContent = `${PLATFORM_CONTEXT.name} — Community: ${community.name}`;
+    }
+    return community;
+  } catch (error) {
+    console.warn('Community branding load failed:', error);
+    return null;
+  }
+}
+
 const navToggle = document.querySelector('.nav-toggle');
 const navMenu = document.querySelector('.global-nav');
 const yearSpan = document.querySelectorAll('.current-year');
@@ -1368,6 +1453,11 @@ function getLocationData(location) {
 
 // Initialize
 async function initApp() {
+  await applyCommunityBranding();
+  if (document.body && document.body.dataset.platformPage === 'true') {
+    setActiveNav();
+    return;
+  }
   await loadData();
   handleCivilianForm();
   handle911Form();
@@ -1397,9 +1487,10 @@ async function initApp() {
 
 const setActiveNav = () => {
   const links = document.querySelectorAll('.global-nav a');
-  const path = window.location.pathname.split('/').pop();
+  const path = window.location.pathname;
+  const leaf = window.location.pathname.split('/').pop();
   links.forEach((link) => {
-    if (link.getAttribute('href') === path || (path === '' && link.getAttribute('href') === 'index.html')) {
+    if (link.getAttribute('href') === path || link.getAttribute('href') === leaf || (leaf === '' && link.getAttribute('href') === 'index.html')) {
       link.classList.add('active-link');
     }
   });

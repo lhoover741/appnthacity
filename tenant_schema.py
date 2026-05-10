@@ -11,9 +11,11 @@ from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COMMUNITY_ID = 'nthacityrp'
-DEFAULT_COMMUNITY_NAME = 'NThaCityRP'
-DEFAULT_COMMUNITY_CAD_NAME = 'NThaCityRP CAD'
+from platform_config import (
+    DEFAULT_COMMUNITY_ID,
+    DEFAULT_COMMUNITY_NAME,
+    DEFAULT_COMMUNITY_CAD_NAME,
+)
 
 COMMUNITY_ID_DEFINITION = {
     'type': 'VARCHAR(64)',

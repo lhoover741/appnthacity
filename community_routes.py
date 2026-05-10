@@ -19,7 +19,7 @@ from models import (
 )
 from community_service import (
     get_current_community_id, get_user_communities,
-    community_required,community_member_required,
+    community_required, community_member_required,
     community_admin_required_scoped,
 )
 from security_service import require_auth
@@ -209,6 +209,27 @@ def create_community():
         db.session.rollback()
         logger.error(f'Error creating community: {e}')
         return jsonify({'error': str(e)}), 500
+
+
+# ========================================
+# Public Community Lookup
+# ========================================
+
+@community_bp.route('/public/<slug>', methods=['GET'])
+def get_public_community_by_slug(slug):
+    """Public tenant branding lookup for /c/<slug> rendering."""
+    community = Community.query.filter_by(slug=slug, status='Active').first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+
+    return jsonify({
+        'success': True,
+        'community': community.to_dict(),
+        'platform': {
+            'name': 'GTAVCAD',
+            'domain': 'gtavcad.app',
+        },
+    }), 200
 
 
 # ========================================

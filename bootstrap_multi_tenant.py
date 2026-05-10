@@ -3,8 +3,8 @@
 GTAVCAD Multi-Tenant Bootstrap
 
 Initializes multi-tenant system:
-1. Creates default NThaCityRP community
-2. Backfills all existing records with community_id = nthacityrp
+1. Creates the default migrated tenant community
+2. Backfills all existing records with the default tenant community_id
 3. Initializes community-scoped config
 
 CRITICAL: Run this ONCE during multi-tenant migration.
@@ -16,6 +16,12 @@ import uuid
 from datetime import datetime
 from flask import Flask
 from database import db
+from platform_config import (
+    DEFAULT_COMMUNITY_NAME,
+    DEFAULT_COMMUNITY_SLUG,
+    DEFAULT_COMMUNITY_CAD_NAME,
+    DEFAULT_COMMUNITY_DEPARTMENTS,
+)
 from models import (
     Community, CommunityMember, User, Civilian, Warrant, Arrest,
     Incident, Evidence, TrafficStop, Call911, ActivityLog, Bolo,
@@ -53,13 +59,13 @@ def generate_id(prefix: str) -> str:
 
 
 def create_default_community(session):
-    """Create NThaCityRP default community."""
-    logger.info('🏢 Creating default NThaCityRP community...')
+    """Create the migrated default tenant community."""
+    logger.info(f'🏢 Creating default {DEFAULT_COMMUNITY_NAME} tenant community...')
 
     # Check if it already exists
-    existing = Community.query.filter_by(slug='nthacityrp').first()
+    existing = Community.query.filter_by(slug=DEFAULT_COMMUNITY_SLUG).first()
     if existing:
-        logger.info('✓ Default nthacityrp community verified')
+        logger.info(f'✓ Default {DEFAULT_COMMUNITY_SLUG} tenant verified')
         return existing
 
     # Create first admin user if none exists
@@ -78,10 +84,10 @@ def create_default_community(session):
 
     # Create Community
     community = Community(
-        community_id='nthacityrp',
-        name='NThaCityRP',
-        slug='nthacityrp',
-        cad_name='NThaCityRP CAD',
+        community_id=DEFAULT_COMMUNITY_ID,
+        name=DEFAULT_COMMUNITY_NAME,
+        slug=DEFAULT_COMMUNITY_SLUG,
+        cad_name=DEFAULT_COMMUNITY_CAD_NAME,
         owner_user_id=admin_user.id,
         logo_url=None,
         primary_color='#1a1a1a',
@@ -91,11 +97,11 @@ def create_default_community(session):
     session.add(community)
     session.commit()
 
-    logger.info('✅ Created community: NThaCityRP (nthacityrp)')
+    logger.info(f'✅ Created default tenant: {DEFAULT_COMMUNITY_NAME} ({DEFAULT_COMMUNITY_SLUG})')
 
     # Create CommunityMember for admin
     admin_member = CommunityMember(
-        community_id='nthacityrp',
+        community_id=DEFAULT_COMMUNITY_ID,
         user_id=admin_user.id,
         role='Owner',
         department='Admin',
@@ -111,7 +117,7 @@ def create_default_community(session):
 
 
 def backfill_community_ids(session):
-    """Backfill community_id = nthacityrp for all existing records."""
+    """Backfill legacy records into the migrated default tenant."""
     logger.info('🔄 Backfilling community_id for existing records...')
 
     tables_to_backfill = [
@@ -171,7 +177,7 @@ def backfill_community_ids(session):
     logger.info('✓ community_id backfill complete')
 
 
-def initialize_default_config(session, community_id='nthacityrp'):
+def initialize_default_config(session, community_id=DEFAULT_COMMUNITY_ID):
     """Initialize default config for community."""
     logger.info(f'⚙️  Initializing config for community {community_id}...')
 
@@ -179,15 +185,15 @@ def initialize_default_config(session, community_id='nthacityrp'):
 
     defaults = {
         'server_name': {
-            'value': 'NThaCityRP',
+            'value': DEFAULT_COMMUNITY_NAME,
             'description': 'Name of the RP server'
         },
         'cad_name': {
-            'value': 'NThaCityRP CAD',
+            'value': DEFAULT_COMMUNITY_CAD_NAME,
             'description': 'Name of the CAD system'
         },
         'departments': {
-            'value': json.dumps(['LSPD', 'BCSO', 'SWAT', 'Dispatch', 'Traffic Division', 'Gang Enforcement', 'K9 Unit']),
+            'value': json.dumps(DEFAULT_COMMUNITY_DEPARTMENTS),
             'description': 'Available police departments'
         },
         'officer_ranks': {
@@ -264,7 +270,7 @@ def main():
 
             # 2. Create default community.
             create_default_community(db.session)
-            logger.info('✓ Default nthacityrp community verified')
+            logger.info(f'✓ Default {DEFAULT_COMMUNITY_SLUG} tenant verified')
 
             connection = db.engine.raw_connection()
             cursor = connection.cursor()
@@ -301,8 +307,8 @@ def main():
             logger.info('=' * 60)
             logger.info('')
             logger.info('Summary:')
-            logger.info('  ✓ Created community: NThaCityRP')
-            logger.info('  ✓ Backfilled all records with community_id=nthacityrp')
+            logger.info(f'  ✓ Default tenant: {DEFAULT_COMMUNITY_NAME}')
+            logger.info(f'  ✓ Backfilled all records with community_id={DEFAULT_COMMUNITY_ID}')
             logger.info('  ✓ Initialized community config')
             logger.info('')
             logger.info('Next Steps:')
