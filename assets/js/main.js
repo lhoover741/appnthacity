@@ -88,30 +88,38 @@ if (CURRENT_COMMUNITY_SLUG && window.fetch) {
 async function applyCommunityBranding() {
   if (!CURRENT_COMMUNITY_SLUG) return null;
 
+  const buildCommunityHref = (target = '') => {
+    if (!target || target === '/' || target === 'index' || target === 'index.html') {
+      return `/c/${CURRENT_COMMUNITY_SLUG}/`;
+    }
+    const normalized = target.endsWith('.html') ? target : `${target}.html`;
+    return `/c/${CURRENT_COMMUNITY_SLUG}/${normalized}`;
+  };
+
   const communityLinks = document.querySelectorAll('[data-community-link]');
   communityLinks.forEach((link) => {
     const target = link.getAttribute('data-community-link') || '';
-    link.href = target ? `/c/${CURRENT_COMMUNITY_SLUG}/${target}` : `/c/${CURRENT_COMMUNITY_SLUG}`;
+    link.href = buildCommunityHref(target);
   });
 
   const tenantPageMap = {
-    'rules.html': 'rules',
-    'civilian.html': 'civilian',
-    'police.html': 'police',
-    'cad.html': 'cad',
-    'dmv.html': 'dmv',
-    'businesses.html': 'businesses',
-    'applications.html': 'applications',
-    'complaints.html': 'complaints',
-    'donations.html': 'donations',
-    'join.html': '',
+    '/': '',
+    'rules.html': 'rules.html',
+    'civilian.html': 'civilian.html',
+    'police.html': 'police.html',
+    'cad.html': 'cad.html',
+    'dmv.html': 'dmv.html',
+    'businesses.html': 'businesses.html',
+    'applications.html': 'applications.html',
+    'complaints.html': 'complaints.html',
+    'donations.html': 'donations.html',
+    'join.html': 'join.html',
     'index.html': '',
   };
   document.querySelectorAll('a[href]').forEach((link) => {
     const href = link.getAttribute('href');
     if (Object.prototype.hasOwnProperty.call(tenantPageMap, href)) {
-      const target = tenantPageMap[href];
-      link.href = `/c/${CURRENT_COMMUNITY_SLUG}${target ? `/${target}` : ''}`;
+      link.href = buildCommunityHref(tenantPageMap[href]);
     }
   });
 
