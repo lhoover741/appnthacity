@@ -1,0 +1,5 @@
+<!doctype html><html><head><title>Community Admin</title></head><body style="background:#0b0b0b;color:#f33;font-family:Arial">
+<h1>GTAVCAD Community Admin</h1><div id='out'></div>
+<script>
+fetch('/api/community-admin/overview').then(r=>r.json()).then(d=>{document.getElementById('out').textContent=JSON.stringify(d,null,2);});
+</script></body></html>
