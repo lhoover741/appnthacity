@@ -6,8 +6,13 @@ from flask import session, jsonify, request
 logger = logging.getLogger(__name__)
 
 ROLES = {
+    'Owner': ['read', 'write', 'delete', 'admin', 'owner'],
     'Admin': ['read', 'write', 'delete', 'admin'],
     'Police': ['read', 'write', 'police'],
+    'EMS': ['read', 'write', 'police', 'ems'],
+    'DOJ': ['read', 'write', 'police', 'judge'],
+    'Staff': ['read', 'write', 'police', 'staff'],
+    'LEO': ['read', 'write', 'police'],
     'Dispatch': ['read', 'write', 'dispatch'],
     'Judge': ['read', 'write', 'judge'],
     'DMV': ['read', 'write', 'dmv'],
@@ -46,19 +51,19 @@ def require_auth(f):
 
 def admin_required(f):
     """Decorator to require admin role."""
-    return require_role('Admin')(f)
+    return require_role('Admin', 'Owner')(f)
 
 def police_required(f):
     """Decorator to require police or admin role."""
-    return require_role('Police', 'Admin')(f)
+    return require_role('Police', 'EMS', 'Dispatch', 'DOJ', 'Staff', 'LEO', 'Admin', 'Owner')(f)
 
 def dispatch_required(f):
     """Decorator to require dispatch or admin role."""
-    return require_role('Dispatch', 'Admin')(f)
+    return require_role('Dispatch', 'Police', 'EMS', 'DOJ', 'Staff', 'LEO', 'Admin', 'Owner')(f)
 
 def judge_required(f):
     """Decorator to require judge or admin role."""
-    return require_role('Judge', 'Admin')(f)
+    return require_role('Judge', 'DOJ', 'Admin', 'Owner')(f)
 
 def dmv_required(f):
     """Decorator to require DMV or admin role."""
@@ -157,17 +162,17 @@ def community_admin_required_scoped(f):
 
 def community_police_required_scoped(f):
     """Require Police or Admin role IN THE CURRENT COMMUNITY."""
-    return community_role_required('Police', 'Admin', 'Owner')(f)
+    return community_role_required('Police', 'EMS', 'Dispatch', 'DOJ', 'Staff', 'LEO', 'Admin', 'Owner')(f)
 
 
 def community_dispatch_required_scoped(f):
     """Require Dispatch or Admin role IN THE CURRENT COMMUNITY."""
-    return community_role_required('Dispatch', 'Admin', 'Owner')(f)
+    return community_role_required('Dispatch', 'Police', 'EMS', 'DOJ', 'Staff', 'LEO', 'Admin', 'Owner')(f)
 
 
 def community_judge_required_scoped(f):
     """Require Judge or Admin role IN THE CURRENT COMMUNITY."""
-    return community_role_required('Judge', 'Admin', 'Owner')(f)
+    return community_role_required('Judge', 'DOJ', 'Admin', 'Owner')(f)
 
 
 def community_dmv_required_scoped(f):

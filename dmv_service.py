@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from database import db
+from community_service import get_current_community_id, scoped_query
 from models import License, Vehicle, Civilian
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def create_license(civilian_id, license_type, issue_date=None, expiry_date=None)
         expiry_date = (datetime.now() + timedelta(days=365*5)).date()
 
     license = License(
+        community_id=get_current_community_id(),
         license_id=license_id,
         owner_name=f"CIV-{civilian_id}",
         license_type=license_type,
@@ -129,6 +131,7 @@ def register_vehicle(owner_civilian_id, plate, make, model, color, vin=None):
     vehicle_id = f"VEH-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
     vehicle = Vehicle(
+        community_id=get_current_community_id(),
         vehicle_id=vehicle_id,
         owner_civilian_id=owner_civilian_id,
         plate=plate,
@@ -153,7 +156,7 @@ def register_vehicle(owner_civilian_id, plate, make, model, color, vin=None):
 
 def lookup_vehicle_by_plate(plate):
     """Look up vehicle by license plate."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle:
         return None
 
@@ -173,7 +176,7 @@ def lookup_vehicle_by_plate(plate):
 
 def lookup_vehicles_by_owner(civilian_id):
     """Look up all vehicles owned by a civilian."""
-    vehicles = Vehicle.query.filter_by(owner_civilian_id=civilian_id).all()
+    vehicles = scoped_query(Vehicle).filter_by(owner_civilian_id=civilian_id).all()
 
     result = []
     for v in vehicles:
@@ -192,7 +195,7 @@ def lookup_vehicles_by_owner(civilian_id):
 
 def flag_stolen_vehicle(plate, report_date=None):
     """Flag a vehicle as stolen."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle:
         return None
 
@@ -210,7 +213,7 @@ def flag_stolen_vehicle(plate, report_date=None):
 
 def recover_stolen_vehicle(plate):
     """Mark a stolen vehicle as recovered."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle:
         return None
 
@@ -228,7 +231,7 @@ def recover_stolen_vehicle(plate):
 
 def impound_vehicle(plate, reason):
     """Impound a vehicle."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle:
         return None
 
@@ -246,7 +249,7 @@ def impound_vehicle(plate, reason):
 
 def release_impounded_vehicle(plate):
     """Release an impounded vehicle."""
-    vehicle = Vehicle.query.filter_by(plate=plate).first()
+    vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
     if not vehicle:
         return None
 

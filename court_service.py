@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from database import db
+from community_service import get_current_community_id, scoped_query
 from models import CaseFile, Arrest, Warrant, Civilian
 
 logger = logging.getLogger(__name__)
@@ -14,9 +15,10 @@ def create_case_from_arrest(arrest_id, civilian_id, charges):
     """Create a case file from an arrest."""
     case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
-    civilian = Civilian.query.filter_by(civilian_id=civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
 
     case = CaseFile(
+        community_id=get_current_community_id(),
         case_id=case_id,
         defendant_civilian_id=civilian_id,
         charges=charges,
@@ -35,7 +37,7 @@ def create_case_from_arrest(arrest_id, civilian_id, charges):
 
 def assign_judge(case_id, judge_name):
     """Assign a judge to a case."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case:
         return None
 
@@ -53,7 +55,7 @@ def assign_judge(case_id, judge_name):
 
 def add_prosecutor_notes(case_id, notes):
     """Add prosecutor notes to case."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case:
         return None
 
@@ -75,7 +77,7 @@ def add_prosecutor_notes(case_id, notes):
 
 def add_defense_notes(case_id, notes):
     """Add defense notes to case."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case:
         return None
 
@@ -97,7 +99,7 @@ def add_defense_notes(case_id, notes):
 
 def set_court_date(case_id, court_date):
     """Set court date for case."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case:
         return None
 
@@ -115,7 +117,7 @@ def set_court_date(case_id, court_date):
 
 def close_case(case_id, outcome, sentence_type, sentence_length, notes):
     """Close a case with verdict and sentencing."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case:
         return None
 
@@ -125,7 +127,7 @@ def close_case(case_id, outcome, sentence_type, sentence_length, notes):
 
     # Update civilian record if guilty
     if outcome == 'Guilty':
-        civilian = Civilian.query.filter_by(civilian_id=case.defendant_civilian_id).first()
+        civilian = scoped_query(Civilian).filter_by(civilian_id=case.defendant_civilian_id).first()
         if civilian:
             # Add to criminal history
             entry = f"[{datetime.now().strftime('%Y-%m-%d')}] Case {case_id}: {outcome} - {sentence_type}"
@@ -152,11 +154,11 @@ def close_case(case_id, outcome, sentence_type, sentence_length, notes):
 
 def get_case_summary(case_id):
     """Get complete case summary."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case:
         return None
 
-    civilian = Civilian.query.filter_by(civilian_id=case.defendant_civilian_id).first()
+    civilian = scoped_query(Civilian).filter_by(civilian_id=case.defendant_civilian_id).first()
 
     return {
         'case_id': case.case_id,
@@ -173,14 +175,14 @@ def get_case_summary(case_id):
 
 def search_cases(query):
     """Search cases by defendant name or case ID."""
-    cases = CaseFile.query.filter(
+    cases = scoped_query(CaseFile).filter(
         (CaseFile.case_id.ilike(f'%{query}%')) |
         (CaseFile.defendant_civilian_id.ilike(f'%{query}%'))
     ).limit(50).all()
 
     result = []
     for case in cases:
-        civilian = Civilian.query.filter_by(civilian_id=case.defendant_civilian_id).first()
+        civilian = scoped_query(Civilian).filter_by(civilian_id=case.defendant_civilian_id).first()
         result.append({
             'case_id': case.case_id,
             'defendant': civilian.full_name if civilian else 'Unknown',

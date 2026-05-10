@@ -1,5 +1,6 @@
 from datetime import datetime
 from database import db
+from community_service import scoped_query
 from models import (
     Complaint, Application, Bolo, OfficerSession, Alert,
     RadioLog, ServerStatus, Inmate, Hearing,
@@ -148,31 +149,31 @@ def hearing_to_dict(h):
 
 def get_all_complaints():
     return [complaint_to_dict(c) for c in
-            Complaint.query.order_by(Complaint.submitted_at.desc()).all()]
+            scoped_query(Complaint).order_by(Complaint.submitted_at.desc()).all()]
 
 
 def get_all_applications():
     return [application_to_dict(a) for a in
-            Application.query.order_by(Application.submitted_at.desc()).all()]
+            scoped_query(Application).order_by(Application.submitted_at.desc()).all()]
 
 
 def get_all_bolos():
     return [bolo_to_dict(b) for b in
-            Bolo.query.order_by(Bolo.created_at.desc()).all()]
+            scoped_query(Bolo).order_by(Bolo.created_at.desc()).all()]
 
 
 def get_all_officer_sessions():
-    sessions = OfficerSession.query.all()
+    sessions = scoped_query(OfficerSession).all()
     return {s.callsign: session_to_dict(s) for s in sessions}
 
 
 def get_recent_alerts(limit=100):
     return [alert_to_dict(a) for a in
-            Alert.query.order_by(Alert.created_at.desc()).limit(limit).all()]
+            scoped_query(Alert).order_by(Alert.created_at.desc()).limit(limit).all()]
 
 
 def get_recent_radio_log(limit=100):
-    entries = RadioLog.query.order_by(RadioLog.created_at.desc()).limit(limit).all()
+    entries = scoped_query(RadioLog).order_by(RadioLog.created_at.desc()).limit(limit).all()
     return [radio_to_dict(r) for r in reversed(entries)]
 
 
@@ -195,9 +196,9 @@ def get_server_status():
 
 def get_all_inmates():
     return [inmate_to_dict(i) for i in
-            Inmate.query.order_by(Inmate.booked_at.desc()).all()]
+            scoped_query(Inmate).order_by(Inmate.booked_at.desc()).all()]
 
 
 def get_all_hearings():
     return [hearing_to_dict(h) for h in
-            Hearing.query.order_by(Hearing.scheduled_at.desc()).all()]
+            scoped_query(Hearing).order_by(Hearing.scheduled_at.desc()).all()]

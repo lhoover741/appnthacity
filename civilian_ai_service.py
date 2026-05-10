@@ -4,6 +4,7 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from database import db
+from community_service import scoped_query
 from models import Civilian
 from difflib import SequenceMatcher
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def get_existing_civilian_names():
     """Get all existing civilian names from database."""
-    civilians = Civilian.query.all()
+    civilians = scoped_query(Civilian).all()
     names = []
     for civ in civilians:
         if civ.full_name:

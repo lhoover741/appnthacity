@@ -2,6 +2,7 @@ import secrets
 import logging
 from datetime import datetime
 from database import db
+from community_service import get_current_community_id, scoped_query
 from models import Evidence, Arrest, CaseFile
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ def create_evidence(case_id, arrest_id, evidence_type, description, collected_by
     barcode = f"BAR{secrets.token_hex(4).upper()}"
 
     evidence = Evidence(
+        community_id=get_current_community_id(),
         evidence_id=evidence_id,
         case_number=case_id,
         evidence_description=description,
@@ -38,7 +40,7 @@ def create_evidence(case_id, arrest_id, evidence_type, description, collected_by
 
 def transfer_evidence_custody(evidence_id, from_officer, to_officer, reason):
     """Transfer evidence custody with chain of custody log."""
-    evidence = Evidence.query.filter_by(evidence_id=evidence_id).first()
+    evidence = scoped_query(Evidence).filter_by(evidence_id=evidence_id).first()
     if not evidence:
         return None
 
@@ -60,7 +62,7 @@ def transfer_evidence_custody(evidence_id, from_officer, to_officer, reason):
 
 def get_evidence_chain_of_custody(evidence_id):
     """Get complete chain of custody for evidence."""
-    evidence = Evidence.query.filter_by(evidence_id=evidence_id).first()
+    evidence = scoped_query(Evidence).filter_by(evidence_id=evidence_id).first()
     if not evidence:
         return None
 
@@ -84,8 +86,8 @@ def get_evidence_chain_of_custody(evidence_id):
 
 def link_evidence_to_case(evidence_id, case_id):
     """Link evidence to a case."""
-    evidence = Evidence.query.filter_by(evidence_id=evidence_id).first()
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    evidence = scoped_query(Evidence).filter_by(evidence_id=evidence_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
 
     if not evidence or not case:
         return None
@@ -112,7 +114,7 @@ def link_evidence_to_case(evidence_id, case_id):
 
 def get_case_evidence(case_id):
     """Get all evidence for a case."""
-    case = CaseFile.query.filter_by(case_id=case_id).first()
+    case = scoped_query(CaseFile).filter_by(case_id=case_id).first()
     if not case or not case.evidence_ids:
         return []
 
@@ -120,7 +122,7 @@ def get_case_evidence(case_id):
     evidence_list = []
 
     for eid in evidence_ids:
-        ev = Evidence.query.filter_by(evidence_id=eid.strip()).first()
+        ev = scoped_query(Evidence).filter_by(evidence_id=eid.strip()).first()
         if ev:
             evidence_list.append({
                 'evidence_id': ev.evidence_id,
@@ -133,7 +135,7 @@ def get_case_evidence(case_id):
 
 def release_evidence(evidence_id, reason):
     """Release evidence from storage."""
-    evidence = Evidence.query.filter_by(evidence_id=evidence_id).first()
+    evidence = scoped_query(Evidence).filter_by(evidence_id=evidence_id).first()
     if not evidence:
         return None
 
@@ -156,7 +158,7 @@ def release_evidence(evidence_id, reason):
 
 def destroy_evidence(evidence_id, reason):
     """Destroy evidence after case closure."""
-    evidence = Evidence.query.filter_by(evidence_id=evidence_id).first()
+    evidence = scoped_query(Evidence).filter_by(evidence_id=evidence_id).first()
     if not evidence:
         return None
 

@@ -2,6 +2,7 @@ import logging
 import secrets
 from datetime import datetime
 from database import db
+from community_service import scoped_query
 from models import Civilian, AuditLog, AIGenerationLog
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ def find_similar_names(first_name, last_name):
     from difflib import SequenceMatcher
 
     similar = []
-    all_civilians = Civilian.query.all()
+    all_civilians = scoped_query(Civilian).all()
 
     for civ in all_civilians:
         first_ratio = SequenceMatcher(None, first_name.lower(), (civ.first_name or '').lower()).ratio()

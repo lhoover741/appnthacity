@@ -2008,27 +2008,37 @@
         const col = sc[h.status || 'Scheduled'] || '#4c9af5';
         const outcol = h.outcome ? (oc[h.outcome] || '#fff') : null;
         const dt = h.scheduledAt ? new Date(h.scheduledAt).toLocaleString() : '—';
-        return `<div data-hearing-id="${h.id}" style="background:#0a0a0a;border:1px solid #222;border-left:3px solid ${col};border-radius:10px;padding:14px 16px;margin-bottom:10px;">
+        const hid = escapeAttr(h.id);
+        const suspectName = escapeHtml(h.suspectName || '—');
+        const status = escapeHtml(h.status || 'Scheduled');
+        const hearingType = escapeHtml(h.hearingType || 'Arraignment');
+        const outcome = escapeHtml(h.outcome || '');
+        const charges = escapeHtml(h.charges || '—');
+        const judge = escapeHtml(h.judge || '');
+        const filingOfficer = escapeHtml(h.filingOfficer || '—');
+        const arrestId = escapeHtml(h.arrestId || '');
+        const notes = escapeHtml(h.notes || '');
+        return `<div data-hearing-id="${hid}" style="background:#0a0a0a;border:1px solid #222;border-left:3px solid ${col};border-radius:10px;padding:14px 16px;margin-bottom:10px;">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <div style="flex:1;min-width:0;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-                <strong style="font-size:0.95rem;">${h.suspectName || '—'}</strong>
-                <span style="background:${col}20;color:${col};border:1px solid ${col}44;border-radius:4px;font-size:0.68rem;padding:2px 7px;text-transform:uppercase;letter-spacing:.06em;">${h.status || 'Scheduled'}</span>
-                <span style="background:#1a1a1a;color:#aaa;border:1px solid #2a2a2a;border-radius:4px;font-size:0.68rem;padding:2px 7px;">${h.hearingType || 'Arraignment'}</span>
-                ${h.outcome ? `<span style="background:${outcol}20;color:${outcol};border:1px solid ${outcol}44;border-radius:4px;font-size:0.68rem;padding:2px 7px;">⚖️ ${h.outcome}</span>` : ''}
+                <strong style="font-size:0.95rem;">${suspectName}</strong>
+                <span style="background:${col}20;color:${col};border:1px solid ${col}44;border-radius:4px;font-size:0.68rem;padding:2px 7px;text-transform:uppercase;letter-spacing:.06em;">${status}</span>
+                <span style="background:#1a1a1a;color:#aaa;border:1px solid #2a2a2a;border-radius:4px;font-size:0.68rem;padding:2px 7px;">${hearingType}</span>
+                ${h.outcome ? `<span style="background:${outcol}20;color:${outcol};border:1px solid ${outcol}44;border-radius:4px;font-size:0.68rem;padding:2px 7px;">⚖️ ${outcome}</span>` : ''}
               </div>
-              <p style="margin:0 0 4px;font-size:0.83rem;color:#ccc;">${h.charges || '—'}</p>
-              <p style="margin:0;font-size:0.78rem;color:#777;">🗓 ${dt}${h.judge ? ` · Judge: ${h.judge}` : ''} · Filed by ${h.filingOfficer || '—'}${h.arrestId ? ` · Arrest ID: ${h.arrestId}` : ''}</p>
-              ${h.notes ? `<p style="margin:6px 0 0;font-size:0.78rem;color:#888;font-style:italic;">${h.notes}</p>` : ''}
+              <p style="margin:0 0 4px;font-size:0.83rem;color:#ccc;">${charges}</p>
+              <p style="margin:0;font-size:0.78rem;color:#777;">🗓 ${dt}${h.judge ? ` · Judge: ${judge}` : ''} · Filed by ${filingOfficer}${h.arrestId ? ` · Arrest ID: ${arrestId}` : ''}</p>
+              ${h.notes ? `<p style="margin:6px 0 0;font-size:0.78rem;color:#888;font-style:italic;">${notes}</p>` : ''}
             </div>
             <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
-              <button onclick="toggleOutcomePanel('${h.id}')" style="font-size:0.75rem;padding:6px 12px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#ccc;cursor:pointer;">Update</button>
-              <button onclick="deleteHearing('${h.id}')" style="font-size:0.75rem;padding:6px 10px;background:#e0525215;border:1px solid #e0525230;border-radius:6px;color:#e05252;cursor:pointer;">✕</button>
+              <button onclick="toggleOutcomePanel('${hid}')" style="font-size:0.75rem;padding:6px 12px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#ccc;cursor:pointer;">Update</button>
+              <button onclick="deleteHearing('${hid}')" style="font-size:0.75rem;padding:6px 10px;background:#e0525215;border:1px solid #e0525230;border-radius:6px;color:#e05252;cursor:pointer;">✕</button>
             </div>
           </div>
-          <div id="outcome-panel-${h.id}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;">
+          <div id="outcome-panel-${hid}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid #1a1a1a;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-              <select id="outcome-select-${h.id}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
+              <select id="outcome-select-${hid}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
                 <option value="">— Select outcome —</option>
                 <option>Guilty</option>
                 <option>Not Guilty</option>
@@ -2037,18 +2047,18 @@
                 <option>No Contest</option>
                 <option>Sentenced</option>
               </select>
-              <input id="sentence-input-${h.id}" type="text" placeholder="Sentence length" value="${h.sentenceLength || ''}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
-              <input id="fine-input-${h.id}" type="text" placeholder="Fine amount" value="${h.fineAmount || ''}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
-              <input id="outcome-notes-input-${h.id}" type="text" placeholder="Outcome notes" value="${h.outcomeNotes || ''}" style="flex:1;min-width:180px;background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
-              <select id="status-select-${h.id}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
+              <input id="sentence-input-${hid}" type="text" placeholder="Sentence length" value="${escapeAttr(h.sentenceLength || '')}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
+              <input id="fine-input-${hid}" type="text" placeholder="Fine amount" value="${escapeAttr(h.fineAmount || '')}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
+              <input id="outcome-notes-input-${hid}" type="text" placeholder="Outcome notes" value="${escapeAttr(h.outcomeNotes || '')}" style="flex:1;min-width:180px;background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;" />
+              <select id="status-select-${hid}" style="background:#111;border:1px solid #333;border-radius:6px;padding:6px 10px;color:#fff;font-size:0.83rem;outline:none;">
                 <option value="Scheduled">Scheduled</option>
                 <option value="Completed">Completed</option>
                 <option value="Continued">Continued</option>
                 <option value="Dismissed">Dismissed</option>
                 <option value="Cancelled">Cancelled</option>
               </select>
-              <button onclick="saveOutcome('${h.id}')" style="font-size:0.8rem;padding:6px 14px;background:rgba(76,154,245,0.15);border:1px solid rgba(76,154,245,0.4);border-radius:6px;color:#4c9af5;cursor:pointer;">Save</button>
-              <button onclick="toggleOutcomePanel('${h.id}')" style="font-size:0.8rem;padding:6px 10px;background:transparent;border:1px solid #2a2a2a;border-radius:6px;color:#888;cursor:pointer;">Cancel</button>
+              <button onclick="saveOutcome('${hid}')" style="font-size:0.8rem;padding:6px 14px;background:rgba(76,154,245,0.15);border:1px solid rgba(76,154,245,0.4);border-radius:6px;color:#4c9af5;cursor:pointer;">Save</button>
+              <button onclick="toggleOutcomePanel('${hid}')" style="font-size:0.8rem;padding:6px 10px;background:transparent;border:1px solid #2a2a2a;border-radius:6px;color:#888;cursor:pointer;">Cancel</button>
             </div>
           </div>
         </div>`;
@@ -2472,7 +2482,7 @@
 
   <script>
     // ── Officer login overlay ──
-    const OFFICER_SESSION_KEY = 'NThaCityOfficer';
+    const OFFICER_SESSION_KEY = `GTAVCADOfficer:${window.GTAVCAD_CONTEXT?.communitySlug || window.location.pathname}`;
     const PREDEFINED_UNITS = [
       { callsign: '1L-01',  name: 'Chief Unit',    department: 'LSPD',             icon: '⭐' },
       { callsign: '2L-12',  name: 'Patrol Unit',   department: 'LSPD',             icon: '👮' },
@@ -2502,7 +2512,7 @@
     function buildUnitGrid() {
       const grid = document.getElementById('officer-unit-grid');
       grid.innerHTML = PREDEFINED_UNITS.map(u => `
-        <button type="button" class="officer-unit-card" data-callsign="${escapeHtml(u.callsign)}" onclick="selectPresetUnit('${escapeHtml(u.callsign)}')">
+        <button type="button" class="officer-unit-card" data-callsign="${escapeAttr(u.callsign)}" onclick="selectPresetUnit('${escapeAttr(u.callsign)}')">
           <span class="unit-icon">${escapeHtml(u.icon)}</span>
           <span class="unit-callsign">${escapeHtml(u.callsign)}</span>
           <span class="unit-name">${escapeHtml(u.name)}</span>
@@ -2596,7 +2606,7 @@
       const displayName = officer.officerName || officer.name || '';
       if (dashboard) dashboard.style.display = 'block';
       if (label) {
-        label.innerHTML = `<strong>${officer.callsign}</strong> · ${displayName} · ${officer.department} · <span class="badge badge-primary">${officer.status || 'On Duty'}</span>`;
+        label.innerHTML = `<strong>${escapeHtml(officer.callsign)}</strong> · ${escapeHtml(displayName)} · ${escapeHtml(officer.department)} · <span class="badge badge-primary">${escapeHtml(officer.status || 'On Duty')}</span>`;
       }
       if (chip) {
         chip.textContent = `👮 ${officer.callsign} · ${displayName} · ${officer.department}`;
@@ -2718,14 +2728,41 @@
       clearOfficerSession();
     }
 
-    buildUnitGrid();
-    ['login-callsign', 'login-officer-name', 'login-dept'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('input', () => validateOfficerLoginForm(true));
-      if (el) el.addEventListener('change', () => validateOfficerLoginForm(true));
-    });
-    switchOfficerMode('preset');
-    restoreOfficerSession();
+    function waitForCommunityContext() {
+      if (window.GTAVCAD_CONTEXT && window.GTAVCAD_CONTEXT.role) return Promise.resolve();
+      return new Promise(resolve => {
+        window.addEventListener('gtavcad:context-ready', () => resolve(), { once: true });
+        setTimeout(resolve, 2500);
+      });
+    }
+
+    async function initializeOfficerGate() {
+      await waitForCommunityContext();
+      if (typeof enforceCadRoleVisibility === 'function' && !enforceCadRoleVisibility()) return;
+      if (typeof isCadAdminBypass === 'function' && isCadAdminBypass()) {
+        localStorage.removeItem(OFFICER_SESSION_KEY);
+        const overlay = document.getElementById('officer-login-overlay');
+        if (overlay) overlay.style.display = 'none';
+        renderOfficerHeader({
+          callsign: 'ADMIN',
+          officerName: `${window.GTAVCAD_CONTEXT.role} Access`,
+          department: window.GTAVCAD_CONTEXT.department || 'Command',
+          status: 'Unrestricted',
+        });
+        refreshActiveOfficerSessions();
+        return;
+      }
+      buildUnitGrid();
+      ['login-callsign', 'login-officer-name', 'login-dept'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => validateOfficerLoginForm(true));
+        if (el) el.addEventListener('change', () => validateOfficerLoginForm(true));
+      });
+      switchOfficerMode('preset');
+      restoreOfficerSession();
+    }
+
+    initializeOfficerGate();
   </script>
 </body>
 </html>
