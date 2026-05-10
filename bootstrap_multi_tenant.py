@@ -15,7 +15,7 @@ import logging
 import uuid
 from datetime import datetime
 from flask import Flask
-from database import db, configure_database
+from database import db
 from models import (
     Community, CommunityMember, User, Civilian, Warrant, Arrest,
     Incident, Evidence, TrafficStop, Call911, ActivityLog, Bolo,
@@ -23,6 +23,12 @@ from models import (
     DispatchCall, KnownAssociate, Business, Citation, JailBooking,
     UseOfForceReport, OfficerNote, CaseFile, AIGenerationLog, AuditLog,
     Vehicle, License, Application, Complaint,
+)
+from tenant_schema import (
+    DEFAULT_COMMUNITY_ID,
+    backfill_default_community,
+    ensure_tenant_community_columns,
+    ensure_tenant_indexes,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -53,7 +59,7 @@ def create_default_community(session):
     # Check if it already exists
     existing = Community.query.filter_by(slug='nthacityrp').first()
     if existing:
-        logger.warning('⚠️  Community nthacityrp already exists. Skipping creation.')
+        logger.info('✓ Default nthacityrp community verified')
         return existing
 
     # Create first admin user if none exists
@@ -143,15 +149,15 @@ def backfill_community_ids(session):
         try:
             # Count records without community_id
             count = session.query(model_class).filter(
-                (model_class.community_id == None) | (model_class.community_id == '')
+                model_class.community_id == None
             ).count()
 
             if count > 0:
                 logger.info(f'  Backfilling {count} {model_name} records...')
                 session.query(model_class).filter(
-                    (model_class.community_id == None) | (model_class.community_id == '')
+                    model_class.community_id == None
                 ).update(
-                    {model_class.community_id: 'nthacityrp'},
+                    {model_class.community_id: DEFAULT_COMMUNITY_ID},
                     synchronize_session=False
                 )
                 session.commit()
@@ -162,7 +168,7 @@ def backfill_community_ids(session):
             logger.error(f'  ❌ Error backfilling {model_name}: {e}')
             session.rollback()
 
-    logger.info('✅ Backfill complete')
+    logger.info('✓ community_id backfill complete')
 
 
 def initialize_default_config(session, community_id='nthacityrp'):
@@ -250,19 +256,44 @@ def main():
         logger.info('=' * 60)
 
         try:
-            # Create tables if they don't exist
+            # 1. Create tables if they don't exist, including Community.
             logger.info('📋 Creating database tables...')
             db.create_all()
+            logger.info('✓ Community table verified')
             logger.info('✅ Database tables ensured')
 
-            # 1. Create default community
-            community = create_default_community(db.session)
+            # 2. Create default community.
+            create_default_community(db.session)
+            logger.info('✓ Default nthacityrp community verified')
 
-            # 2. Backfill community_id for all existing records
-            backfill_community_ids(db.session)
+            connection = db.engine.raw_connection()
+            cursor = connection.cursor()
+            try:
+                # 3. Add community_id columns before any ORM backfill touches them.
+                ensure_tenant_community_columns(cursor)
+                connection.commit()
 
-            # 3. Initialize config
-            initialize_default_config(db.session, 'nthacityrp')
+                # 4. Backfill existing production data only where community_id IS NULL.
+                backfill_default_community(cursor)
+                connection.commit()
+                logger.info('✓ community_id backfill complete')
+
+                # 5. Create indexes for tenant-scoped lookups.
+                ensure_tenant_indexes(cursor)
+                connection.commit()
+                logger.info('✓ Tenant indexes created')
+            finally:
+                cursor.close()
+                connection.close()
+
+            # 6. Initialize config after config.community_id is guaranteed.
+            initialize_default_config(db.session, DEFAULT_COMMUNITY_ID)
+
+            # 7. Run tenant validation.
+            from tenant_isolation_validator import run_all_tests
+            if not run_all_tests():
+                logger.error('❌ Tenant validation failed')
+                return False
 
             logger.info('')
             logger.info('=' * 60)

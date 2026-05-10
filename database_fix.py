@@ -20,6 +20,11 @@ def fix_database():
         
         from server import app
         from database import db
+        from tenant_schema import (
+            COMMUNITY_ID_DEFINITION,
+            ensure_tenant_community_columns,
+            ensure_tenant_indexes,
+        )
         
         with app.app_context():
             # Get connection
@@ -44,6 +49,15 @@ def fix_database():
                 # Create all tables
                 db.create_all()
                 logger.info('   ✓ Table created')
+
+                connection = db.engine.raw_connection()
+                cursor = connection.cursor()
+                ensure_tenant_community_columns(cursor)
+                ensure_tenant_indexes(cursor)
+                connection.commit()
+                cursor.close()
+                connection.close()
+                logger.info('   ✓ Tenant indexes created')
                 return True
             
             logger.info('   ✓ Table exists')
@@ -73,6 +87,11 @@ def fix_database():
             
             if not missing:
                 logger.info('   ✓ No missing columns')
+                logger.info('   Ensuring community_id on all tenant tables...')
+                ensure_tenant_community_columns(cursor)
+                ensure_tenant_indexes(cursor)
+                connection.commit()
+                logger.info('   ✓ Tenant indexes created')
                 cursor.close()
                 connection.close()
                 return True
@@ -82,28 +101,30 @@ def fix_database():
             # 5. Add missing columns
             logger.info('\n5. Adding missing columns...')
             
-            # Define column definitions
+            # Define column definitions. community_id must remain present
+            # here so schema validation never logs "No definition for community_id".
             column_defs = {
-                'date_of_birth': 'DATE',
-                'gender': 'VARCHAR(64)',
-                'phone_number': 'VARCHAR(64)',
-                'address': 'VARCHAR(255)',
-                'occupation': 'VARCHAR(255)',
-                'gang_affiliation': "VARCHAR(255) DEFAULT 'None'",
-                'emergency_contact_name': 'VARCHAR(255)',
-                'emergency_contact_phone': 'VARCHAR(64)',
-                'driver_license_status': "VARCHAR(64) DEFAULT 'Valid'",
-                'firearm_license_status': "VARCHAR(64) DEFAULT 'None'",
-                'business_license_status': "VARCHAR(64) DEFAULT 'None'",
-                'vehicle_make': 'VARCHAR(255)',
-                'vehicle_model': 'VARCHAR(255)',
-                'vehicle_year': 'INTEGER',
-                'vehicle_color': 'VARCHAR(64)',
-                'plate_number': 'VARCHAR(64)',
-                'insurance_status': "VARCHAR(64) DEFAULT 'Valid'",
-                'criminal_background_notes': 'TEXT',
-                'character_backstory': 'TEXT',
-                'updated_at': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+                'community_id': COMMUNITY_ID_DEFINITION,
+                'date_of_birth': {'type': 'DATE', 'nullable': True, 'index': False},
+                'gender': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                'phone_number': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                'address': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                'occupation': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                'gang_affiliation': {'type': "VARCHAR(255) DEFAULT 'None'", 'nullable': True, 'index': False},
+                'emergency_contact_name': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                'emergency_contact_phone': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                'driver_license_status': {'type': "VARCHAR(64) DEFAULT 'Valid'", 'nullable': True, 'index': False},
+                'firearm_license_status': {'type': "VARCHAR(64) DEFAULT 'None'", 'nullable': True, 'index': False},
+                'business_license_status': {'type': "VARCHAR(64) DEFAULT 'None'", 'nullable': True, 'index': False},
+                'vehicle_make': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                'vehicle_model': {'type': 'VARCHAR(255)', 'nullable': True, 'index': False},
+                'vehicle_year': {'type': 'INTEGER', 'nullable': True, 'index': False},
+                'vehicle_color': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                'plate_number': {'type': 'VARCHAR(64)', 'nullable': True, 'index': False},
+                'insurance_status': {'type': "VARCHAR(64) DEFAULT 'Valid'", 'nullable': True, 'index': False},
+                'criminal_background_notes': {'type': 'TEXT', 'nullable': True, 'index': False},
+                'character_backstory': {'type': 'TEXT', 'nullable': True, 'index': False},
+                'updated_at': {'type': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'nullable': True, 'index': False},
             }
             
             for col_name in missing:
@@ -111,7 +132,7 @@ def fix_database():
                     logger.warning(f'   ⚠ No definition for {col_name}, skipping')
                     continue
                 
-                col_def = column_defs[col_name]
+                col_def = column_defs[col_name]['type']
                 try:
                     sql = f'ALTER TABLE civilians ADD COLUMN IF NOT EXISTS {col_name} {col_def}'
                     cursor.execute(sql)
@@ -119,6 +140,11 @@ def fix_database():
                 except Exception as e:
                     logger.error(f'   ✗ Failed to add {col_name}: {e}')
             
+            logger.info('   Ensuring community_id on all tenant tables...')
+            ensure_tenant_community_columns(cursor)
+            ensure_tenant_indexes(cursor)
+            logger.info('   ✓ Tenant indexes created')
+
             connection.commit()
             logger.info('   ✓ All columns added')
             
