@@ -13,7 +13,7 @@ from flask_migrate import Migrate
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import text
-from security_service import require_auth, require_role, hash_password, verify_password
+from security_service import admin_required, police_required, dispatch_required, judge_required, dmv_required
 from performance_service import cache, paginate_query
 
 # Force clear SQLAlchemy metadata cache to ensure fresh schema detection
@@ -45,6 +45,11 @@ if not _flask_secret:
     logger.warning('FLASK_SECRET env var not set — admin sessions will not persist across restarts.')
     _flask_secret = secrets.token_hex(32)
 app.secret_key = _flask_secret
+
+# Configure secure session cookies
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'  # Only secure in production
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 from database import db, configure_database
 from models import (
@@ -1737,23 +1742,17 @@ def send_discord_notification(complaint):
     return False
 
 
-def admin_required(f):
-    from functools import wraps
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get('admin_logged_in'):
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
 @app.route('/api/admin/login', methods=['POST'])
 def admin_login():
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
-    admin_password = os.environ.get('ADMIN_PASSWORD', '')
-    if password == admin_password:
+    admin_password_hash = os.environ.get('ADMIN_PASSWORD_HASH', '')
+    if not admin_password_hash:
+        return jsonify({'success': False, 'error': 'Admin password not configured'}), 500
+    if verify_password(admin_password_hash, password):
         session['admin_logged_in'] = True
+        session['role'] = 'Admin'
+        session['user_id'] = 'admin'
         return jsonify({'success': True})
     return jsonify({'success': False, 'error': 'Invalid password'}), 401
 
@@ -2008,6 +2007,7 @@ def get_bolos():
     return jsonify([bolo_to_dict(b) for b in bolos])
 
 
+@police_required
 @app.route('/api/bolo', methods=['POST'])
 def post_bolo():
     data = request.get_json(silent=True) or {}
@@ -2030,6 +2030,8 @@ def post_bolo():
     try:
         db.session.add(bolo_obj)
         db.session.commit()
+        from cad_helpers import log_audit
+        log_audit(data.get('issuedBy', 'unknown'), 'create_bolo', 'Bolo', bolo_id)
     except Exception as e:
         db.session.rollback()
         logger.error(f'post_bolo DB error: {e}')
@@ -2039,6 +2041,7 @@ def post_bolo():
     return jsonify({'success': True, 'bolo': bolo_dict})
 
 
+@police_required
 @app.route('/api/bolo/<bolo_id>/clear', methods=['POST'])
 def clear_bolo(bolo_id):
     b = Bolo.query.filter_by(bolo_id=bolo_id).first()
@@ -2048,6 +2051,8 @@ def clear_bolo(bolo_id):
     b.updated_at = datetime.utcnow()
     try:
         db.session.commit()
+        from cad_helpers import log_audit
+        log_audit('unknown', 'clear_bolo', 'Bolo', bolo_id)
     except Exception as e:
         db.session.rollback()
         logger.error(f'clear_bolo error: {e}')
@@ -2055,6 +2060,7 @@ def clear_bolo(bolo_id):
     return jsonify({'success': True})
 
 
+@police_required
 @app.route('/api/ai/use-of-force', methods=['POST'])
 def ai_use_of_force():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
@@ -2158,6 +2164,7 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Report generation failed. Try again.'}), 500
 
 
+@police_required
 @app.route('/api/ai/generate-bolo', methods=['POST'])
 def ai_generate_bolo():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
@@ -2415,6 +2422,7 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Triage failed. Try again.'}), 500
 
 
+@police_required
 @app.route('/api/ai/warrant', methods=['POST'])
 def ai_warrant():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
@@ -2875,6 +2883,7 @@ def post_alert():
 
 
 
+@police_required
 @app.route('/api/cad/arrests', methods=['POST'])
 def create_arrest_report():
     body = request.get_json(silent=True) or {}
@@ -2894,6 +2903,10 @@ def create_arrest_report():
         _ensure_arrest_custody_and_hearing(arrest)
         db.session.commit()
         logger.info(f'Arrest saved and committed: {arrest.arrest_id}')
+        from cad_helpers import log_audit
+        from security_service import get_current_user
+        user = get_current_user()
+        log_audit(user['user_id'] or body.get('arrestingOfficer', 'unknown'), 'create_arrest', 'Arrest', arrest.arrest_id, actor_role=user['role'], ip_address=user['ip'])
         return jsonify({'success': True, 'arrest': arrest_to_dict(arrest)})
     except Exception as e:
         db.session.rollback()
@@ -3449,6 +3462,7 @@ def get_hearings():
     return jsonify({'success': True, 'hearings': [hearing_to_dict(h) for h in hearings]})
 
 
+@judge_required
 @app.route('/api/court/hearings', methods=['POST'])
 def create_hearing():
     body = request.get_json(silent=True) or {}
@@ -3477,6 +3491,8 @@ def create_hearing():
     try:
         db.session.add(hearing_obj)
         db.session.commit()
+        from cad_helpers import log_audit
+        log_audit(body.get('filingOfficer', 'unknown'), 'create_hearing', 'Hearing', hearing_obj.hearing_id)
     except Exception as e:
         db.session.rollback()
         logger.error(f'create_hearing error: {e}')
@@ -3484,6 +3500,7 @@ def create_hearing():
     return jsonify({'success': True, 'hearing': hearing_to_dict(hearing_obj)})
 
 
+@judge_required
 @app.route('/api/court/hearings/<hearing_id>', methods=['PUT'])
 def update_hearing(hearing_id):
     body = request.get_json(silent=True) or {}
@@ -3510,6 +3527,8 @@ def update_hearing(hearing_id):
     _sync_custody_from_completed_hearing(h)
     try:
         db.session.commit()
+        from cad_helpers import log_audit
+        log_audit('judge', 'update_hearing', 'Hearing', hearing_id)
     except Exception as e:
         db.session.rollback()
         logger.error(f'update_hearing error: {e}')
@@ -3517,6 +3536,7 @@ def update_hearing(hearing_id):
     return jsonify({'success': True, 'hearing': hearing_to_dict(h)})
 
 
+@judge_required
 @app.route('/api/court/hearings/<hearing_id>', methods=['DELETE'])
 def delete_hearing(hearing_id):
     h = Hearing.query.filter_by(hearing_id=hearing_id).first()
@@ -3913,6 +3933,7 @@ def get_dispatch_calls():
     return jsonify({'success': True, 'calls': calls, 'total': len(calls)})
 
 
+@dispatch_required
 @app.route('/api/dispatch/calls', methods=['POST'])
 def create_dispatch_call_route():
     """Create a new dispatch call."""
@@ -3947,6 +3968,7 @@ def create_dispatch_call_route():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dispatch_required
 @app.route('/api/dispatch/calls/<call_id>', methods=['PUT'])
 def update_dispatch_call(call_id):
     """Update dispatch call status or assignment."""
@@ -3991,6 +4013,7 @@ def get_all_officer_status():
     return jsonify({'success': True, 'officers': result, 'total': len(result)})
 
 
+@dispatch_required
 @app.route('/api/dispatch/officer-status/<callsign>', methods=['PUT'])
 def update_officer_status_route(callsign):
     """Update officer status."""
@@ -4016,6 +4039,7 @@ def update_officer_status_route(callsign):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dispatch_required
 @app.route('/api/dispatch/panic', methods=['POST'])
 def panic_button():
     """Officer panic button - creates urgent dispatch call."""
@@ -4082,6 +4106,7 @@ def check_civilian_license(civilian_id):
     result = check_license_status(civilian_id)
     return jsonify({'success': True, 'data': result})
 
+@dmv_required
 @app.route('/api/dmv/license/<license_id>/suspend', methods=['POST'])
 def suspend_license_route(license_id):
     """Suspend a driver's license."""
@@ -4102,6 +4127,7 @@ def suspend_license_route(license_id):
         logger.error(f'Failed to suspend license: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@dmv_required
 @app.route('/api/dmv/license/<license_id>/revoke', methods=['POST'])
 def revoke_license_route(license_id):
     """Revoke a driver's license."""
@@ -4141,6 +4167,7 @@ def lookup_owner_vehicles(civilian_id):
     vehicles = lookup_vehicles_by_owner(civilian_id)
     return jsonify({'success': True, 'vehicles': vehicles, 'total': len(vehicles)})
 
+@dmv_required
 @app.route('/api/dmv/vehicle/stolen/<plate>', methods=['POST'])
 def flag_stolen(plate):
     """Flag a vehicle as stolen."""
@@ -4158,6 +4185,7 @@ def flag_stolen(plate):
         logger.error(f'Failed to flag stolen vehicle: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@dmv_required
 @app.route('/api/dmv/vehicle/recovered/<plate>', methods=['POST'])
 def recover_vehicle(plate):
     """Mark a stolen vehicle as recovered."""
@@ -4175,6 +4203,7 @@ def recover_vehicle(plate):
         logger.error(f'Failed to recover vehicle: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@dmv_required
 @app.route('/api/dmv/vehicle/impound/<plate>', methods=['POST'])
 def impound_vehicle_route(plate):
     """Impound a vehicle."""
@@ -4195,6 +4224,7 @@ def impound_vehicle_route(plate):
         logger.error(f'Failed to impound vehicle: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@dmv_required
 @app.route('/api/dmv/vehicle/release/<plate>', methods=['POST'])
 def release_vehicle_route(plate):
     """Release an impounded vehicle."""
@@ -4229,6 +4259,7 @@ def get_all_vehicles():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dmv_required
 @app.route('/api/dmv/vehicles', methods=['POST'])
 def create_vehicle():
     """Create a new vehicle registration in DMV."""
@@ -4262,6 +4293,8 @@ def create_vehicle():
         db.session.add(vehicle)
         db.session.commit()
         
+        from cad_helpers import log_audit
+        log_audit('dmv', 'create_vehicle', 'Vehicle', vehicle.vehicle_id)
         logger.info(f'Vehicle registered: {plate} owner={vehicle.owner_name}')
         return jsonify({
             'success': True,
@@ -4274,6 +4307,7 @@ def create_vehicle():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dmv_required
 @app.route('/api/dmv/vehicles/<plate>', methods=['PUT'])
 def update_vehicle(plate):
     """Update an existing vehicle registration."""
@@ -4313,6 +4347,7 @@ def update_vehicle(plate):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dmv_required
 @app.route('/api/dmv/vehicles/<plate>', methods=['DELETE'])
 def delete_vehicle(plate):
     """Delete a vehicle registration (admin only)."""
@@ -4348,6 +4383,7 @@ def get_all_licenses():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dmv_required
 @app.route('/api/dmv/licenses', methods=['POST'])
 def create_license():
     """Create a new driver license in DMV."""
@@ -4376,6 +4412,8 @@ def create_license():
         db.session.add(license_obj)
         db.session.commit()
         
+        from cad_helpers import log_audit
+        log_audit('dmv', 'create_license', 'License', license_id)
         logger.info(f'License issued: {license_id} to {owner_name} class={license_type}')
         return jsonify({
             'success': True,
@@ -4388,6 +4426,7 @@ def create_license():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dmv_required
 @app.route('/api/dmv/licenses/<license_id>', methods=['PUT'])
 def update_license_route(license_id):
     """Update an existing driver license."""
@@ -4427,6 +4466,7 @@ def update_license_route(license_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@dmv_required
 @app.route('/api/dmv/licenses/<license_id>', methods=['DELETE'])
 def delete_license_route(license_id):
     """Delete a driver license (admin only)."""
@@ -4843,8 +4883,8 @@ def create_employment_route():
 # Evidence Routes
 # ---------------------------------------------------------------------------
 
+@police_required
 @app.route('/api/evidence/create', methods=['POST'])
-@admin_required
 def create_evidence_route():
     """Create evidence record."""
     data = request.get_json(silent=True) or {}
@@ -4886,8 +4926,8 @@ def get_evidence_custody_route(evidence_id):
     return jsonify({'success': True, 'custody': custody})
 
 
+@police_required
 @app.route('/api/evidence/<evidence_id>/transfer', methods=['POST'])
-@admin_required
 def transfer_evidence_route(evidence_id):
     """Transfer evidence custody."""
     data = request.get_json(silent=True) or {}
@@ -4913,8 +4953,8 @@ def transfer_evidence_route(evidence_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@police_required
 @app.route('/api/evidence/<evidence_id>/release', methods=['POST'])
-@admin_required
 def release_evidence_route(evidence_id):
     """Release evidence from storage."""
     data = request.get_json(silent=True) or {}

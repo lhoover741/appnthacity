@@ -527,7 +527,8 @@ class AuditLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     log_id = db.Column(db.String(64), unique=True, nullable=False)
-    officer_name = db.Column(db.String(255))
+    actor = db.Column(db.String(255))  # officer_name or user_id
+    actor_role = db.Column(db.String(64))  # role of the actor
     action = db.Column(db.String(255))
     record_type = db.Column(db.String(64))
     record_id = db.Column(db.String(64))

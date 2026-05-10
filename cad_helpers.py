@@ -82,13 +82,14 @@ def create_civilian_from_ai(ai_data):
         raise e
 
 
-def log_audit(officer_name, action, record_type, record_id, before_state=None, after_state=None, ip_address=None):
+def log_audit(actor, action, record_type, record_id, actor_role=None, before_state=None, after_state=None, ip_address=None):
     """Create an audit log entry."""
     log_id = f"AUD-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
 
     audit = AuditLog(
         log_id=log_id,
-        officer_name=officer_name,
+        actor=actor,
+        actor_role=actor_role,
         action=action,
         record_type=record_type,
         record_id=record_id,
