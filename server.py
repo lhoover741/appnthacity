@@ -34,7 +34,7 @@ if hasattr(sqlalchemy, '_sa_registry'):
 # Import database and models FIRST
 from database import db, configure_database
 from models import (
-    Complaint, Application, Civilian, Vehicle, License,
+    User, Config, Complaint, Application, Civilian, Vehicle, License,
     Warrant, Arrest, Incident, Evidence, TrafficStop, Call911,
     ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
     ServerStatus, Inmate, Hearing, DispatchCall,
@@ -46,7 +46,13 @@ from models import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Production logging configuration
+if os.environ.get('FLASK_ENV') == 'production':
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)  # Reduce Flask request logging
+    logger.info('🔒 Production mode: Reduced logging verbosity')
+
 app = Flask(__name__, static_folder='.', static_url_path='')
+_flask_secret = os.environ.get('FLASK_SECRET')
 _flask_secret = os.environ.get('FLASK_SECRET')
 if not _flask_secret:
     logger.warning('FLASK_SECRET env var not set — admin sessions will not persist across restarts.')
@@ -71,6 +77,153 @@ from models import (
 
 configure_database(app)
 
+# Bootstrap and validation
+def bootstrap_system():
+    """Perform system bootstrap and validation on startup."""
+    logger.info('🔧 Starting system bootstrap...')
+
+    # Validate required environment variables
+    required_vars = ['DATABASE_URL']
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    if missing_vars:
+        logger.error(f'❌ Missing required environment variables: {", ".join(missing_vars)}')
+        logger.error('Please set these variables and restart the application.')
+        return False
+
+    # Check for weak secrets
+    flask_secret = os.environ.get('FLASK_SECRET')
+    if flask_secret and len(flask_secret) < 32:
+        logger.warning('⚠️  FLASK_SECRET is shorter than 32 characters. Consider using a longer secret for better security.')
+
+    admin_password_hash = os.environ.get('ADMIN_PASSWORD_HASH')
+    if admin_password_hash and len(admin_password_hash) < 60:  # bcrypt hashes are ~60 chars
+        logger.warning('⚠️  ADMIN_PASSWORD_HASH appears to be weak or incorrectly set.')
+
+    # Check database connection
+    try:
+        db.engine.execute(text('SELECT 1'))
+        logger.info('✅ Database connection successful')
+    except Exception as e:
+        logger.error(f'❌ Database connection failed: {e}')
+        return False
+
+    # Check and run pending migrations
+    try:
+        from flask_migrate import upgrade
+        with app.app_context():
+            # Check if alembic_version table exists
+            inspector = sa_inspect(db.engine)
+            if 'alembic_version' in inspector.get_table_names():
+                logger.info('✅ Migration system initialized')
+            else:
+                logger.warning('⚠️  Migration system not initialized. Run `flask db upgrade` to apply migrations.')
+    except Exception as e:
+        logger.error(f'❌ Migration check failed: {e}')
+
+    # Check if users table exists and has admin
+    try:
+        inspector = sa_inspect(db.engine)
+        if 'users' in inspector.get_table_names():
+            admin_count = User.query.filter_by(role='Admin', active=True).count()
+            if admin_count == 0:
+                logger.warning('⚠️  No active admin users found. System will run in setup mode.')
+                logger.info('To create the first admin user, use the bootstrap endpoint or create manually.')
+            else:
+                logger.info(f'✅ Found {admin_count} active admin user(s)')
+        else:
+            logger.warning('⚠️  Users table not found. Run migrations or create tables.')
+    except Exception as e:
+        logger.error(f'❌ Error checking admin users: {e}')
+
+    # Check if users table exists and has admin
+    try:
+        inspector = sa_inspect(db.engine)
+        if 'users' in inspector.get_table_names():
+            admin_count = User.query.filter_by(role='Admin', active=True).count()
+            if admin_count == 0:
+                logger.warning('⚠️  No active admin users found. System will run in setup mode.')
+                logger.info('To create the first admin user, use the bootstrap endpoint or create manually.')
+            else:
+                logger.info(f'✅ Found {admin_count} active admin user(s)')
+        else:
+            logger.warning('⚠️  Users table not found. Run migrations or create tables.')
+
+        # Initialize default config if config table exists
+        if 'config' in inspector.get_table_names():
+            initialize_default_config()
+            logger.info('✅ Config initialized')
+    except Exception as e:
+        logger.error(f'❌ Error checking admin users: {e}')
+
+    logger.info('✅ System bootstrap completed')
+    return True
+
+
+def initialize_default_config():
+    """Initialize default configuration values."""
+    defaults = {
+        'server_name': ('NThaCityRP', 'Name of the RP server'),
+        'server_id': ('main', 'Unique identifier for this server instance'),
+        'departments': (['LSPD', 'BCSO', 'SWAT', 'Dispatch', 'Traffic Division', 'Gang Enforcement', 'K9 Unit'], 'Available police departments'),
+        'officer_ranks': (['Officer', 'Sergeant', 'Lieutenant', 'Captain', 'Chief'], 'Available officer ranks'),
+        'penal_codes': ({
+            '1.01': 'Reckless Driving',
+            '1.02': 'Speeding',
+            '2.01': 'Assault',
+            '2.02': 'Battery',
+            '3.01': 'Theft',
+            '3.02': 'Burglary'
+        }, 'Penal code definitions'),
+        'call_types': (['Emergency', 'Non-Emergency', 'Traffic', 'Medical', 'Fire'], 'Available call types'),
+        'vehicle_categories': (['Sedan', 'SUV', 'Truck', 'Motorcycle', 'Commercial'], 'Vehicle categories'),
+        'evidence_categories': (['Physical', 'Digital', 'Witness', 'Surveillance'], 'Evidence categories'),
+        'agency_names': ({
+            'LSPD': 'Los Santos Police Department',
+            'BCSO': 'Blaine County Sheriff\'s Office',
+            'SWAT': 'Special Weapons and Tactics'
+        }, 'Agency name mappings'),
+        'default_officers': ([
+            {'id': '1L-01', 'name': 'Chief Unit', 'status': 'Available', 'department': 'LSPD'},
+            {'id': '2L-12', 'name': 'Patrol Unit', 'status': 'En Route', 'department': 'LSPD'},
+            {'id': '3L-22', 'name': 'Traffic Unit', 'status': 'On Scene', 'department': 'Traffic Division'},
+            {'id': 'D-04', 'name': 'Dispatch', 'status': 'Active', 'department': 'Dispatch'},
+            {'id': 'K9-02', 'name': 'K9 Unit', 'status': 'Available', 'department': 'K9 Unit'},
+            {'id': 'GU-01', 'name': 'Gang Unit 1', 'status': 'Available', 'department': 'Gang Enforcement'},
+            {'id': 'GU-02', 'name': 'Gang Unit 2', 'status': 'Available', 'department': 'Gang Enforcement'},
+            {'id': 'BCSO-1', 'name': 'BCSO Deputy 1', 'status': 'Available', 'department': 'BCSO'},
+            {'id': 'BCSO-2', 'name': 'BCSO Deputy 2', 'status': 'Off Duty', 'department': 'BCSO'},
+            {'id': 'SWT-1', 'name': 'SWAT Unit', 'status': 'Off Duty', 'department': 'SWAT'}
+        ], 'Default officer units')
+    }
+
+    import json
+    for key, (value, description) in defaults.items():
+        config = Config.query.filter_by(key=key).first()
+        if not config:
+            config = Config(
+                key=key,
+                value=json.dumps(value),
+                description=description
+            )
+            db.session.add(config)
+    db.session.commit()
+
+
+def get_config(key, default=None):
+    """Get configuration value by key."""
+    config = Config.query.filter_by(key=key).first()
+    if config and config.value:
+        import json
+        try:
+            return json.loads(config.value)
+        except:
+            return config.value
+    return default
+
+# Run bootstrap
+if not bootstrap_system():
+    logger.error('❌ Bootstrap failed. Application may not function correctly.')
+
 # Initialize rate limiter
 limiter = Limiter(
     app=app,
@@ -83,6 +236,47 @@ cache.init_app(app)
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle internal server errors without exposing stack traces."""
+    logger.error(f'Internal server error: {error}')
+    return jsonify({
+        'success': False,
+        'error': 'Internal server error',
+        'code': 'INTERNAL_ERROR'
+    }), 500
+
+
+@app.errorhandler(404)
+def not_found_error(error):
+    """Handle 404 errors."""
+    return jsonify({
+        'success': False,
+        'error': 'Endpoint not found',
+        'code': 'NOT_FOUND'
+    }), 404
+
+
+@app.errorhandler(403)
+def forbidden_error(error):
+    """Handle 403 errors."""
+    return jsonify({
+        'success': False,
+        'error': 'Forbidden',
+        'code': 'FORBIDDEN'
+    }), 403
+
+
+@app.errorhandler(401)
+def unauthorized_error(error):
+    """Handle 401 errors."""
+    return jsonify({
+        'success': False,
+        'error': 'Unauthorized',
+        'code': 'UNAUTHORIZED'
+    }), 401
 
 
 def ensure_arrest_automation_schema():
@@ -1107,6 +1301,7 @@ def load_cad_data():
     activity    = [activity_log_to_dict(a) for a in ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(200).all()]
     hearings    = [hearing_to_dict(h)      for h in Hearing.query.order_by(Hearing.created_at.desc()).all()]
     jail_records = [jail_booking_to_dict(j) for j in JailBooking.query.order_by(JailBooking.created_at.desc()).all()]
+    officers    = get_config('default_officers', DEFAULT_OFFICERS)
     return {
         'civilians':   civilians,
         'vehicles':    vehicles,
@@ -1117,7 +1312,7 @@ def load_cad_data():
         'evidence':    evidence,
         'trafficStops': traffic,
         'calls911':    calls911,
-        'officers':    DEFAULT_OFFICERS,
+        'officers':    officers,
         'activityLog': activity,
         'hearings':    hearings,
         'jailRecords': jail_records,
@@ -1772,7 +1967,369 @@ def admin_logout():
 
 @app.route('/api/admin/session', methods=['GET'])
 def admin_session():
-    return jsonify({'loggedIn': bool(session.get('admin_logged_in'))})
+    return jsonify({'success': True, 'loggedIn': bool(session.get('admin_logged_in'))})
+
+
+# User Authentication Routes
+@app.route('/api/auth/login', methods=['POST'])
+def user_login():
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
+
+    user = User.query.filter_by(username=username, active=True).first()
+    if not user or not verify_password(user.password_hash, password):
+        return jsonify({'success': False, 'error': 'Invalid username or password', 'code': 'INVALID_CREDENTIALS'}), 401
+
+    # Update last login
+    user.last_login = datetime.utcnow()
+    db.session.commit()
+
+    # Set session
+    session['user_id'] = user.id
+    session['username'] = user.username
+    session['role'] = user.role
+
+    return jsonify({
+        'success': True,
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'role': user.role,
+            'last_login': user.last_login.isoformat() if user.last_login else None
+        }
+    })
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def user_logout():
+    session.clear()
+    return jsonify({'success': True})
+
+
+@app.route('/api/auth/session', methods=['GET'])
+def user_session():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'error': 'Not authenticated', 'code': 'NOT_AUTHENTICATED'}), 401
+
+    user = User.query.get(user_id)
+    if not user or not user.active:
+        session.clear()
+        return jsonify({'success': False, 'error': 'User not found or inactive', 'code': 'USER_INACTIVE'}), 401
+
+    return jsonify({
+        'success': True,
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'role': user.role,
+            'last_login': user.last_login.isoformat() if user.last_login else None
+        }
+    })
+
+
+@app.route('/api/auth/change-password', methods=['POST'])
+@require_auth
+def change_password():
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password', '')
+    new_password = data.get('new_password', '')
+
+    if not current_password or not new_password:
+        return jsonify({'success': False, 'error': 'Current and new password required', 'code': 'MISSING_PASSWORDS'}), 400
+
+    if len(new_password) < 8:
+        return jsonify({'success': False, 'error': 'New password must be at least 8 characters', 'code': 'PASSWORD_TOO_SHORT'}), 400
+
+    user_id = session.get('user_id')
+    user = User.query.get(user_id)
+
+    if not verify_password(user.password_hash, current_password):
+        return jsonify({'success': False, 'error': 'Current password is incorrect', 'code': 'INVALID_CURRENT_PASSWORD'}), 400
+
+    user.password_hash = hash_password(new_password)
+    db.session.commit()
+
+    return jsonify({'success': True, 'message': 'Password changed successfully'})
+
+
+@app.route('/api/admin/create-user', methods=['POST'])
+@admin_required
+def create_user():
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    role = data.get('role', 'Civilian')
+    email = data.get('email', '').strip() or None
+
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
+
+    if len(password) < 8:
+        return jsonify({'success': False, 'error': 'Password must be at least 8 characters', 'code': 'PASSWORD_TOO_SHORT'}), 400
+
+    if role not in ROLES:
+        return jsonify({'success': False, 'error': 'Invalid role', 'code': 'INVALID_ROLE'}), 400
+
+    # Check if username or email already exists
+    existing = User.query.filter((User.username == username) | (User.email == email)).first()
+    if existing:
+        if existing.username == username:
+            return jsonify({'success': False, 'error': 'Username already exists', 'code': 'USERNAME_EXISTS'}), 409
+        else:
+            return jsonify({'success': False, 'error': 'Email already exists', 'code': 'EMAIL_EXISTS'}), 409
+
+    user = User(
+        username=username,
+        email=email,
+        password_hash=hash_password(password),
+        role=role
+    )
+    db.session.add(user)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'user': user.to_dict(),
+        'message': 'User created successfully'
+    })
+
+
+@app.route('/api/admin/users', methods=['GET'])
+@admin_required
+def list_users():
+    users = User.query.all()
+    return jsonify({
+        'success': True,
+        'users': [user.to_dict() for user in users]
+    })
+
+
+@app.route('/api/admin/users/<int:user_id>', methods=['PUT'])
+@admin_required
+def update_user(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.get_json(silent=True) or {}
+
+    # Update allowed fields
+    if 'role' in data:
+        if data['role'] not in ROLES:
+            return jsonify({'success': False, 'error': 'Invalid role', 'code': 'INVALID_ROLE'}), 400
+        user.role = data['role']
+
+    if 'active' in data:
+        user.active = data['active']
+
+    if 'email' in data:
+        email = data['email'].strip() if data['email'] else None
+        # Check if email is taken by another user
+        existing = User.query.filter(User.email == email, User.id != user_id).first()
+        if existing:
+            return jsonify({'success': False, 'error': 'Email already exists', 'code': 'EMAIL_EXISTS'}), 409
+        user.email = email
+
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'user': user.to_dict(),
+        'message': 'User updated successfully'
+    })
+
+
+@app.route('/api/admin/config', methods=['GET'])
+@admin_required
+def get_config_admin():
+    configs = Config.query.all()
+    return jsonify({'success': True, 'config': [c.to_dict() for c in configs]})
+
+
+@app.route('/api/admin/config/<key>', methods=['PUT'])
+@admin_required
+def update_config(key):
+    data = request.get_json(silent=True) or {}
+    config = Config.query.filter_by(key=key).first()
+    if not config:
+        return jsonify({'success': False, 'error': 'Config key not found', 'code': 'CONFIG_NOT_FOUND'}), 404
+
+    import json
+    if 'value' in data:
+        try:
+            # Validate JSON if it's meant to be JSON
+            json.dumps(data['value'])
+            config.value = json.dumps(data['value'])
+        except:
+            config.value = str(data['value'])
+
+    if 'description' in data:
+        config.description = data['description']
+
+    config.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({'success': True, 'config': config.to_dict(), 'message': 'Config updated successfully'})
+
+
+@app.route('/api/config/<key>', methods=['GET'])
+def get_public_config(key):
+    """Get public configuration values."""
+    public_keys = ['server_name', 'departments', 'call_types', 'agency_names']
+    if key not in public_keys:
+        return jsonify({'success': False, 'error': 'Config key not public', 'code': 'CONFIG_NOT_PUBLIC'}), 403
+
+    value = get_config(key)
+    return jsonify({'success': True, 'key': key, 'value': value})
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring."""
+    health = {
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '3.0.0',  # Phase 3
+        'checks': {}
+    }
+
+    # Database health
+    try:
+        db.engine.execute(text('SELECT 1'))
+        health['checks']['database'] = {'status': 'healthy', 'message': 'Database connection OK'}
+    except Exception as e:
+        health['status'] = 'unhealthy'
+        health['checks']['database'] = {'status': 'unhealthy', 'message': str(e)}
+
+    # Migration status
+    try:
+        # Check if alembic_version table exists
+        inspector = sa_inspect(db.engine)
+        if 'alembic_version' in inspector.get_table_names():
+            health['checks']['migrations'] = {'status': 'healthy', 'message': 'Migrations initialized'}
+        else:
+            health['checks']['migrations'] = {'status': 'warning', 'message': 'Migrations not initialized'}
+    except Exception as e:
+        health['checks']['migrations'] = {'status': 'error', 'message': str(e)}
+
+    # Auth status
+    try:
+        admin_count = User.query.filter_by(role='Admin', active=True).count()
+        health['checks']['auth'] = {
+            'status': 'healthy' if admin_count > 0 else 'warning',
+            'message': f'{admin_count} active admin users'
+        }
+    except Exception as e:
+        health['checks']['auth'] = {'status': 'error', 'message': str(e)}
+
+    # Environment validation
+    missing_vars = []
+    required_vars = ['DATABASE_URL']
+    for var in required_vars:
+        if not os.environ.get(var):
+            missing_vars.append(var)
+
+    if missing_vars:
+        health['status'] = 'unhealthy'
+        health['checks']['environment'] = {
+            'status': 'unhealthy',
+            'message': f'Missing required variables: {", ".join(missing_vars)}'
+        }
+    else:
+        health['checks']['environment'] = {'status': 'healthy', 'message': 'All required variables present'}
+
+    # Set overall status
+    if any(check.get('status') in ['unhealthy', 'error'] for check in health['checks'].values()):
+        health['status'] = 'unhealthy'
+    elif any(check.get('status') == 'warning' for check in health['checks'].values()):
+        health['status'] = 'warning'
+
+    status_code = 200 if health['status'] == 'healthy' else 503
+    return jsonify(health), status_code
+
+
+@app.route('/api/diagnostics', methods=['GET'])
+@admin_required
+def diagnostics():
+    """Detailed diagnostics for administrators."""
+    diag = {
+        'timestamp': datetime.utcnow().isoformat(),
+        'system': {
+            'python_version': f'{__import__("sys").version_info.major}.{__import__("sys").version_info.minor}',
+            'flask_version': __import__('flask').__version__,
+            'platform': __import__('platform').platform()
+        },
+        'database': {
+            'url': os.environ.get('DATABASE_URL', 'Not set')[:50] + '...' if os.environ.get('DATABASE_URL') else 'Not set',
+            'tables': []
+        },
+        'config': {
+            'flask_secret_set': bool(os.environ.get('FLASK_SECRET')),
+            'admin_password_hash_set': bool(os.environ.get('ADMIN_PASSWORD_HASH')),
+            'database_url_set': bool(os.environ.get('DATABASE_URL'))
+        },
+        'users': {
+            'total': User.query.count(),
+            'admins': User.query.filter_by(role='Admin').count(),
+            'active': User.query.filter_by(active=True).count()
+        }
+    }
+
+    # Get table list
+    try:
+        inspector = sa_inspect(db.engine)
+        diag['database']['tables'] = inspector.get_table_names()
+    except Exception as e:
+        diag['database']['error'] = str(e)
+
+    return jsonify({'success': True, 'diagnostics': diag})
+
+
+@app.route('/api/bootstrap/first-admin', methods=['POST'])
+def bootstrap_first_admin():
+    """Create the first admin user. Only works if no admins exist."""
+    # Check if any admins already exist
+    admin_count = User.query.filter_by(role='Admin', active=True).count()
+    if admin_count > 0:
+        return jsonify({'success': False, 'error': 'Admin users already exist', 'code': 'ADMINS_EXIST'}), 403
+
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    email = data.get('email', '').strip() or None
+
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
+
+    if len(password) < 8:
+        return jsonify({'success': False, 'error': 'Password must be at least 8 characters', 'code': 'PASSWORD_TOO_SHORT'}), 400
+
+    # Check if username/email already exists
+    existing = User.query.filter((User.username == username) | (User.email == email)).first()
+    if existing:
+        if existing.username == username:
+            return jsonify({'success': False, 'error': 'Username already exists', 'code': 'USERNAME_EXISTS'}), 409
+        else:
+            return jsonify({'success': False, 'error': 'Email already exists', 'code': 'EMAIL_EXISTS'}), 409
+
+    user = User(
+        username=username,
+        email=email,
+        password_hash=hash_password(password),
+        role='Admin'
+    )
+    db.session.add(user)
+    db.session.commit()
+
+    logger.info(f'✅ First admin user created: {username}')
+
+    return jsonify({
+        'success': True,
+        'user': user.to_dict(),
+        'message': 'First admin user created successfully'
+    })
 
 
 @app.route('/api/complaint', methods=['POST'])
@@ -1800,7 +2357,7 @@ def submit_complaint():
 def list_complaints():
     complaints = Complaint.query.order_by(Complaint.submitted_at.desc()).all()
     result = [complaint_to_dict(c) for c in complaints]
-    return jsonify({'complaints': result, 'total': len(result)})
+    return jsonify({'success': True, 'complaints': result, 'total': len(result)})
 
 
 @app.route('/api/complaint/<complaint_id>/status', methods=['POST'])
@@ -1870,7 +2427,7 @@ def submit_application():
 def list_applications():
     apps = Application.query.order_by(Application.submitted_at.desc()).all()
     result = [application_to_dict(a) for a in apps]
-    return jsonify({'applications': result, 'total': len(result)})
+    return jsonify({'success': True, 'applications': result, 'total': len(result)})
 
 
 @app.route('/api/application/<app_id>/status', methods=['POST'])
@@ -1918,7 +2475,12 @@ def delete_application(app_id):
 
 @app.route('/api/server-status', methods=['GET'])
 def get_server_status():
-    return jsonify(load_server_status())
+    try:
+        status = load_server_status()
+        return jsonify({'success': True, 'status': status})
+    except Exception as e:
+        logger.error(f'Error loading server status: {e}')
+        return jsonify({'success': False, 'error': 'Failed to load server status', 'code': 'STATUS_ERROR'}), 500
 
 
 def send_status_discord_notification(old_status, new_status):
@@ -2010,12 +2572,17 @@ def update_server_status():
 
 @app.route('/api/bolos', methods=['GET'])
 def get_bolos():
-    bolos = Bolo.query.order_by(Bolo.created_at.desc()).all()
-    return jsonify([bolo_to_dict(b) for b in bolos])
+    try:
+        bolos = Bolo.query.order_by(Bolo.created_at.desc()).all()
+        return jsonify({'success': True, 'bolos': [bolo_to_dict(b) for b in bolos]})
+    except Exception as e:
+        logger.error(f'Error loading bolos: {e}')
+        return jsonify({'success': False, 'error': 'Failed to load bolos', 'code': 'BOLOS_ERROR'}), 500
 
 
 @police_required
 @app.route('/api/bolo', methods=['POST'])
+@police_required
 def post_bolo():
     data = request.get_json(silent=True) or {}
     required = ['suspectName', 'description', 'lastLocation', 'threatLevel', 'issuedBy']
@@ -2328,11 +2895,16 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/radio-log', methods=['GET'])
 def get_radio_log():
-    entries = RadioLog.query.order_by(RadioLog.created_at.desc()).limit(50).all()
-    return jsonify([radio_to_dict(r) for r in reversed(entries)])
+    try:
+        entries = RadioLog.query.order_by(RadioLog.created_at.desc()).limit(50).all()
+        return jsonify({'success': True, 'entries': [radio_to_dict(r) for r in reversed(entries)]})
+    except Exception as e:
+        logger.error(f'Error loading radio log: {e}')
+        return jsonify({'success': False, 'error': 'Failed to load radio log', 'code': 'RADIO_LOG_ERROR'}), 500
 
 
 @app.route('/api/radio-log', methods=['POST'])
+@police_required
 def post_radio_log():
     data = request.get_json(silent=True) or {}
     unit = data.get('unit', '').strip()
@@ -2358,6 +2930,7 @@ def post_radio_log():
 
 
 @app.route('/api/ai/dispatch', methods=['POST'])
+@dispatch_required
 def ai_dispatch():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
@@ -2502,6 +3075,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 
 @app.route('/api/ai/generate-call', methods=['POST'])
+@dispatch_required
 def ai_generate_call():
     api_key = os.environ.get('OPENROUTER_API_KEY', '')
     if not api_key:
@@ -2923,7 +3497,12 @@ def create_arrest_report():
 @app.route('/api/cad', methods=['GET'])
 @app.route('/api/cad/data', methods=['GET'])
 def get_cad_data():
-    return jsonify(load_cad_data())
+    try:
+        data = load_cad_data()
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        logger.error(f'Error loading CAD data: {e}')
+        return jsonify({'success': False, 'error': 'Failed to load CAD data', 'code': 'LOAD_ERROR'}), 500
 
 
 @app.route('/api/cad', methods=['POST'])
