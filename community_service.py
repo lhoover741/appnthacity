@@ -26,27 +26,27 @@ def get_current_community_id():
     Get the current community_id for the request.
     
     Resolution order:
-    1. From session['selected_community_id'] (user selected)
-    2. From URL parameter /c/<slug> (explicit)
-    3. From default (nthacityrp) during compatibility mode
+    1. From URL/query tenant slug (explicit /c/<slug>/ context)
+    2. From request middleware context
+    3. From session['selected_community_id'] for non-tenant APIs
+    4. From default (nthacityrp) during compatibility mode
     
     Behind MULTI_TENANT_ENABLED feature flag.
     """
-    # 1. Check session first
-    if 'selected_community_id' in session:
-        return session['selected_community_id']
-
-    # 2. Check request args/path
-    community_slug = request.args.get('community_slug')
+    # 1. Explicit tenant routing/query context must win over an older selected session.
+    community_slug = request.args.get('community_slug') or resolve_community_slug_from_path()
     if community_slug:
         community = Community.query.filter_by(slug=community_slug).first()
         if community:
             return community.community_id
 
-    # 3. Try to extract from path /c/<slug>
-    # This would be handled by route decorator in server.py
-    if hasattr(g, 'community_id'):
+    # 2. Use request middleware context when present.
+    if hasattr(g, 'community_id') and g.community_id:
         return g.community_id
+
+    # 3. Check session selection for non-tenant API calls.
+    if 'selected_community_id' in session:
+        return session['selected_community_id']
 
     # 4. Fallback to the migrated default tenant for legacy API compatibility
     return DEFAULT_COMMUNITY_ID

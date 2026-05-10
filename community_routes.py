@@ -107,11 +107,45 @@ def initialize_community_config(community):
         create_config_if_missing(key, community.community_id, value, description)
 
 
-def set_selected_community_session(community):
-    """Persist the active community in the current browser session."""
+def set_selected_community_session(community, membership=None):
+    """Persist the active community and membership role in the current browser session."""
     session['selected_community_id'] = community.community_id
     session['selected_community_slug'] = community.slug
+    if membership:
+        session['current_role'] = membership.role
+        session['current_department'] = membership.department
     session.modified = True
+
+
+def get_active_or_create_invite(community, created_by=None, deactivate_existing=False):
+    """Return an active globally unique 8-character invite for a community."""
+    if deactivate_existing:
+        CommunityInvite.query.filter_by(community_id=community.community_id, active=True).update({'active': False})
+    invite = CommunityInvite.query.filter_by(community_id=community.community_id, active=True).first()
+    if invite and invite.is_valid():
+        return invite
+    owner_membership = CommunityMember.query.filter_by(
+        community_id=community.community_id,
+        role='Owner',
+        status='Active',
+    ).first()
+    creator_id = created_by or community.owner_user_id or (owner_membership.user_id if owner_membership else None)
+    if not creator_id:
+        fallback_user = User.query.order_by(User.id.asc()).first()
+        creator_id = fallback_user.id if fallback_user else None
+    if not creator_id:
+        raise RuntimeError('Unable to create invite without a creator user')
+    invite = CommunityInvite(
+        invite_code=generate_invite_code(8),
+        community_id=community.community_id,
+        role='Civilian',
+        created_by=creator_id,
+        max_uses=None,
+        uses=0,
+        active=True,
+    )
+    db.session.add(invite)
+    return invite
 
 
 # ========================================
@@ -193,7 +227,7 @@ def select_community():
 
     community = Community.query.filter_by(community_id=community_id).first()
     if community:
-        set_selected_community_session(community)
+        set_selected_community_session(community, membership)
 
 
     return jsonify({
@@ -273,20 +307,12 @@ def create_community():
             community_id=community_id,
             user_id=user_id,
             role='Owner',
+            department='Administration',
             status='Active',
         )
         db.session.add(membership)
 
-        invite = CommunityInvite(
-            invite_code=generate_invite_code(),
-            community_id=community_id,
-            role='Civilian',
-            created_by=user_id,
-            max_uses=None,
-            uses=0,
-            active=True,
-        )
-        db.session.add(invite)
+        invite = get_active_or_create_invite(community, created_by=user_id)
 
         initialize_community_config(community)
 
@@ -296,6 +322,7 @@ def create_community():
         session['selected_community_id'] = community.community_id
         session['selected_community_slug'] = community.slug
         session['current_role'] = 'Owner'
+        session['current_department'] = 'Administration'
         session.modified = True
 
         db.session.commit()
@@ -311,6 +338,7 @@ def create_community():
             'community': community.to_dict(),
             'membership': {
                 'role': 'Owner',
+                'department': 'Administration',
             },
             'invite': {
                 **invite.to_dict(),
@@ -379,7 +407,19 @@ def create_invite_for_selected_community():
     expires_in_days = data.get('expires_in_days')
 
     try:
-        invite_code = generate_invite_code()
+        community = Community.query.filter_by(community_id=community_id).first()
+        if not community:
+            return jsonify({'success': False, 'error': 'Community not found'}), 404
+        if data.get('regenerate'):
+            invite = get_active_or_create_invite(community, created_by=user_id, deactivate_existing=True)
+            db.session.commit()
+            return jsonify({
+                'success': True,
+                'message': 'Invite code regenerated',
+                'invite': invite.to_dict(),
+            }), 201
+
+        invite_code = generate_invite_code(8)
         expires_at = None
         if expires_in_days:
             expires_at = datetime.utcnow() + timedelta(days=int(expires_in_days))
@@ -419,6 +459,48 @@ def accept_invite_alias():
 # ========================================
 # Community Details
 # ========================================
+
+@community_bp.route('/context', methods=['GET'])
+@community_bp.route('/current', methods=['GET'])
+def get_current_community_context():
+    """Backend-authoritative tenant context for every community page."""
+    community_id = get_current_community_id()
+    community = Community.query.filter_by(community_id=community_id, status='Active').first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community context not found'}), 404
+
+    user_id = session.get('user_id')
+    membership = None
+    if user_id:
+        membership = CommunityMember.query.filter_by(
+            user_id=user_id,
+            community_id=community.community_id,
+            status='Active',
+        ).first()
+        if membership:
+            set_selected_community_session(community, membership)
+
+    invite = get_active_or_create_invite(community, created_by=community.owner_user_id)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'platform': {'name': 'GTAVCAD', 'domain': 'gtavcad.app'},
+        'community': {
+            'name': community.name,
+            'slug': community.slug,
+            'cad_name': community.cad_name,
+            'primary_color': community.primary_color,
+            'secondary_color': community.secondary_color,
+            'logo_url': community.logo_url,
+        },
+        'membership': {
+            'role': membership.role,
+            'department': membership.department,
+        } if membership else None,
+        'invite_code': invite.invite_code,
+    }), 200
+
 
 @community_bp.route('/<community_id>', methods=['GET'])
 @require_auth
@@ -521,7 +603,7 @@ def join_with_invite():
 
         community = Community.query.filter_by(community_id=community_id).first()
         if community:
-            set_selected_community_session(community)
+            set_selected_community_session(community, membership)
 
 
         logger.info(
