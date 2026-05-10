@@ -102,6 +102,15 @@ def bootstrap_schema():
                 logger.error('✗ Application schema alignment failed; aborting before validation')
                 return False
 
+            # Run config constraint migration before writing any config rows.
+            logger.info('Running config constraint migration...')
+            from migrate_config_constraint import migrate_config_constraint
+            if migrate_config_constraint():
+                logger.info('✓ Config constraint migration completed')
+            else:
+                logger.error('✗ Config constraint migration failed')
+                return False
+
             # Initialize community-scoped defaults after config.community_id exists.
             try:
                 initialize_default_config(db.session, 'nthacityrp')
