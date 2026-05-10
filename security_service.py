@@ -100,3 +100,101 @@ def validate_id(id_str, prefix=None):
         return False
     # Basic check for length and characters
     return len(id_str) > 10 and len(id_str) < 100 and all(c.isalnum() or c in '-_' for c in id_str)
+
+
+# ========================================
+# COMMUNITY-SCOPED RBAC DECORATORS
+# ========================================
+# These are the NEW decorators for multi-tenant mode.
+# They check both role AND community membership.
+# Use g.current_role and g.community_id from community_context_middleware.
+
+def community_role_required(*community_roles):
+    """
+    Decorator to require specific roles WITHIN the current community.
+    
+    Usage:
+        @community_role_required('Admin', 'Police')
+        def my_route():
+            ...
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            from flask import g
+            
+            # Check authentication
+            if 'user_id' not in session:
+                return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            
+            # Check community context
+            if not hasattr(g, 'community_id') or not g.community_id:
+                return jsonify({'success': False, 'error': 'Invalid community context'}), 400
+            
+            # Check community membership
+            if not hasattr(g, 'current_role') or not g.current_role:
+                return jsonify({
+                    'success': False,
+                    'error': f'Not a member of community {g.community_id}'
+                }), 403
+            
+            # Check role in community
+            if g.current_role not in community_roles:
+                return jsonify({
+                    'success': False,
+                    'error': f'Insufficient permissions in this community. Required: {community_roles}'
+                }), 403
+            
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+def community_admin_required_scoped(f):
+    """Require Admin or Owner role IN THE CURRENT COMMUNITY."""
+    return community_role_required('Owner', 'Admin')(f)
+
+
+def community_police_required_scoped(f):
+    """Require Police or Admin role IN THE CURRENT COMMUNITY."""
+    return community_role_required('Police', 'Admin', 'Owner')(f)
+
+
+def community_dispatch_required_scoped(f):
+    """Require Dispatch or Admin role IN THE CURRENT COMMUNITY."""
+    return community_role_required('Dispatch', 'Admin', 'Owner')(f)
+
+
+def community_judge_required_scoped(f):
+    """Require Judge or Admin role IN THE CURRENT COMMUNITY."""
+    return community_role_required('Judge', 'Admin', 'Owner')(f)
+
+
+def community_dmv_required_scoped(f):
+    """Require DMV or Admin role IN THE CURRENT COMMUNITY."""
+    return community_role_required('DMV', 'Admin', 'Owner')(f)
+
+
+def community_member_required_scoped(f):
+    """Require membership IN THE CURRENT COMMUNITY (any role)."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        from flask import g
+        
+        # Check authentication
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+        
+        # Check community context
+        if not hasattr(g, 'community_id') or not g.community_id:
+            return jsonify({'success': False, 'error': 'Invalid community context'}), 400
+        
+        # Check community membership
+        if not hasattr(g, 'current_role') or not g.current_role:
+            return jsonify({
+                'success': False,
+                'error': 'Not a member of this community'
+            }), 403
+        
+        return f(*args, **kwargs)
+    return decorated_function

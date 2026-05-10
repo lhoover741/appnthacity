@@ -42,6 +42,7 @@ from models import (
     KnownAssociate, Business, Citation, JailBooking,
     UseOfForceReport, OfficerNote, CaseFile,
     AIGenerationLog, AuditLog,
+    Community, CommunityMember, CommunityInvite,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -65,18 +66,9 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'  # Only secure in production
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
-from database import db, configure_database
-from models import (
-    Complaint, Application, Civilian, Vehicle, License,
-    Warrant, Arrest, Incident, Evidence, TrafficStop, Call911,
-    ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
-    ServerStatus, Inmate, Hearing, DispatchCall,
-    KnownAssociate, Business, Citation, JailBooking,
-    UseOfForceReport, OfficerNote, CaseFile,
-    AIGenerationLog, AuditLog,
-)
 
 configure_database(app)
+
 
 # Bootstrap and validation
 def bootstrap_system():

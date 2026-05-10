@@ -35,6 +35,7 @@ class Complaint(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     complaint_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     complaint_discord = db.Column(db.String(255))
     reported_name = db.Column(db.String(255))
     complaint_type = db.Column(db.String(255))
@@ -55,6 +56,7 @@ class Application(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     application_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     app_discord = db.Column(db.String(255))
     app_character = db.Column(db.String(255))
     application_type = db.Column(db.String(255))
@@ -73,6 +75,7 @@ class Civilian(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     civilian_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
 
     # ONLY fields visible on Civilian Registration form
     first_name = db.Column(db.String(255), nullable=False)
@@ -142,6 +145,7 @@ class Vehicle(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     vehicle_id = db.Column(db.String(64), unique=True, nullable=True)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     owner_civilian_id = db.Column(db.String(64))
     plate = db.Column(db.String(64), unique=True, nullable=False)
     vin = db.Column(db.String(255))
@@ -165,6 +169,7 @@ class License(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     license_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     owner_name = db.Column(db.String(255))
     license_type = db.Column(db.String(255))
     status = db.Column(db.String(64), default='Valid')
@@ -180,6 +185,7 @@ class Warrant(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     warrant_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64))
     warrant_name = db.Column(db.String(255))
     warrant_charges = db.Column(db.Text)
@@ -197,6 +203,7 @@ class Arrest(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     arrest_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64))
     suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
@@ -216,6 +223,7 @@ class Incident(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     incident_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     incident_type = db.Column(db.String(255))
     location = db.Column(db.String(255))
     description = db.Column(db.Text)
@@ -233,6 +241,7 @@ class Evidence(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     evidence_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     case_number = db.Column(db.String(64))
     evidence_description = db.Column(db.Text)
     collected_by = db.Column(db.String(255))
@@ -248,6 +257,7 @@ class TrafficStop(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     stop_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     driver_name = db.Column(db.String(255))
     plate = db.Column(db.String(64))
     reason = db.Column(db.Text)
@@ -264,6 +274,7 @@ class Call911(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     call_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     caller_name = db.Column(db.String(255))
     phone = db.Column(db.String(64))
     location = db.Column(db.Text)
@@ -282,6 +293,7 @@ class ActivityLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     log_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     action = db.Column(db.String(255))
     officer = db.Column(db.String(255))
     details = db.Column(db.Text)
@@ -293,6 +305,7 @@ class Bolo(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     bolo_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     suspect_name = db.Column(db.String(255))
     description = db.Column(db.Text)
     last_location = db.Column(db.String(255))
@@ -310,7 +323,8 @@ class OfficerSession(db.Model):
     __tablename__ = 'officer_sessions'
 
     id = db.Column(db.Integer, primary_key=True)
-    callsign = db.Column(db.String(64), unique=True, nullable=False)
+    callsign = db.Column(db.String(64), nullable=False)  # Unique per community
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     officer_name = db.Column(db.String(255))
     badge_number = db.Column(db.String(64))
     department = db.Column(db.String(255), default='LSPD')
@@ -326,10 +340,13 @@ class Config(db.Model):
     __tablename__ = 'config'
 
     id = db.Column(db.Integer, primary_key=True)
-    key = db.Column(db.String(255), unique=True, nullable=False)
+    key = db.Column(db.String(255), nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp. Null = global config
     value = db.Column(db.Text, nullable=True)  # JSON string
     description = db.Column(db.Text, nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Unique constraint: (key, community_id) - allows same key for different communities
+    __table_args__ = (db.UniqueConstraint('key', 'community_id', name='unique_config_per_community'),)
 
     def to_dict(self):
         return {
@@ -346,6 +363,7 @@ class Alert(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     alert_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     alert_type = db.Column(db.String(64))
     message = db.Column(db.Text)
     issued_by = db.Column(db.String(255))
@@ -357,6 +375,7 @@ class RadioLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     log_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     unit = db.Column(db.String(255))
     channel = db.Column(db.String(64), default='Primary')
     message = db.Column(db.Text)
@@ -379,6 +398,7 @@ class Inmate(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     inmate_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64), default='')
     suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
@@ -401,6 +421,7 @@ class Hearing(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     hearing_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64), default='')
     suspect_name = db.Column(db.String(255))
     charges = db.Column(db.Text)
@@ -424,6 +445,7 @@ class DispatchCall(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     call_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     caller_name = db.Column(db.String(255))
     phone = db.Column(db.String(64))
     location = db.Column(db.Text)
@@ -441,6 +463,7 @@ class KnownAssociate(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     associate_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64), nullable=False)
     associated_civilian_id = db.Column(db.String(64), nullable=False)
     relationship_type = db.Column(db.String(255))
@@ -454,6 +477,7 @@ class Business(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     business_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     owner_civilian_id = db.Column(db.String(64))
     business_name = db.Column(db.String(255), nullable=False)
     business_type = db.Column(db.String(255))
@@ -471,6 +495,7 @@ class Citation(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     citation_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64), nullable=False)
     issuing_officer = db.Column(db.String(255))
     violation = db.Column(db.String(255))
@@ -487,6 +512,7 @@ class JailBooking(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     booking_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     civilian_id = db.Column(db.String(64), nullable=False, default='')
     arrest_id = db.Column(db.String(64))
     suspect_name = db.Column(db.String(255))
@@ -509,6 +535,7 @@ class UseOfForceReport(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     report_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     officer_name = db.Column(db.String(255))
     badge_number = db.Column(db.String(64))
     subject_name = db.Column(db.String(255))
@@ -530,6 +557,7 @@ class OfficerNote(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     note_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     officer_name = db.Column(db.String(255))
     civilian_id = db.Column(db.String(64))
     note_type = db.Column(db.String(64))
@@ -543,6 +571,7 @@ class CaseFile(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     defendant_civilian_id = db.Column(db.String(64))
     charges = db.Column(db.Text)
     evidence_ids = db.Column(db.Text)
@@ -562,6 +591,7 @@ class AIGenerationLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     log_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     generation_type = db.Column(db.String(64))
     input_params = db.Column(db.Text)
     output_summary = db.Column(db.Text)
@@ -577,6 +607,7 @@ class AuditLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     log_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     actor = db.Column(db.String(255))  # officer_name or user_id
     actor_role = db.Column(db.String(64))  # role of the actor
     action = db.Column(db.String(255))
@@ -586,3 +617,122 @@ class AuditLog(db.Model):
     after_state = db.Column(db.Text)
     ip_address = db.Column(db.String(64))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Community(db.Model):
+    """Represents a multi-tenant community within the GTAVCAD platform."""
+    __tablename__ = 'communities'
+
+    id = db.Column(db.Integer, primary_key=True)
+    community_id = db.Column(db.String(64), unique=True, nullable=False)  # e.g., 'nthacityrp', 'metro-rp'
+    name = db.Column(db.String(255), nullable=False)  # Display name: NThaCityRP, Metro RP
+    slug = db.Column(db.String(64), unique=True, nullable=False)  # URL-safe slug: nthacityrp, metro-rp
+    cad_name = db.Column(db.String(255), nullable=False, default='Community CAD')  # e.g., 'NThaCityRP CAD'
+    owner_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    logo_url = db.Column(db.String(512), nullable=True)
+    primary_color = db.Column(db.String(32), default='#1a1a1a')  # Hex color
+    secondary_color = db.Column(db.String(32), default='#0066cc')  # Hex color
+    status = db.Column(db.String(64), default='Active')  # Active, Inactive, Suspended
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    owner = db.relationship('User', backref=db.backref('owned_communities', lazy=True))
+    members = db.relationship('CommunityMember', backref='community', lazy=True, cascade='all, delete-orphan')
+    invites = db.relationship('CommunityInvite', backref='community', lazy=True, cascade='all, delete-orphan')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'community_id': self.community_id,
+            'name': self.name,
+            'slug': self.slug,
+            'cad_name': self.cad_name,
+            'owner_user_id': self.owner_user_id,
+            'logo_url': self.logo_url,
+            'primary_color': self.primary_color,
+            'secondary_color': self.secondary_color,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class CommunityMember(db.Model):
+    """Represents a user's membership in a community with their role and permissions."""
+    __tablename__ = 'community_members'
+
+    id = db.Column(db.Integer, primary_key=True)
+    community_id = db.Column(db.String(64), db.ForeignKey('communities.community_id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    role = db.Column(db.String(64), nullable=False)  # Owner, Admin, Police, Dispatch, Judge, DMV, Civilian, BusinessOwner
+    department = db.Column(db.String(255), nullable=True)  # LSPD, BCSO, Dispatch, etc.
+    callsign = db.Column(db.String(64), nullable=True)  # For officers: 1L-01, 2L-12, etc.
+    status = db.Column(db.String(64), default='Active')  # Active, Inactive, Suspended
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = db.relationship('User', backref=db.backref('community_memberships', lazy=True))
+
+    # Ensure a user can't have duplicate roles in the same community
+    __table_args__ = (db.UniqueConstraint('community_id', 'user_id', name='unique_user_per_community'),)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'community_id': self.community_id,
+            'user_id': self.user_id,
+            'role': self.role,
+            'department': self.department,
+            'callsign': self.callsign,
+            'status': self.status,
+            'joined_at': self.joined_at.isoformat() if self.joined_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class CommunityInvite(db.Model):
+    """Represents an invitation code to join a community."""
+    __tablename__ = 'community_invites'
+
+    id = db.Column(db.Integer, primary_key=True)
+    invite_code = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), db.ForeignKey('communities.community_id'), nullable=False)
+    role = db.Column(db.String(64), nullable=False, default='Civilian')  # Default role for invitees
+    department = db.Column(db.String(255), nullable=True)  # Optional: pre-assign department
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=True)  # None = never expires
+    max_uses = db.Column(db.Integer, nullable=True)  # None = unlimited uses
+    uses = db.Column(db.Integer, default=0)  # Current number of uses
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Relationships
+    creator = db.relationship('User', backref=db.backref('created_invites', lazy=True))
+
+    def is_valid(self):
+        """Check if the invite is still valid."""
+        if not self.active:
+            return False
+        if self.expires_at and datetime.utcnow() > self.expires_at:
+            return False
+        if self.max_uses is not None and self.uses >= self.max_uses:
+            return False
+        return True
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'invite_code': self.invite_code,
+            'community_id': self.community_id,
+            'role': self.role,
+            'department': self.department,
+            'created_by': self.created_by,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'max_uses': self.max_uses,
+            'uses': self.uses,
+            'active': self.active,
+            'valid': self.is_valid(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
