@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify, send_from_directory, session
+from flask import Flask, request, jsonify, send_from_directory, session, redirect
 from flask_migrate import Migrate
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -23,6 +23,17 @@ from security_service import (
     verify_password
 )
 from performance_service import cache, paginate_query
+from platform_config import (
+    PLATFORM_NAME,
+    PLATFORM_DOMAIN,
+    PLATFORM_TAGLINE,
+    PLATFORM_CTA,
+    DEFAULT_COMMUNITY_ID,
+    DEFAULT_COMMUNITY_NAME,
+    DEFAULT_COMMUNITY_SLUG,
+    DEFAULT_COMMUNITY_CAD_NAME,
+    DEFAULT_COMMUNITY_DEPARTMENTS,
+)
 
 # Force clear SQLAlchemy metadata cache to ensure fresh schema detection
 import sqlalchemy
@@ -155,9 +166,13 @@ def bootstrap_system():
 def initialize_default_config():
     """Initialize default configuration values."""
     defaults = {
-        'server_name': ('NThaCityRP', 'Name of the RP server'),
-        'server_id': ('main', 'Unique identifier for this server instance'),
-        'departments': (['LSPD', 'BCSO', 'SWAT', 'Dispatch', 'Traffic Division', 'Gang Enforcement', 'K9 Unit'], 'Available police departments'),
+        'platform_name': (PLATFORM_NAME, 'Global platform name'),
+        'platform_domain': (PLATFORM_DOMAIN, 'Global platform domain'),
+        'platform_tagline': (PLATFORM_TAGLINE, 'Global platform positioning'),
+        'platform_cta': (PLATFORM_CTA, 'Global onboarding call to action'),
+        'server_name': (PLATFORM_NAME, 'Legacy public alias for the platform name'),
+        'server_id': ('platform', 'Unique identifier for this platform instance'),
+        'departments': (DEFAULT_COMMUNITY_DEPARTMENTS, 'Available police departments for the default tenant'),
         'officer_ranks': (['Officer', 'Sergeant', 'Lieutenant', 'Captain', 'Chief'], 'Available officer ranks'),
         'penal_codes': ({
             '1.01': 'Reckless Driving',
@@ -202,9 +217,15 @@ def initialize_default_config():
     db.session.commit()
 
 
-def get_config(key, default=None):
-    """Get configuration value by key."""
-    config = Config.query.filter_by(key=key).first()
+def get_config(key, default=None, community_id=None):
+    """Get configuration value by key, preferring tenant config when supplied."""
+    config = None
+    if community_id:
+        config = Config.query.filter_by(key=key, community_id=community_id).first()
+    if not config:
+        config = Config.query.filter_by(key=key, community_id=None).first()
+    if not config:
+        config = Config.query.filter_by(key=key).first()
     if config and config.value:
         import json
         try:
@@ -229,6 +250,19 @@ cache.init_app(app)
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
+
+from community_service import community_context_middleware, get_current_community_id
+from community_routes import register_community_routes
+
+@app.before_request
+def inject_community_context():
+    """Attach tenant context for /c/<slug> routes and selected community sessions."""
+    if request.path.startswith('/static/') or request.path.startswith('/assets/'):
+        return None
+    community_context_middleware()
+    return None
+
+register_community_routes(app)
 
 
 @app.errorhandler(500)
@@ -2167,14 +2201,38 @@ def update_config(key):
     return jsonify({'success': True, 'config': config.to_dict(), 'message': 'Config updated successfully'})
 
 
+
+@app.route('/api/platform', methods=['GET'])
+def get_platform_metadata():
+    """Public global platform metadata that must never be tenant-branded."""
+    return jsonify({
+        'success': True,
+        'platform': {
+            'platform_name': PLATFORM_NAME,
+            'platform_domain': PLATFORM_DOMAIN,
+            'tagline': PLATFORM_TAGLINE,
+            'cta': PLATFORM_CTA,
+            'default_community': {
+                'community_name': DEFAULT_COMMUNITY_NAME,
+                'community_slug': DEFAULT_COMMUNITY_SLUG,
+                'cad_name': DEFAULT_COMMUNITY_CAD_NAME,
+            },
+            'global_routes': ['/', '/login', '/register', '/communities', '/create-community'],
+            'community_route_prefix': '/c/<community_slug>',
+        }
+    })
+
 @app.route('/api/config/<key>', methods=['GET'])
 def get_public_config(key):
     """Get public configuration values."""
-    public_keys = ['server_name', 'departments', 'call_types', 'agency_names']
+    public_keys = ['platform_name', 'platform_domain', 'platform_tagline', 'platform_cta', 'server_name', 'departments', 'call_types', 'agency_names']
     if key not in public_keys:
         return jsonify({'success': False, 'error': 'Config key not public', 'code': 'CONFIG_NOT_PUBLIC'}), 403
 
-    value = get_config(key)
+    if key.startswith('platform_'):
+        value = get_config(key)
+    else:
+        value = get_config(key, community_id=get_current_community_id())
     return jsonify({'success': True, 'key': key, 'value': value})
 
 
@@ -5816,8 +5874,55 @@ def mdt_dashboard_route():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_static(path):
-    if path == '':
-        return send_from_directory('.', 'index.html')
+    route_aliases = {
+        '': 'index.html',
+        'login': 'login.html',
+        'register': 'register.html',
+        'communities': 'communities.html',
+        'create-community': 'create-community.html',
+    }
+    if path in route_aliases:
+        return send_from_directory('.', route_aliases[path])
+
+    legacy_tenant_pages = {
+        'rules.html': 'rules',
+        'civilian.html': 'civilian',
+        'police.html': 'police',
+        'cad.html': 'cad',
+        'dmv.html': 'dmv',
+        'businesses.html': 'businesses',
+        'applications.html': 'applications',
+        'donations.html': '',
+        'complaints.html': 'complaints',
+        'join.html': '',
+    }
+    if path in legacy_tenant_pages:
+        suffix = legacy_tenant_pages[path]
+        target = f'/c/{DEFAULT_COMMUNITY_SLUG}' + (f'/{suffix}' if suffix else '')
+        return redirect(target, code=302)
+
+    parts = path.strip('/').split('/') if path else []
+    if len(parts) >= 2 and parts[0] == 'c':
+        if len(parts) >= 3 and parts[2] in {'assets', 'static'}:
+            asset_path = '/'.join(parts[2:])
+            if os.path.exists(os.path.join('.', asset_path)):
+                return send_from_directory('.', asset_path)
+
+        community_page = parts[2] if len(parts) >= 3 else ''
+        community_aliases = {
+            '': 'community.html',
+            'cad': 'police.html',
+            'police': 'police.html',
+            'dmv': 'dmv.html',
+            'civilian': 'civilian.html',
+            'rules': 'rules.html',
+            'businesses': 'businesses.html',
+            'applications': 'applications.html',
+            'complaints': 'complaints.html',
+        }
+        if community_page in community_aliases:
+            return send_from_directory('.', community_aliases[community_page])
+
     if os.path.exists(os.path.join('.', path)):
         return send_from_directory('.', path)
     return send_from_directory('.', 'index.html')

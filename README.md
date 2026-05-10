@@ -1,70 +1,47 @@
-# NThaCityRP Web System
+# GTAVCAD
 
-Roleplay dispatch, CAD, DMV, civilian registry, complaints, BOLO tracking, and Discord-integrated RP management system.
+GTAVCAD is a multi-community GTA V RP/CAD platform for hosting multiple isolated roleplay communities on one shared deployment.
 
-## Features
+## Branding model
 
-- Police CAD dashboard
-- Civilian registration
-- DMV records and licensing
-- Applications and complaints
-- BOLO management
-- Discord webhook integration
-- Admin dashboard
-- Live city status system
+- **GTAVCAD** is the platform, global domain, navbar, login, onboarding, and community host.
+- **NThaCityRP** is only the default migrated tenant/community.
+- New users see **Welcome to GTAVCAD** with options to **Create a Community** or **Join Existing Community**.
 
-## Stack
+## Routes
 
-- HTML
-- CSS
-- Vanilla JavaScript
-- Python Flask backend
-- Gunicorn production server
+Global routes:
 
-## Required Environment Variables
+- `/`
+- `/login`
+- `/register`
+- `/communities`
+- `/create-community`
 
-- FLASK_SECRET
-- ADMIN_PASSWORD
+Tenant routes:
 
-## Optional Environment Variables
+- `/c/nthacityrp`
+- `/c/nthacityrp/cad`
+- `/c/nthacityrp/police`
+- `/c/nthacityrp/dmv`
 
-- DISCORD_WEBHOOK_URL
-- SMTP_HOST
-- SMTP_PORT
-- SMTP_EMAIL
-- SMTP_PASSWORD
-- SMTP_FROM_NAME
-- NOTIFY_EMAIL
+## Configuration defaults
 
-## Local Development
+Global platform config:
 
-```bash
-pip install -r requirements.txt
-python server.py
-```
+- `platform_name = GTAVCAD`
+- `platform_domain = gtavcad.app`
 
-## Production Start Command
+Default migrated tenant config:
+
+- `community_name = NThaCityRP`
+- `community_slug = nthacityrp`
+- `cad_name = NThaCityRP CAD`
+
+## Development checks
+
+Run Python syntax checks with:
 
 ```bash
-gunicorn server:app
+python3 -m py_compile server.py community_service.py community_routes.py platform_config.py bootstrap_multi_tenant.py tenant_schema.py
 ```
-
-## Deployment Notes
-
-This repository now includes:
-
-- requirements.txt
-- Procfile
-- runtime.txt
-
-Compatible with:
-
-- Railway
-- Render
-- Replit Deployments
-- Fly.io
-- Generic Gunicorn Python hosting
-
-## Cloudflare Pages Note
-
-Cloudflare Pages alone will not run the Flask backend APIs. Use a Python-capable host for the backend or migrate APIs to Cloudflare Workers.
