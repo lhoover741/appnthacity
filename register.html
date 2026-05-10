@@ -1,1 +1,41 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Join Community | GTAVCAD</title><link rel="stylesheet" href="assets/css/style.css" /></head><body data-platform-page="true"><header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/register">Join Community</a></nav></div></header><main><section class="panel section page-hero"><div class="container"><p class="eyebrow">Welcome to GTAVCAD</p><h1>Join Existing Community</h1><p class="intro">Use a community invite to join an isolated tenant workspace.</p></div></section><section class="container section content-grid"><article class="card info-card"><h2>Onboarding options</h2><ul><li>Create a Community</li><li>Join Existing Community</li></ul><p>This global flow is GTAVCAD-branded and does not assume NThaCityRP.</p></article></section></main><footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Create or Join a Community.</p></div></footer><script src="assets/js/main.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register | GTAVCAD</title>
+  <link rel="stylesheet" href="/assets/css/style.css" />
+</head>
+<body data-platform-page="true">
+<header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/join-community">Join Community</a></nav></div></header>
+<main>
+  <section class="panel section page-hero"><div class="container"><p class="eyebrow">GTAVCAD Account</p><h1>Register</h1><p class="intro">Create a global account, then create or join a community.</p></div></section>
+  <section class="container section content-grid">
+    <article class="card info-card">
+      <h2>Create account</h2>
+      <form id="register-form" class="system-form">
+        <label>Username <input name="username" autocomplete="username" required /></label>
+        <label>Email <input name="email" type="email" autocomplete="email" /></label>
+        <label>Password <input name="password" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <button class="button button-primary" type="submit">Register</button>
+      </form>
+      <p id="register-status" role="status"></p>
+    </article>
+  </section>
+</main>
+<footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Create or Join a Community.</p></div></footer>
+<script src="/assets/js/main.js"></script>
+<script>
+document.getElementById('register-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const status = document.getElementById('register-status');
+  const form = new FormData(event.target);
+  const res = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
+  const data = await res.json();
+  if (!res.ok || !data.success) { status.textContent = data.error || 'Registration failed'; return; }
+  status.textContent = 'Account created. Redirecting to onboarding…';
+  window.location.href = data.redirect_url || '/communities?onboarding=1';
+});
+</script>
+</body>
+</html>

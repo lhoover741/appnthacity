@@ -123,6 +123,7 @@ def select_community():
 # ========================================
 
 @community_bp.route('', methods=['POST'])
+@community_bp.route('/create', methods=['POST'])
 @require_auth
 def create_community():
     """
@@ -232,13 +233,82 @@ def get_public_community_by_slug(slug):
     }), 200
 
 
+
+@community_bp.route('/my', methods=['GET'])
+@require_auth
+def get_my_communities():
+    """GET /api/communities/my - alias for the current user's community list."""
+    return list_user_communities()
+
+
+@community_bp.route('/invite', methods=['POST'])
+@require_auth
+def create_invite_for_selected_community():
+    """POST /api/communities/invite - create an invite for a selected or supplied community."""
+    user_id = session.get('user_id')
+    data = request.get_json() or {}
+    community_id = data.get('community_id') or get_current_community_id()
+
+    if not community_id:
+        return jsonify({'success': False, 'error': 'community_id required'}), 400
+
+    membership = CommunityMember.query.filter_by(
+        user_id=user_id,
+        community_id=community_id,
+        status='Active'
+    ).first()
+    if not membership or membership.role not in ('Owner', 'Admin'):
+        return jsonify({'success': False, 'error': 'Admin or owner membership required'}), 403
+
+    role = data.get('role', 'Civilian')
+    department = data.get('department')
+    max_uses = data.get('max_uses')
+    expires_in_days = data.get('expires_in_days')
+
+    try:
+        invite_code = secrets.token_urlsafe(16)
+        expires_at = None
+        if expires_in_days:
+            expires_at = datetime.utcnow() + timedelta(days=int(expires_in_days))
+
+        invite = CommunityInvite(
+            invite_code=invite_code,
+            community_id=community_id,
+            role=role,
+            department=department,
+            created_by=user_id,
+            expires_at=expires_at,
+            max_uses=max_uses,
+            uses=0,
+            active=True,
+        )
+        db.session.add(invite)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Invite code created',
+            'invite': invite.to_dict(),
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Error creating invite: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@community_bp.route('/accept-invite', methods=['POST'])
+@require_auth
+def accept_invite_alias():
+    """POST /api/communities/accept-invite - alias for joining by invite code."""
+    return join_with_invite()
+
+
 # ========================================
 # Community Details
 # ========================================
 
 @community_bp.route('/<community_id>', methods=['GET'])
 @require_auth
-@community_required
 def get_community(community_id):
     """
     GET /api/communities/<community_id>
@@ -247,7 +317,10 @@ def get_community(community_id):
     """
     community = Community.query.filter_by(community_id=community_id).first()
     if not community:
-        return jsonify({'error': 'Community not found'}), 404
+        community = Community.query.filter_by(slug=community_id, status='Active').first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    community_id = community.community_id
 
     # Check membership
     user_id = session.get('user_id')
