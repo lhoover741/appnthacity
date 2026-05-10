@@ -1,4 +1,59 @@
 
+// Frontend security helpers. Use textContent/safe DOM APIs for new code; this
+// sanitizer protects legacy innerHTML templates from executing tenant data.
+const NATIVE_INNERHTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+
+function safeText(value) {
+  return String(value ?? '');
+}
+
+function createSafeElement(tagName, text = '', className = '') {
+  const el = document.createElement(tagName);
+  if (className) el.className = className;
+  el.textContent = safeText(text);
+  return el;
+}
+
+function sanitizeHTML(html) {
+  const template = document.createElement('template');
+  NATIVE_INNERHTML_DESCRIPTOR.set.call(template, String(html ?? ''));
+  const blockedTags = new Set(['script', 'iframe', 'object', 'embed', 'svg', 'math', 'link', 'meta']);
+  const walk = (node) => {
+    Array.from(node.childNodes).forEach((child) => {
+      if (child.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = child.tagName.toLowerCase();
+      let unsafe = blockedTags.has(tag);
+      Array.from(child.attributes).forEach((attr) => {
+        const name = attr.name.toLowerCase();
+        const value = String(attr.value || '').trim().toLowerCase();
+        if (name.startsWith('on') || ((name === 'href' || name === 'src' || name === 'xlink:href') && value.startsWith('javascript:'))) {
+          unsafe = true;
+        }
+      });
+      if (unsafe) {
+        child.replaceWith(document.createTextNode(child.outerHTML));
+      } else {
+        walk(child);
+      }
+    });
+  };
+  walk(template.content);
+  return template.innerHTML;
+}
+
+(function installSafeInnerHTML() {
+  const descriptor = NATIVE_INNERHTML_DESCRIPTOR;
+  if (!descriptor || !descriptor.set || Element.prototype.__gtavcadSafeInnerHTML) return;
+  Object.defineProperty(Element.prototype, 'innerHTML', {
+    get: descriptor.get,
+    set(value) { descriptor.set.call(this, sanitizeHTML(value)); },
+    configurable: true,
+    enumerable: descriptor.enumerable,
+  });
+  Element.prototype.__gtavcadSafeInnerHTML = true;
+})();
+
+
 const PLATFORM_CONTEXT = {
   name: 'GTAVCAD',
   domain: 'gtavcad.app',
@@ -48,6 +103,7 @@ async function applyCommunityBranding() {
     'businesses.html': 'businesses',
     'applications.html': 'applications',
     'complaints.html': 'complaints',
+    'donations.html': 'donations',
     'join.html': '',
     'index.html': '',
   };
@@ -99,6 +155,30 @@ if (yearSpan.length) {
     node.textContent = currentYear;
   });
 }
+
+async function refreshAuthNavigation() {
+  const navs = document.querySelectorAll('.global-nav');
+  if (!navs.length || !window.fetch) return;
+  try {
+    const res = await fetch('/api/auth/session');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.success) return;
+    document.querySelectorAll('a[href="/login"]').forEach((link) => {
+      link.textContent = `Logout (${data.user.username})`;
+      link.href = '#logout';
+      link.addEventListener('click', async (event) => {
+        event.preventDefault();
+        await fetch('/api/auth/logout', { method: 'POST' });
+        window.location.href = '/login';
+      }, { once: true });
+    });
+  } catch (error) {
+    console.warn('Auth navigation refresh failed:', error);
+  }
+}
+
+refreshAuthNavigation();
 
 // Shared frontend data model
 const NThaCityData = {

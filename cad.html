@@ -408,6 +408,42 @@
     </div>
 
     <script>
+
+        const NATIVE_INNERHTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+
+        function sanitizeHTML(html) {
+            const template = document.createElement('template');
+            NATIVE_INNERHTML_DESCRIPTOR.set.call(template, String(html ?? ''));
+            const blockedTags = new Set(['script', 'iframe', 'object', 'embed', 'svg', 'math', 'link', 'meta']);
+            const walk = (node) => {
+                Array.from(node.childNodes).forEach((child) => {
+                    if (child.nodeType !== Node.ELEMENT_NODE) return;
+                    let unsafe = blockedTags.has(child.tagName.toLowerCase());
+                    Array.from(child.attributes).forEach((attr) => {
+                        const name = attr.name.toLowerCase();
+                        const value = String(attr.value || '').trim().toLowerCase();
+                        if (name.startsWith('on') || ((name === 'href' || name === 'src' || name === 'xlink:href') && value.startsWith('javascript:'))) unsafe = true;
+                    });
+                    if (unsafe) child.replaceWith(document.createTextNode(child.outerHTML));
+                    else walk(child);
+                });
+            };
+            walk(template.content);
+            return template.innerHTML;
+        }
+
+        (function installSafeInnerHTML() {
+            const descriptor = NATIVE_INNERHTML_DESCRIPTOR;
+            if (!descriptor || !descriptor.set || Element.prototype.__gtavcadSafeInnerHTML) return;
+            Object.defineProperty(Element.prototype, 'innerHTML', {
+                get: descriptor.get,
+                set(value) { descriptor.set.call(this, sanitizeHTML(value)); },
+                configurable: true,
+                enumerable: descriptor.enumerable,
+            });
+            Element.prototype.__gtavcadSafeInnerHTML = true;
+        })();
+
         // ---------------------------------------------------------------------------
         // Auth
         // ---------------------------------------------------------------------------
