@@ -208,11 +208,17 @@ def initialize_default_config():
 
     import json
     for key, (value, description) in defaults.items():
-        config = Config.query.filter_by(key=key).first()
-        if not config:
+        config = Config.query.filter_by(key=key, community_id=None).first()
+        serialized_value = json.dumps(value)
+        if config:
+            if config.value != serialized_value or config.description != description:
+                config.value = serialized_value
+                config.description = description
+        else:
             config = Config(
                 key=key,
-                value=json.dumps(value),
+                community_id=None,
+                value=serialized_value,
                 description=description
             )
             db.session.add(config)
@@ -226,8 +232,6 @@ def get_config(key, default=None, community_id=None):
         config = Config.query.filter_by(key=key, community_id=community_id).first()
     if not config:
         config = Config.query.filter_by(key=key, community_id=None).first()
-    if not config:
-        config = Config.query.filter_by(key=key).first()
     if config and config.value:
         import json
         try:
@@ -2307,9 +2311,15 @@ def get_config_admin():
 @admin_required
 def update_config(key):
     data = request.get_json(silent=True) or {}
-    config = Config.query.filter_by(key=key).first()
+    current_community_id = get_current_community_id()
+    config = None
+    if current_community_id:
+        config = Config.query.filter_by(key=key, community_id=current_community_id).first()
     if not config:
-        return jsonify({'success': False, 'error': 'Config key not found', 'code': 'CONFIG_NOT_FOUND'}), 404
+        config = Config.query.filter_by(key=key, community_id=None).first()
+    if not config:
+        config = Config(key=key, community_id=current_community_id)
+        db.session.add(config)
 
     import json
     if 'value' in data:
