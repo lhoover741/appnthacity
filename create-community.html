@@ -37,7 +37,13 @@ document.getElementById('create-community-form').addEventListener('submit', asyn
   if (res.status === 401) { window.location.href = '/login'; return; }
   if (!res.ok || !data.success) { status.textContent = data.error || 'Community creation failed'; return; }
   status.textContent = 'Community created. Opening CAD…';
-  window.location.href = `/c/${data.community.slug}`;
+  sessionStorage.setItem('gtavcadCommunityCreated', JSON.stringify({
+    communityName: data.community.name,
+    communitySlug: data.community.slug,
+    inviteCode: data.invite_code || (data.invite && data.invite.invite_code),
+    redirectUrl: data.redirect_url || `/c/${data.community.slug}/`,
+  }));
+  window.location.href = data.redirect_url || `/c/${data.community.slug}/`;
 });
 </script>
 </body>

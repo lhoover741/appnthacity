@@ -2044,7 +2044,8 @@ def user_login():
     next_step = 'community_picker'
     if len(communities) == 1:
         session['selected_community_id'] = communities[0]['community']['community_id']
-        redirect_url = f"/c/{communities[0]['community']['slug']}"
+        session['selected_community_slug'] = communities[0]['community']['slug']
+        redirect_url = f"/c/{communities[0]['community']['slug']}/"
         next_step = 'enter_community'
     elif not communities:
         redirect_url = '/create-community'
@@ -2143,6 +2144,7 @@ def user_session():
         'communities': communities,
         'community_count': len(communities),
         'selected_community_id': session.get('selected_community_id'),
+        'selected_community_slug': session.get('selected_community_slug'),
     })
 
 
@@ -2177,6 +2179,7 @@ def onboarding_status():
         'communities': communities,
         'community_count': len(communities),
         'selected_community_id': session.get('selected_community_id'),
+        'selected_community_slug': session.get('selected_community_slug'),
         'next_step': next_step,
     })
 
