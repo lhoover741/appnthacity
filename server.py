@@ -13,7 +13,14 @@ from flask_migrate import Migrate
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import text
-from security_service import admin_required, police_required, dispatch_required, judge_required, dmv_required
+from security_service import (
+    admin_required,
+    police_required,
+    dispatch_required,
+    judge_required,
+    dmv_required,
+    verify_password
+)
 from performance_service import cache, paginate_query
 
 # Force clear SQLAlchemy metadata cache to ensure fresh schema detection
