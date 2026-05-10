@@ -25,6 +25,17 @@
     </article>
   </section>
 </main>
+<div id="community-created-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#1a1a1a;color:#fff;padding:24px;border-radius:12px;max-width:420px;width:90%;">
+    <h3>Community Created</h3>
+    <p>Invite Code:</p>
+    <p id="created-invite-code" style="font-size:1.5rem;font-weight:700;letter-spacing:2px;"></p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button id="enter-cad-btn" class="button button-primary" type="button">Enter CAD</button>
+      <button id="copy-invite-btn" class="button button-ghost" type="button">Copy Invite</button>
+    </div>
+  </div>
+</div>
 <footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Create or Join a Community.</p></div></footer>
 <script src="/assets/js/main.js"></script>
 <script>
@@ -36,14 +47,19 @@ document.getElementById('create-community-form').addEventListener('submit', asyn
   const data = await res.json();
   if (res.status === 401) { window.location.href = '/login'; return; }
   if (!res.ok || !data.success) { status.textContent = data.error || 'Community creation failed'; return; }
-  status.textContent = 'Community created. Opening CAD…';
-  sessionStorage.setItem('gtavcadCommunityCreated', JSON.stringify({
-    communityName: data.community.name,
-    communitySlug: data.community.slug,
-    inviteCode: data.invite_code || (data.invite && data.invite.invite_code),
-    redirectUrl: data.redirect_url || `/c/${data.community.slug}/`,
-  }));
-  window.location.href = data.redirect_url || `/c/${data.community.slug}/`;
+  localStorage.setItem('gtavcad_active_community', data.community.slug);
+  const redirectUrl = data.redirect_url || `/c/${data.community.slug}/`;
+  const inviteCode = (data.invite && (data.invite.code || data.invite.invite_code)) || '';
+  document.getElementById('created-invite-code').textContent = inviteCode;
+  document.getElementById('community-created-modal').style.display = 'flex';
+  document.getElementById('copy-invite-btn').onclick = async () => {
+    if (!inviteCode) return;
+    await navigator.clipboard.writeText(inviteCode);
+    status.textContent = 'Invite code copied.';
+  };
+  document.getElementById('enter-cad-btn').onclick = () => {
+    window.location.href = redirectUrl;
+  };
 });
 </script>
 </body>

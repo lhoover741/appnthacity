@@ -289,9 +289,18 @@ def create_community():
         db.session.add(invite)
 
         initialize_community_config(community)
-        db.session.commit()
 
-        set_selected_community_session(community)
+        session.clear()
+        session['user_id'] = user_id
+        session['authenticated'] = True
+        session['selected_community_id'] = community.community_id
+        session['selected_community_slug'] = community.slug
+        session['current_role'] = 'Owner'
+        session.modified = True
+
+        db.session.commit()
+        logger.info(f'Community session set: {community.slug}')
+        logger.info(f'Selected community ID: {session.get("selected_community_id")}')
 
         logger.info(f'✅ Created community {slug} (ID: {community_id}) by user {user_id}')
 
@@ -300,9 +309,13 @@ def create_community():
             'success': True,
             'message': 'Community created successfully',
             'community': community.to_dict(),
-            'membership': membership.to_dict(),
-            'invite': invite.to_dict(),
-            'invite_code': invite.invite_code,
+            'membership': {
+                'role': 'Owner',
+            },
+            'invite': {
+                **invite.to_dict(),
+                'code': invite.invite_code,
+            },
             'redirect_url': redirect_url,
         }), 201
 
