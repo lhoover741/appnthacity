@@ -20,7 +20,9 @@ from security_service import (
     judge_required,
     dmv_required,
     require_auth,
-    verify_password
+    verify_password,
+    hash_password,
+    ROLES
 )
 from performance_service import cache, paginate_query
 from platform_config import (
@@ -263,6 +265,7 @@ def inject_community_context():
     return None
 
 register_community_routes(app)
+logger.info("✓ Community routes registered")
 
 
 @app.errorhandler(500)
@@ -2020,6 +2023,27 @@ def user_login():
     session['username'] = user.username
     session['role'] = user.role
 
+    memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
+    communities = []
+    for membership in memberships:
+        community = Community.query.filter_by(community_id=membership.community_id, status='Active').first()
+        if community:
+            communities.append({
+                'community': community.to_dict(),
+                'membership': membership.to_dict(),
+            })
+
+    redirect_url = '/communities'
+    next_step = 'community_picker'
+    if len(communities) == 1:
+        session['selected_community_id'] = communities[0]['community']['community_id']
+        redirect_url = f"/c/{communities[0]['community']['slug']}"
+        next_step = 'enter_community'
+    elif not communities:
+        redirect_url = '/communities?onboarding=1'
+        next_step = 'onboarding'
+    session.modified = True
+
     return jsonify({
         'success': True,
         'user': {
@@ -2027,8 +2051,54 @@ def user_login():
             'username': user.username,
             'role': user.role,
             'last_login': user.last_login.isoformat() if user.last_login else None
-        }
+        },
+        'communities': communities,
+        'community_count': len(communities),
+        'next_step': next_step,
+        'redirect_url': redirect_url,
     })
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def user_register():
+    data = request.get_json(silent=True) or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    email = data.get('email', '').strip() or None
+
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
+
+    if len(password) < 8:
+        return jsonify({'success': False, 'error': 'Password must be at least 8 characters', 'code': 'PASSWORD_TOO_SHORT'}), 400
+
+    existing_query = User.query.filter(User.username == username)
+    if email:
+        existing_query = User.query.filter((User.username == username) | (User.email == email))
+    existing = existing_query.first()
+    if existing:
+        if existing.username == username:
+            return jsonify({'success': False, 'error': 'Username already exists', 'code': 'USERNAME_EXISTS'}), 409
+        return jsonify({'success': False, 'error': 'Email already exists', 'code': 'EMAIL_EXISTS'}), 409
+
+    user = User(username=username, email=email, password_hash=hash_password(password), role='Civilian', active=True)
+    db.session.add(user)
+    db.session.commit()
+
+    session['user_id'] = user.id
+    session['username'] = user.username
+    session['role'] = user.role
+    session.modified = True
+
+    return jsonify({
+        'success': True,
+        'user': user.to_dict(),
+        'communities': [],
+        'community_count': 0,
+        'next_step': 'onboarding',
+        'redirect_url': '/communities?onboarding=1',
+        'message': 'Registration successful',
+    }), 201
 
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -2048,6 +2118,13 @@ def user_session():
         session.clear()
         return jsonify({'success': False, 'error': 'User not found or inactive', 'code': 'USER_INACTIVE'}), 401
 
+    memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
+    communities = []
+    for membership in memberships:
+        community = Community.query.filter_by(community_id=membership.community_id, status='Active').first()
+        if community:
+            communities.append({'community': community.to_dict(), 'membership': membership.to_dict()})
+
     return jsonify({
         'success': True,
         'user': {
@@ -2055,8 +2132,49 @@ def user_session():
             'username': user.username,
             'role': user.role,
             'last_login': user.last_login.isoformat() if user.last_login else None
-        }
+        },
+        'communities': communities,
+        'community_count': len(communities),
+        'selected_community_id': session.get('selected_community_id'),
     })
+
+
+logger.info("✓ Auth routes registered")
+
+
+@app.route('/api/onboarding/status', methods=['GET'])
+def onboarding_status():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({
+            'success': True,
+            'authenticated': False,
+            'status': 'login_required',
+            'communities': [],
+            'community_count': 0,
+            'next_step': 'login',
+        })
+
+    memberships = CommunityMember.query.filter_by(user_id=user_id, status='Active').all()
+    communities = []
+    for membership in memberships:
+        community = Community.query.filter_by(community_id=membership.community_id, status='Active').first()
+        if community:
+            communities.append({'community': community.to_dict(), 'membership': membership.to_dict()})
+
+    next_step = 'community_picker' if len(communities) > 1 else 'enter_community' if len(communities) == 1 else 'onboarding'
+    return jsonify({
+        'success': True,
+        'authenticated': True,
+        'status': next_step,
+        'communities': communities,
+        'community_count': len(communities),
+        'selected_community_id': session.get('selected_community_id'),
+        'next_step': next_step,
+    })
+
+
+logger.info("✓ Onboarding routes registered")
 
 
 @app.route('/api/auth/change-password', methods=['POST'])
@@ -5880,6 +5998,7 @@ def serve_static(path):
         'register': 'register.html',
         'communities': 'communities.html',
         'create-community': 'create-community.html',
+        'join-community': 'join-community.html',
     }
     if path in route_aliases:
         return send_from_directory('.', route_aliases[path])
@@ -5922,6 +6041,13 @@ def serve_static(path):
         }
         if community_page in community_aliases:
             return send_from_directory('.', community_aliases[community_page])
+
+    if path.startswith('api/'):
+        return jsonify({
+            'success': False,
+            'error': 'Endpoint not found',
+            'code': 'NOT_FOUND'
+        }), 404
 
     if os.path.exists(os.path.join('.', path)):
         return send_from_directory('.', path)

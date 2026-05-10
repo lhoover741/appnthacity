@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Join Community | GTAVCAD</title>
+  <link rel="stylesheet" href="/assets/css/style.css" />
+</head>
+<body data-platform-page="true">
+<header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/join-community">Join Community</a></nav></div></header>
+<main>
+  <section class="panel section page-hero"><div class="container"><p class="eyebrow">GTAVCAD Onboarding</p><h1>Join Community</h1><p class="intro">Use an invite code from a community owner or admin.</p></div></section>
+  <section class="container section content-grid">
+    <article class="card info-card">
+      <h2>Invite code</h2>
+      <form id="join-community-form" class="system-form">
+        <label>Invite code <input name="invite_code" required /></label>
+        <button class="button button-primary" type="submit">Join Community</button>
+      </form>
+      <p id="join-community-status" role="status"></p>
+      <p>Need an account first? <a href="/register">Register here</a>.</p>
+    </article>
+  </section>
+</main>
+<footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Create or Join a Community.</p></div></footer>
+<script src="/assets/js/main.js"></script>
+<script>
+document.getElementById('join-community-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const status = document.getElementById('join-community-status');
+  const form = new FormData(event.target);
+  const res = await fetch('/api/communities/accept-invite', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
+  const data = await res.json();
+  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (!res.ok || !data.success) { status.textContent = data.error || 'Could not join community'; return; }
+  status.textContent = 'Joined community. Opening CAD…';
+  window.location.href = `/c/${data.community.slug}`;
+});
+</script>
+</body>
+</html>

@@ -1,1 +1,41 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Login | GTAVCAD</title><link rel="stylesheet" href="assets/css/style.css" /></head><body data-platform-page="true"><header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/register">Join Community</a></nav></div></header><main><section class="panel section page-hero"><div class="container"><p class="eyebrow">Welcome to GTAVCAD</p><h1>Login</h1><p class="intro">Sign in to select, create, or join your RP/CAD communities.</p></div></section></main><footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Global login for all tenant communities.</p></div></footer><script src="assets/js/main.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login | GTAVCAD</title>
+  <link rel="stylesheet" href="/assets/css/style.css" />
+</head>
+<body data-platform-page="true">
+<header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/join-community">Join Community</a></nav></div></header>
+<main>
+  <section class="panel section page-hero"><div class="container"><p class="eyebrow">Welcome to GTAVCAD</p><h1>Login</h1><p class="intro">Sign in to select, create, or join your RP/CAD communities.</p></div></section>
+  <section class="container section content-grid">
+    <article class="card info-card">
+      <h2>Account Login</h2>
+      <form id="login-form" class="system-form">
+        <label>Username <input name="username" autocomplete="username" required /></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+        <button class="button button-primary" type="submit">Login</button>
+      </form>
+      <p id="login-status" role="status"></p>
+      <p>Need an account? <a href="/register">Register here</a>.</p>
+    </article>
+  </section>
+</main>
+<footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Create or Join a Community.</p></div></footer>
+<script src="/assets/js/main.js"></script>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const status = document.getElementById('login-status');
+  const form = new FormData(event.target);
+  const res = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
+  const data = await res.json();
+  if (!res.ok || !data.success) { status.textContent = data.error || 'Login failed'; return; }
+  status.textContent = 'Login successful. Redirecting…';
+  window.location.href = data.redirect_url || '/communities';
+});
+</script>
+</body>
+</html>

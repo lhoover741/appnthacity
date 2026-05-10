@@ -4,19 +4,61 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Communities | GTAVCAD</title>
-  <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="/assets/css/style.css" />
 </head>
 <body data-platform-page="true">
-  <header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/register">Join Community</a></nav></div></header>
+  <header class="site-header"><div class="topbar container"><a class="brand" href="/">GTAVCAD</a><button class="nav-toggle" aria-label="Open navigation">Menu</button><nav class="global-nav" aria-label="Main navigation"><a href="/communities">Communities</a><a href="/login">Login</a><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-ghost" href="/join-community">Join Community</a></nav></div></header>
   <main>
-    <section class="panel section page-hero"><div class="container"><p class="eyebrow">Multi-Community RP/CAD Platform</p><h1>Communities on GTAVCAD</h1><p class="intro">Create or join an isolated RP/CAD community. The default migrated tenant is NThaCityRP.</p></div></section>
-    <section class="container section card-grid">
-      <article class="card feature-card"><h3>NThaCityRP</h3><p>Default migrated community hosted on GTAVCAD with its own tenant CAD context.</p><a class="card-link" href="/c/nthacityrp">Open Community</a></article>
-      <article class="card feature-card"><h3>Create your community</h3><p>Launch a clean tenant without inheriting NThaCityRP branding.</p><a class="card-link" href="/create-community">Create Community</a></article>
-      <article class="card feature-card"><h3>Join by invite</h3><p>Use an invite code from a community admin to join an existing tenant.</p><a class="card-link" href="/register">Join Community</a></article>
+    <section class="panel section page-hero"><div class="container"><p class="eyebrow">Multi-Community RP/CAD Platform</p><h1>Your Communities</h1><p class="intro">Create or join an isolated RP/CAD community, then enter its CAD workspace.</p></div></section>
+    <section class="container section content-grid">
+      <article class="card info-card" id="community-onboarding" hidden>
+        <h2>Start your onboarding</h2>
+        <p>You are not in any communities yet. Create your own tenant or join one with an invite code.</p>
+        <div class="hero-actions"><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-secondary" href="/join-community">Join Community</a></div>
+      </article>
+      <article class="card info-card">
+        <h2>Community actions</h2>
+        <div class="hero-actions"><a class="button button-primary" href="/create-community">Create Community</a><a class="button button-secondary" href="/join-community">Join Community</a></div>
+        <p id="communities-status" role="status">Loading your communities…</p>
+      </article>
     </section>
+    <section class="container section card-grid" id="communities-list" aria-live="polite"></section>
   </main>
   <footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Communities are tenant-scoped and isolated.</p></div></footer>
-  <script src="assets/js/main.js"></script>
+  <script src="/assets/js/main.js"></script>
+  <script>
+  async function loadCommunitiesPage() {
+    const status = document.getElementById('communities-status');
+    const list = document.getElementById('communities-list');
+    const onboarding = document.getElementById('community-onboarding');
+    try {
+      const sessionRes = await fetch('/api/auth/session');
+      if (sessionRes.status === 401) {
+        status.innerHTML = 'Please <a href="/login">login</a> or <a href="/register">register</a> to see your communities.';
+        onboarding.hidden = false;
+        return;
+      }
+      const sessionData = await sessionRes.json();
+      const communities = sessionData.communities || [];
+      if (!communities.length) {
+        status.textContent = 'No communities found for your account.';
+        onboarding.hidden = false;
+        return;
+      }
+      status.textContent = `Found ${communities.length} communit${communities.length === 1 ? 'y' : 'ies'}.`;
+      list.innerHTML = communities.map(({community, membership}) => `
+        <article class="card feature-card">
+          <h3>${community.name}</h3>
+          <p>${community.cad_name || 'Community CAD'} · Role: ${membership.role}</p>
+          <a class="card-link" href="/c/${community.slug}">Enter CAD</a>
+        </article>
+      `).join('');
+    } catch (error) {
+      status.textContent = 'Unable to load communities right now.';
+      console.warn(error);
+    }
+  }
+  loadCommunitiesPage();
+  </script>
 </body>
 </html>
