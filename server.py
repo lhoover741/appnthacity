@@ -56,6 +56,7 @@ from models import (
     UseOfForceReport, OfficerNote, CaseFile,
     AIGenerationLog, AuditLog,
     Community, CommunityMember, CommunityInvite,
+    PlatformAdminLog, PlatformActivityLog, PasswordResetToken, CommunityStatus, UserSession
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -5807,3 +5808,99 @@ def serve_static(path):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
+def is_platform_owner():
+    return session.get('platform_role') == 'PlatformOwner' or session.get('role') == 'PlatformOwner'
+
+
+def log_platform_admin(action, target_user_id=None, tenant=None, details=None):
+    db.session.add(PlatformAdminLog(
+        actor_user_id=session.get('user_id') if isinstance(session.get('user_id'), int) else None,
+        target_user_id=target_user_id,
+        tenant=tenant,
+        action=action,
+        details=json.dumps(details or {}),
+        ip_address=request.remote_addr,
+    ))
+
+
+def invalidate_user_sessions(user_id):
+    UserSession.query.filter_by(user_id=user_id, active=True).update({'active': False, 'invalidated_at': datetime.utcnow()})
+
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+@limiter.limit("5 per minute")
+def forgot_password():
+    data = request.get_json(silent=True) or {}
+    identifier = (data.get('identifier') or '').strip()
+    user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
+    if not user:
+        return jsonify({'success': True, 'message': 'If the account exists, a reset token was generated.'})
+    token = secrets.token_urlsafe(32)
+    db.session.add(PasswordResetToken(user_id=user.id, token=token, tenant=session.get('selected_community_id'), expires_at=datetime.utcnow() + timedelta(hours=1)))
+    db.session.commit()
+    return jsonify({'success': True, 'reset_token': token, 'message': 'Use this token to reset password.'})
+
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+@limiter.limit("5 per minute")
+def reset_password_with_token():
+    data = request.get_json(silent=True) or {}
+    token = data.get('token')
+    new_password = data.get('new_password', '')
+    prt = PasswordResetToken.query.filter_by(token=token, used=False).first()
+    if not prt or prt.expires_at < datetime.utcnow() or len(new_password) < 8:
+        return jsonify({'success': False, 'error': 'Invalid token or password'}), 400
+    user = User.query.get(prt.user_id)
+    user.password_hash = hash_password(new_password)
+    prt.used = True
+    invalidate_user_sessions(user.id)
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Password reset successful'})
+
+
+@app.route('/api/platform-admin/overview', methods=['GET'])
+def platform_admin_overview():
+    if not is_platform_owner():
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    return jsonify({'success': True, 'overview': {
+        'total_communities': Community.query.count(),
+        'total_users': User.query.count(),
+        'online_users': UserSession.query.filter_by(active=True).count(),
+        'active_sessions': UserSession.query.filter_by(active=True).count(),
+        'total_arrests': Arrest.query.count(),
+        'total_warrants': Warrant.query.count(),
+        'total_civilians': Civilian.query.count(),
+        'total_businesses': Business.query.count(),
+        'total_officers': OfficerSession.query.count(),
+    }})
+
+
+@app.route('/api/platform-admin/users/<int:user_id>/reset-password', methods=['POST'])
+def platform_admin_reset_password(user_id):
+    if not is_platform_owner():
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    data = request.get_json(silent=True) or {}
+    user = User.query.get_or_404(user_id)
+    user.password_hash = hash_password(data.get('new_password', ''))
+    invalidate_user_sessions(user.id)
+    log_platform_admin('platform_password_reset', target_user_id=user.id, tenant='*')
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/api/community-admin/overview', methods=['GET'])
+@require_auth
+def community_admin_overview():
+    community_id = get_current_community_id()
+    membership = CommunityMember.query.filter_by(user_id=session.get('user_id'), community_id=community_id, status='Active').first()
+    if not membership or membership.role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    return jsonify({'success': True, 'overview': {
+        'community': Community.query.filter_by(community_id=community_id).first().to_dict(),
+        'total_members': CommunityMember.query.filter_by(community_id=community_id, status='Active').count(),
+        'online_members': UserSession.query.filter_by(tenant=community_id, active=True).count(),
+        'officers': OfficerSession.query.filter_by(community_id=community_id).count(),
+        'civilians': Civilian.query.filter_by(community_id=community_id).count(),
+        'active_calls': DispatchCall.query.filter_by(community_id=community_id, status='Active').count(),
+        'active_warrants': Warrant.query.filter_by(community_id=community_id, warrant_status='Active').count(),
+    }})

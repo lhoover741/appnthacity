@@ -736,3 +736,60 @@ class CommunityInvite(db.Model):
             'valid': self.is_valid(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class PlatformAdminLog(db.Model):
+    __tablename__ = 'platform_admin_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    target_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    tenant = db.Column(db.String(64), nullable=True)
+    action = db.Column(db.String(255), nullable=False)
+    details = db.Column(db.Text, nullable=True)
+    ip_address = db.Column(db.String(64), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class PlatformActivityLog(db.Model):
+    __tablename__ = 'platform_activity_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    tenant = db.Column(db.String(64), nullable=True)
+    actor_username = db.Column(db.String(255), nullable=True)
+    activity_type = db.Column(db.String(128), nullable=False)
+    summary = db.Column(db.Text, nullable=False)
+    severity = db.Column(db.String(32), default='info')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class PasswordResetToken(db.Model):
+    __tablename__ = 'password_reset_tokens'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    token = db.Column(db.String(128), unique=True, nullable=False)
+    tenant = db.Column(db.String(64), nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class CommunityStatus(db.Model):
+    __tablename__ = 'community_status'
+    id = db.Column(db.Integer, primary_key=True)
+    community_id = db.Column(db.String(64), db.ForeignKey('communities.community_id'), unique=True, nullable=False)
+    last_api_activity = db.Column(db.DateTime, nullable=True)
+    last_login = db.Column(db.DateTime, nullable=True)
+    last_cad_action = db.Column(db.DateTime, nullable=True)
+    last_officer_activity = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserSession(db.Model):
+    __tablename__ = 'user_sessions'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    session_token = db.Column(db.String(128), unique=True, nullable=False)
+    tenant = db.Column(db.String(64), nullable=True)
+    ip_address = db.Column(db.String(64), nullable=True)
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    invalidated_at = db.Column(db.DateTime, nullable=True)

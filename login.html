@@ -19,6 +19,7 @@
         <button class="button button-primary" id="login-submit" type="submit">Login</button>
       </form>
       <p id="login-status" role="status"></p>
+      <p><a href="#" id="forgot-password-link">Forgot Password?</a></p>
       <p>Need an account? <a href="/register">Register here</a>.</p>
     </article>
   </section>
@@ -38,7 +39,15 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
   const data = await res.json();
   if (!res.ok || !data.success) { status.textContent = data.error || 'Login failed'; button.disabled = false; button.textContent = 'Login'; return; }
   status.textContent = 'Login successful. Redirecting…';
-  window.location.href = data.redirect_url || '/communities';
+window.location.href = data.redirect_url || '/communities';
+});
+document.getElementById('forgot-password-link').addEventListener('click', async (event) => {
+  event.preventDefault();
+  const identifier = prompt('Enter username or email for password reset token:');
+  if (!identifier) return;
+  const res = await fetch('/api/auth/forgot-password', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({identifier})});
+  const data = await res.json();
+  alert(data.reset_token ? `Reset token: ${data.reset_token}` : (data.message || 'If account exists, reset token generated.'));
 });
 </script>
 </body>
