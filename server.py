@@ -2224,10 +2224,7 @@ def user_login():
     user.last_login = datetime.utcnow()
     db.session.commit()
 
-    # Set session
-    session['user_id'] = user.id
-    session['username'] = user.username
-    session['role'] = user.role
+    ensure_platform_owner(user)
 
     memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
     communities = []
@@ -2292,10 +2289,7 @@ def user_register():
     db.session.add(user)
     db.session.commit()
 
-    session['user_id'] = user.id
-    session['username'] = user.username
-    session['role'] = user.role
-    session.modified = True
+    ensure_platform_owner(user)
 
     return jsonify({
         'success': True,
@@ -5985,6 +5979,28 @@ def community_page(community_slug, page):
     abort(404)
 
 
+
+
+@app.route('/admin')
+def platform_admin_page():
+    if not session.get('user_id'):
+        return redirect('/login', code=302)
+    if not is_platform_owner():
+        return frontend_page('admin-forbidden.html'), 403
+    return frontend_page('admin.html')
+
+
+@app.route('/community-admin')
+@require_auth
+def community_admin_page():
+    community_id = get_current_community_id()
+    membership = CommunityMember.query.filter_by(user_id=session.get('user_id'), community_id=community_id, status='Active').first()
+    normalized_role = normalize_community_role(membership.role) if membership else None
+    if normalized_role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
+        return frontend_page('community-admin-forbidden.html'), 403
+    return frontend_page('community-admin.html')
+
+
 @app.route('/<path:path>')
 def serve_static(path):
     route_aliases = {
@@ -6034,8 +6050,82 @@ def serve_static(path):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
+
+
+def configured_platform_owner_matches_user(user):
+    owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
+    owner_username = (os.getenv('PLATFORM_OWNER_USERNAME') or '').strip().lower()
+    if not user:
+        return False
+    email = (getattr(user, 'email', None) or '').strip().lower()
+    username = (getattr(user, 'username', None) or '').strip().lower()
+    return (owner_email and email == owner_email) or (owner_username and username == owner_username)
+
+
+def ensure_platform_owner(user):
+    if not user:
+        return False
+
+    normalized_role = (user.role or '').strip()
+    platform_role = (getattr(user, 'platform_role', None) or '').strip()
+    should_promote = False
+
+    if normalized_role == 'PlatformOwner' or platform_role == 'PlatformOwner':
+        should_promote = True
+    elif configured_platform_owner_matches_user(user):
+        should_promote = True
+    else:
+        owner_exists = User.query.filter_by(role='PlatformOwner').first() is not None
+        if not owner_exists:
+            should_promote = True
+
+    if should_promote and user.role != 'PlatformOwner':
+        user.role = 'PlatformOwner'
+        db.session.commit()
+
+    session['user_id'] = user.id
+    session['username'] = user.username
+    session['role'] = user.role
+    session['is_platform_owner'] = user.role == 'PlatformOwner'
+    if session['is_platform_owner']:
+        session['platform_role'] = 'PlatformOwner'
+    else:
+        session.pop('platform_role', None)
+    session.modified = True
+
+    return session['is_platform_owner']
+
+
+def normalize_community_role(role):
+    mapping = {
+        'communityowner': 'CommunityOwner',
+        'owner': 'Owner',
+        'communityadmin': 'CommunityAdmin',
+        'admin': 'Admin',
+    }
+    key = (role or '').strip().lower()
+    return mapping.get(key, role)
+
+
 def is_platform_owner():
-    return session.get('platform_role') == 'PlatformOwner' or session.get('role') == 'PlatformOwner'
+    user_id = session.get('user_id')
+    user = User.query.get(user_id) if isinstance(user_id, int) else None
+    if user and ensure_platform_owner(user):
+        return True
+
+    session_role = (session.get('role') or '').strip()
+    session_platform_role = (session.get('platform_role') or '').strip()
+    if session_role == 'PlatformOwner' or session_platform_role == 'PlatformOwner':
+        return True
+
+    if user and configured_platform_owner_matches_user(user):
+        return True
+
+    session_email = (session.get('email') or '').strip().lower()
+    session_username = (session.get('username') or '').strip().lower()
+    owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
+    owner_username = (os.getenv('PLATFORM_OWNER_USERNAME') or '').strip().lower()
+    return (owner_email and session_email == owner_email) or (owner_username and session_username == owner_username)
 
 
 def log_platform_admin(action, target_user_id=None, tenant=None, details=None):
@@ -6165,7 +6255,8 @@ def platform_admin_reset_password(user_id):
 def community_admin_overview():
     community_id = get_current_community_id()
     membership = CommunityMember.query.filter_by(user_id=session.get('user_id'), community_id=community_id, status='Active').first()
-    if not membership or membership.role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
+    normalized_role = normalize_community_role(membership.role) if membership else None
+    if normalized_role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
     community = Community.query.filter_by(community_id=community_id).first()
