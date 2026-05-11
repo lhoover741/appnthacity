@@ -407,7 +407,43 @@
         </div>
     </div>
 
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
     <script>
+        let cadSocket = null;
+        let dispatchPollTimer = null;
+
+        function startDispatchPollingFallback() {
+            if (dispatchPollTimer) return;
+            dispatchPollTimer = setInterval(loadDispatchCalls, 10000);
+        }
+
+        function stopDispatchPollingFallback() {
+            if (!dispatchPollTimer) return;
+            clearInterval(dispatchPollTimer);
+            dispatchPollTimer = null;
+        }
+
+        function initRealtimeDispatch() {
+            try {
+                cadSocket = io({
+                    transports: ['websocket', 'polling'],
+                    reconnection: true,
+                    reconnectionAttempts: 20,
+                    reconnectionDelay: 1000,
+                });
+                cadSocket.on('connect', stopDispatchPollingFallback);
+                cadSocket.on('disconnect', startDispatchPollingFallback);
+                cadSocket.on('dispatch:call_created', loadDispatchCalls);
+                cadSocket.on('dispatch:units_assigned', loadDispatchCalls);
+                cadSocket.on('dispatch:call_closed', loadDispatchCalls);
+                cadSocket.on('dispatch:panic', (payload) => {
+                    loadDispatchCalls();
+                    alert(`PANIC: ${payload.callsign || 'Unknown'} at ${payload.location || 'Unknown'}`);
+                });
+            } catch (error) {
+                startDispatchPollingFallback();
+            }
+        }
 
         const NATIVE_INNERHTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
 
@@ -729,6 +765,11 @@
                 listDiv.innerHTML = `<p style="color:#ff4444;">❌ Error loading alerts: ${error.message}</p>`;
             }
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initRealtimeDispatch();
+            startDispatchPollingFallback();
+        });
     </script>
 </body>
 </html>
