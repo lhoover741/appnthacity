@@ -6136,6 +6136,18 @@ def normalize_community_role(role):
     return mapping.get(key, role)
 
 
+def has_community_owner_access(user_id, community=None, membership=None):
+    """Normalize owner/admin access checks with owner_user_id fallback."""
+    if not user_id:
+        return False
+    normalized_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
+    if normalized_role in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
+        return True
+    if community and getattr(community, 'owner_user_id', None) == user_id:
+        return True
+    return False
+
+
 def is_platform_owner():
     user_id = session.get('user_id')
     user = User.query.get(user_id) if isinstance(user_id, int) else None
@@ -6249,14 +6261,11 @@ def platform_admin_overview():
                     except Exception as e:
                         logger.warning(f'Could not fetch last session for community {c.community_id}: {e}')
 
-                    owner_username = None
+                    owner_username = 'Unknown'
                     try:
-                        owner_member = CommunityMember.query.filter_by(
-                            community_id=c.community_id, role='Owner', status='Active'
-                        ).first()
-                        if owner_member and owner_member.user_id:
-                            owner_user = User.query.get(owner_member.user_id)
-                            if owner_user:
+                        if c.owner_user_id:
+                            owner_user = User.query.get(c.owner_user_id)
+                            if owner_user and owner_user.username:
                                 owner_username = owner_user.username
                     except Exception as e:
                         logger.warning(f'Could not fetch owner for community {c.community_id}: {e}')
@@ -6279,13 +6288,13 @@ def platform_admin_overview():
                     community_rows.append({
                         'community_id': c.community_id,
                         'name': c.name or 'Unknown',
+                        'slug': c.slug,
                         'cad_name': c.cad_name or c.name or 'Unknown',
-                        'invite_code': c.invite_code,
                         'owner_username': owner_username,
                         'member_count': member_count,
                         'online_users': active_sessions_count,
                         'last_active': _safe_isoformat(last_seen),
-                        'status': live_status,
+                        'status': live_status or 'OFFLINE',
                     })
                 except Exception as e:
                     logger.warning(f'Error serializing community {getattr(c, "community_id", "unknown")}: {e}')
@@ -6323,9 +6332,12 @@ def platform_admin_overview():
                         'username': u.username or 'Unknown',
                         'email': u.email or 'Unknown',
                         'platform_role': u.role or 'User',
+                        'tenant_role': normalize_community_role((getattr(CommunityMember.query.filter_by(user_id=u.id, status='Active').first(), 'role', None))) or 'Unknown',
                         'last_login': last_login_iso,
-                        'online_status': online_status,
+                        'sessions': session_count,
                         'session_count': session_count,
+                        'status': online_status,
+                        'online_status': online_status,
                     })
                 except Exception as e:
                     logger.warning(f'Error serializing user {getattr(u, "id", "unknown")}: {e}')
@@ -6430,28 +6442,67 @@ def platform_admin_reset_password(user_id):
 @require_auth
 def community_admin_overview():
     community_id = get_current_community_id()
-    membership = CommunityMember.query.filter_by(user_id=session.get('user_id'), community_id=community_id, status='Active').first()
-    normalized_role = normalize_community_role(membership.role) if membership else None
-    if normalized_role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
+    current_user_id = session.get('user_id')
+    membership = CommunityMember.query.filter_by(user_id=current_user_id, community_id=community_id, status='Active').first()
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not has_community_owner_access(current_user_id, community=community, membership=membership):
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
-    community = Community.query.filter_by(community_id=community_id).first()
-    members = CommunityMember.query.filter_by(community_id=community_id, status='Active').all()
-    invites = CommunityInvite.query.filter_by(community_id=community_id, active=True).all()
-    officer_sessions = scoped_query(OfficerSession, community_id).order_by(OfficerSession.updated_at.desc()).all()
-    activities = [activity_log_to_dict(a) for a in scoped_query(ActivityLog, community_id).order_by(ActivityLog.created_at.desc()).limit(50).all()]
+    try:
+        members = CommunityMember.query.filter_by(community_id=community_id, status='Active').all()
+    except Exception as e:
+        logger.warning(f'Community admin members hydration failed for {community_id}: {e}')
+        members = []
+    try:
+        invites = CommunityInvite.query.filter_by(community_id=community_id, active=True).all()
+    except Exception as e:
+        logger.warning(f'Community admin invites hydration failed for {community_id}: {e}')
+        invites = []
+    try:
+        officer_sessions = scoped_query(OfficerSession, community_id).order_by(OfficerSession.updated_at.desc()).all()
+    except Exception as e:
+        logger.warning(f'Community admin officer sessions hydration failed for {community_id}: {e}')
+        officer_sessions = []
+    try:
+        activities = [activity_log_to_dict(a) for a in scoped_query(ActivityLog, community_id).order_by(ActivityLog.created_at.desc()).limit(50).all()]
+    except Exception as e:
+        logger.warning(f'Community admin activity hydration failed for {community_id}: {e}')
+        activities = []
 
     user_map = {u.id: u for u in User.query.filter(User.id.in_([m.user_id for m in members])).all()} if members else {}
     session_map = {s.user_id: s for s in UserSession.query.filter(UserSession.user_id.in_(list(user_map.keys())), UserSession.active.is_(True)).all()} if user_map else {}
 
+    owner_username = 'Unknown'
+    if community and community.owner_user_id:
+        try:
+            owner = User.query.get(community.owner_user_id)
+            owner_username = owner.username if owner and owner.username else 'Unknown'
+        except Exception as e:
+            logger.warning(f'Owner lookup failed for {community_id}: {e}')
+
+    def _safe_count(query_fn):
+        try:
+            return query_fn()
+        except Exception as e:
+            logger.warning(f'Community admin count query failed for {community_id}: {e}')
+            return 0
+
     return jsonify({'success': True, 'overview': {
-        'community': community.to_dict() if community else {'community_id': community_id},
+        'community': {
+            'community_id': community.community_id if community else community_id,
+            'slug': community.slug if community else None,
+            'name': community.name if community else 'Unknown',
+            'cad_name': community.cad_name if community else 'Unknown',
+            'owner_user_id': community.owner_user_id if community else None,
+            'owner_username': owner_username,
+            'status': community.status if community and community.status else 'OFFLINE',
+        },
         'total_members': len(members),
-        'online_members': UserSession.query.filter_by(tenant=community_id, active=True).count(),
-        'officers': OfficerSession.query.filter_by(community_id=community_id).count(),
-        'civilians': Civilian.query.filter_by(community_id=community_id).count(),
-        'active_calls': DispatchCall.query.filter_by(community_id=community_id, status='Active').count(),
-        'active_warrants': Warrant.query.filter_by(community_id=community_id, warrant_status='Active').count(),
+        'online_members': _safe_count(lambda: UserSession.query.filter_by(tenant=community_id, active=True).count()),
+        'officers': _safe_count(lambda: OfficerSession.query.filter_by(community_id=community_id).count()),
+        'civilians': _safe_count(lambda: Civilian.query.filter_by(community_id=community_id).count()),
+        'active_calls': _safe_count(lambda: DispatchCall.query.filter_by(community_id=community_id, status='Active').count()),
+        'active_warrants': _safe_count(lambda: Warrant.query.filter_by(community_id=community_id, warrant_status='Active').count()),
         'members': [{
             'user_id': m.user_id,
             'username': user_map.get(m.user_id).username if user_map.get(m.user_id) else f'user-{m.user_id}',
