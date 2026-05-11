@@ -15,7 +15,7 @@ from flask_migrate import Migrate
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import text
+from sqlalchemy import text, or_, func
 from security_service import (
     admin_required,
     police_required,
@@ -2216,8 +2216,22 @@ def user_login():
     if not identifier or not password:
         return jsonify({'success': False, 'error': 'Username/email and password required', 'code': 'MISSING_CREDENTIALS'}), 400
 
-    user = User.query.filter(((User.username == identifier) | (User.email == identifier)), User.active == True).first()
-    if not user or not verify_password(user.password_hash, password):
+    identifier_lower = identifier.lower()
+    logger.info("Auth login attempt identifier=%s ip=%s", identifier_lower, request.remote_addr)
+    user = User.query.filter(
+        or_(func.lower(User.username) == identifier_lower, func.lower(User.email) == identifier_lower)
+    ).first()
+    if not user:
+        logger.warning("Auth login failed: account not found identifier=%s ip=%s", identifier_lower, request.remote_addr)
+        return jsonify({'success': False, 'error': 'Account not found', 'code': 'ACCOUNT_NOT_FOUND'}), 404
+    if not user.active:
+        logger.warning("Auth login failed: inactive account user_id=%s ip=%s", user.id, request.remote_addr)
+        return jsonify({'success': False, 'error': 'Account is inactive', 'code': 'ACCOUNT_INACTIVE'}), 403
+    if not user.password_hash:
+        logger.error("Auth login failed: missing password hash user_id=%s", user.id)
+        return jsonify({'success': False, 'error': 'Internal authentication error', 'code': 'AUTH_STATE_INVALID'}), 500
+    if not verify_password(user.password_hash, password):
+        logger.warning("Auth login failed: invalid credentials user_id=%s ip=%s", user.id, request.remote_addr)
         return jsonify({'success': False, 'error': 'Invalid username or password', 'code': 'INVALID_CREDENTIALS'}), 401
 
     # Update last login
@@ -2240,6 +2254,7 @@ def user_login():
     next_step = 'community_picker'
     if len(communities) == 1:
         session['selected_community_id'] = communities[0]['community']['community_id']
+        session['active_community_id'] = communities[0]['community']['community_id']
         session['selected_community_slug'] = communities[0]['community']['slug']
         redirect_url = f"/c/{communities[0]['community']['slug']}/"
         next_step = 'enter_community'
@@ -2248,6 +2263,7 @@ def user_login():
         next_step = 'create_or_join_community'
     session.modified = True
 
+    logger.info("Auth login success user_id=%s is_platform_owner=%s", user.id, session.get('is_platform_owner'))
     return jsonify({
         'success': True,
         'user': {
@@ -2312,7 +2328,7 @@ def user_logout():
 def user_session():
     user_id = session.get('user_id')
     if not user_id:
-        return jsonify({'success': False, 'error': 'Not authenticated', 'code': 'NOT_AUTHENTICATED'}), 401
+        return jsonify({'success': False, 'error': 'Session expired', 'code': 'SESSION_EXPIRED'}), 401
 
     user = User.query.get(user_id)
     if not user or not user.active:
@@ -2332,10 +2348,13 @@ def user_session():
             'id': user.id,
             'username': user.username,
             'role': user.role,
+            'platform_role': getattr(user, 'platform_role', None) or user.role,
+            'is_platform_owner': is_platform_owner(),
             'last_login': user.last_login.isoformat() if user.last_login else None
         },
         'communities': communities,
         'community_count': len(communities),
+        'active_community_id': session.get('active_community_id') or session.get('selected_community_id'),
         'selected_community_id': session.get('selected_community_id'),
         'selected_community_slug': session.get('selected_community_slug'),
     })
@@ -6081,16 +6100,26 @@ def ensure_platform_owner(user):
 
     if should_promote and user.role != 'PlatformOwner':
         user.role = 'PlatformOwner'
+        if hasattr(User, 'platform_role'):
+            user.platform_role = 'PlatformOwner'
         db.session.commit()
+        logger.info("PlatformOwner bootstrap promoted user_id=%s email=%s", user.id, getattr(user, 'email', None))
+    elif should_promote and hasattr(User, 'platform_role') and getattr(user, 'platform_role', None) != 'PlatformOwner':
+        user.platform_role = 'PlatformOwner'
+        db.session.commit()
+        logger.info("PlatformOwner bootstrap normalized platform_role for user_id=%s", user.id)
 
     session['user_id'] = user.id
     session['username'] = user.username
+    session['email'] = user.email
     session['role'] = user.role
-    session['is_platform_owner'] = user.role == 'PlatformOwner'
+    effective_platform_role = (getattr(user, 'platform_role', None) or '').strip() or user.role
+    session['platform_role'] = effective_platform_role
+    session['is_platform_owner'] = user.role == 'PlatformOwner' or effective_platform_role == 'PlatformOwner'
+    session['active_community_id'] = session.get('selected_community_id')
     if session['is_platform_owner']:
         session['platform_role'] = 'PlatformOwner'
-    else:
-        session.pop('platform_role', None)
+    logger.info("Session created user_id=%s role=%s platform_role=%s", user.id, session.get('role'), session.get('platform_role'))
     session.modified = True
 
     return session['is_platform_owner']
