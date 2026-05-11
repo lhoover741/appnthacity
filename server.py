@@ -10,6 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session, redirect, abort, g
 from flask_migrate import Migrate
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import text
@@ -257,6 +258,77 @@ cache.init_app(app)
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode=os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet'),
+    ping_interval=25,
+    ping_timeout=60,
+    manage_session=True,
+)
+
+
+def community_room_name(community_slug):
+    return f"community:{community_slug}"
+
+
+def get_user_room_context():
+    user_id = session.get('user_id')
+    community_id = get_current_community_id()
+    if not user_id or not community_id:
+        return None, None, None
+    community = Community.query.filter_by(id=community_id).first()
+    if not community:
+        return None, None, None
+    return user_id, community_id, community_room_name(community.slug)
+
+
+def emit_community_event(event_name, payload, community_id=None):
+    target_community_id = community_id or get_current_community_id()
+    if not target_community_id:
+        return
+    community = Community.query.filter_by(id=target_community_id).first()
+    if not community:
+        return
+    socketio.emit(event_name, payload, room=community_room_name(community.slug))
+
+
+@socketio.on('connect')
+def socket_connect(auth=None):
+    user_id, community_id, room_name = get_user_room_context()
+    if not user_id or not community_id or not room_name:
+        logger.warning('Socket auth failed: missing user/session context')
+        return False
+    membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id, is_active=True).first()
+    if not membership:
+        logger.warning(f'Socket auth failed: user {user_id} is not active in community {community_id}')
+        return False
+    join_room(room_name)
+    emit('socket:ready', {'success': True, 'room': room_name, 'community_id': community_id})
+    emit_community_event('presence:update', {'user_id': user_id, 'state': 'ONLINE', 'community_id': community_id}, community_id=community_id)
+
+
+@socketio.on('disconnect')
+def socket_disconnect():
+    user_id, community_id, room_name = get_user_room_context()
+    if room_name:
+        leave_room(room_name)
+    if user_id and community_id:
+        emit_community_event('presence:update', {'user_id': user_id, 'state': 'OFFLINE', 'community_id': community_id}, community_id=community_id)
+
+
+@socketio.on('community:join')
+def socket_join_community(data):
+    user_id, community_id, room_name = get_user_room_context()
+    requested_slug = (data or {}).get('community_slug', '')
+    if not user_id or not room_name:
+        return emit('socket:error', {'error': 'Unauthorized'})
+    if room_name != community_room_name(requested_slug):
+        logger.warning(f"Tenant spoof attempt by user {user_id}: requested_slug={requested_slug}")
+        return emit('socket:error', {'error': 'Invalid tenant room'})
+    join_room(room_name)
+    emit('community:joined', {'room': room_name, 'community_id': community_id})
 
 from community_service import community_context_middleware, get_current_community_id, scoped_query
 from community_routes import register_community_routes
@@ -2841,6 +2913,7 @@ def post_bolo():
         return jsonify({'success': False, 'error': str(e)}), 500
     bolo_dict = bolo_to_dict(bolo_obj)
     send_bolo_discord(bolo_dict)
+    emit_community_event('bolo:created', bolo_dict)
     return jsonify({'success': True, 'bolo': bolo_dict})
 
 
@@ -2860,6 +2933,7 @@ def clear_bolo(bolo_id):
         db.session.rollback()
         logger.error(f'clear_bolo error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+    emit_community_event('bolo:cleared', {'bolo_id': bolo_id, 'status': 'Cleared'})
     return jsonify({'success': True})
 
 
@@ -4405,6 +4479,15 @@ def create_dispatch_call_route():
         )
 
         log_audit('dispatch', 'create_call', 'DispatchCall', call.call_id)
+        emit_community_event('dispatch:call_created', {
+            'call_id': call.call_id,
+            'caller_name': call.caller_name,
+            'location': call.location,
+            'call_type': call.call_type,
+            'description': call.description,
+            'priority': call.priority,
+            'status': call.status,
+        })
 
         return jsonify({
             'success': True,
@@ -4431,10 +4514,20 @@ def update_dispatch_call(call_id):
         if 'units' in data:
             call = assign_units_to_call(call_id, data['units'])
             log_audit('dispatch', 'assign_units', 'DispatchCall', call_id)
+            emit_community_event('dispatch:units_assigned', {
+                'call_id': call_id,
+                'units': data['units'],
+                'status': getattr(call, 'status', None),
+            })
 
         if 'resolution' in data:
             call = close_dispatch_call(call_id, data['resolution'])
             log_audit('dispatch', 'close_call', 'DispatchCall', call_id)
+            emit_community_event('dispatch:call_closed', {
+                'call_id': call_id,
+                'resolution': data['resolution'],
+                'status': getattr(call, 'status', 'Closed'),
+            })
 
         if not call:
             return jsonify({'success': False, 'error': 'Call not found'}), 404
@@ -4480,6 +4573,11 @@ def update_officer_status_route(callsign):
             return jsonify({'success': False, 'error': 'Officer not found'}), 404
 
         log_audit('dispatch', 'update_status', 'OfficerSession', callsign)
+        emit_community_event('officer:status_changed', {
+            'callsign': callsign,
+            'status': new_status,
+            'updated_at': datetime.utcnow().isoformat(),
+        })
 
         return jsonify({'success': True, 'message': 'Status updated'})
     except Exception as e:
@@ -4509,6 +4607,14 @@ def panic_button():
         )
 
         log_audit('dispatch', 'panic_button', 'DispatchCall', call.call_id)
+        emit_community_event('dispatch:panic', {
+            'call_id': call.call_id,
+            'callsign': callsign,
+            'location': location,
+            'priority': 'Critical',
+            'message': 'PANIC BUTTON ACTIVATED',
+            'created_at': datetime.utcnow().isoformat(),
+        })
 
         return jsonify({
             'success': True,
