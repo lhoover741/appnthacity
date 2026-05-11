@@ -4,6 +4,8 @@ import random
 import smtplib
 import logging
 import secrets
+import uuid
+import time
 import urllib.request
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -62,6 +64,20 @@ from models import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+PROCESS_START_TIME = time.time()
+ACTIVE_SOCKET_CONNECTIONS = {}
+SOCKET_RATE_LIMITS = {}
+WEBSOCKET_EVENTS_PER_MINUTE = 120
+
+
+def _safe_json_error(message, code, status=400, details=None):
+    return jsonify({
+        'success': False,
+        'error': message,
+        'code': code,
+        'request_id': getattr(g, 'request_id', None),
+        'details': details or {}
+    }), status
 
 # Production logging configuration
 if os.environ.get('FLASK_ENV') == 'production':
@@ -296,6 +312,7 @@ def emit_community_event(event_name, payload, community_id=None):
 
 @socketio.on('connect')
 def socket_connect(auth=None):
+    sid = getattr(request, 'sid', None)
     user_id, community_id, room_name = get_user_room_context()
     if not user_id or not community_id or not room_name:
         logger.warning('Socket auth failed: missing user/session context')
@@ -304,31 +321,60 @@ def socket_connect(auth=None):
     if not membership:
         logger.warning(f'Socket auth failed: user {user_id} is not active in community {community_id}')
         return False
+    existing_sid = ACTIVE_SOCKET_CONNECTIONS.get(user_id)
+    if existing_sid and sid and existing_sid != sid:
+        emit('socket:warning', {'message': 'Duplicate session detected; replacing older socket.'})
+    if sid:
+        ACTIVE_SOCKET_CONNECTIONS[user_id] = sid
     join_room(room_name)
+    from cad_helpers import log_audit
+    log_audit(str(user_id), 'websocket_join', 'Socket', sid or 'unknown', actor_role=session.get('role'), ip_address=request.remote_addr)
     emit('socket:ready', {'success': True, 'room': room_name, 'community_id': community_id})
     emit_community_event('presence:update', {'user_id': user_id, 'state': 'ONLINE', 'community_id': community_id}, community_id=community_id)
 
 
 @socketio.on('disconnect')
 def socket_disconnect():
+    sid = getattr(request, 'sid', None)
     user_id, community_id, room_name = get_user_room_context()
     if room_name:
         leave_room(room_name)
+    if user_id in ACTIVE_SOCKET_CONNECTIONS and ACTIVE_SOCKET_CONNECTIONS.get(user_id) == sid:
+        ACTIVE_SOCKET_CONNECTIONS.pop(user_id, None)
     if user_id and community_id:
+        from cad_helpers import log_audit
+        log_audit(str(user_id), 'websocket_leave', 'Socket', sid or 'unknown', actor_role=session.get('role'), ip_address=request.remote_addr)
         emit_community_event('presence:update', {'user_id': user_id, 'state': 'OFFLINE', 'community_id': community_id}, community_id=community_id)
 
 
 @socketio.on('community:join')
 def socket_join_community(data):
-    user_id, community_id, room_name = get_user_room_context()
-    requested_slug = (data or {}).get('community_slug', '')
-    if not user_id or not room_name:
-        return emit('socket:error', {'error': 'Unauthorized'})
-    if room_name != community_room_name(requested_slug):
-        logger.warning(f"Tenant spoof attempt by user {user_id}: requested_slug={requested_slug}")
-        return emit('socket:error', {'error': 'Invalid tenant room'})
-    join_room(room_name)
-    emit('community:joined', {'room': room_name, 'community_id': community_id})
+    try:
+        sid = getattr(request, 'sid', 'unknown')
+        rate_key = f'{sid}:community:join'
+        bucket = SOCKET_RATE_LIMITS.setdefault(rate_key, {'window': time.time(), 'count': 0})
+        if time.time() - bucket['window'] > 60:
+            bucket['window'] = time.time()
+            bucket['count'] = 0
+        bucket['count'] += 1
+        if bucket['count'] > 30:
+            return emit('socket:error', {'error': 'Rate limit exceeded'})
+
+        if not isinstance(data, dict):
+            return emit('socket:error', {'error': 'Invalid payload'})
+
+        user_id, community_id, room_name = get_user_room_context()
+        requested_slug = (data or {}).get('community_slug', '')
+        if not user_id or not room_name:
+            return emit('socket:error', {'error': 'Unauthorized'})
+        if room_name != community_room_name(requested_slug):
+            logger.warning(f"Tenant spoof attempt by user {user_id}: requested_slug={requested_slug}")
+            return emit('socket:error', {'error': 'Invalid tenant room'})
+        join_room(room_name)
+        emit('community:joined', {'room': room_name, 'community_id': community_id, 'request_id': getattr(g, 'request_id', None)})
+    except Exception as e:
+        logger.exception(f'Websocket join failed: {e}')
+        emit('socket:error', {'error': 'Unable to join room right now'})
 
 from community_service import community_context_middleware, get_current_community_id, scoped_query
 from community_routes import register_community_routes
@@ -336,10 +382,32 @@ from community_routes import register_community_routes
 @app.before_request
 def inject_community_context():
     """Attach tenant context for /c/<slug> routes and selected community sessions."""
+    g.request_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
+    g.request_started_at = time.time()
+    g.client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if request.path.startswith('/static/') or request.path.startswith('/assets/'):
         return None
     community_context_middleware()
     return None
+
+
+@app.after_request
+def enrich_response_metadata(response):
+    response.headers['X-Request-ID'] = getattr(g, 'request_id', 'unknown')
+    duration_ms = int((time.time() - getattr(g, 'request_started_at', time.time())) * 1000)
+    if request.path.startswith('/api/'):
+        logger.info(json.dumps({
+            'event': 'api_request',
+            'request_id': getattr(g, 'request_id', None),
+            'path': request.path,
+            'method': request.method,
+            'status': response.status_code,
+            'duration_ms': duration_ms,
+            'ip': getattr(g, 'client_ip', request.remote_addr),
+            'user_id': session.get('user_id'),
+            'community_id': get_current_community_id(),
+        }))
+    return response
 
 register_community_routes(app)
 logger.info("✓ Community routes registered")
@@ -403,6 +471,22 @@ def unauthorized_error(error):
         'error': 'Unauthorized',
         'code': 'UNAUTHORIZED'
     }), 401
+
+
+@app.errorhandler(Exception)
+def unhandled_exception(error):
+    logger.exception(json.dumps({
+        'event': 'unhandled_exception',
+        'request_id': getattr(g, 'request_id', None),
+        'path': request.path if request else None,
+        'method': request.method if request else None,
+        'user_id': session.get('user_id') if session else None,
+        'community_id': get_current_community_id() if request else None,
+        'error': str(error),
+    }))
+    if request.path.startswith('/api/'):
+        return _safe_json_error('An unexpected error occurred.', 'UNEXPECTED_ERROR', 500)
+    return send_from_directory('.', 'index.html')
 
 
 def ensure_arrest_automation_schema():
@@ -2488,11 +2572,17 @@ def get_public_config(key):
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint for monitoring."""
+    redis_url = os.environ.get('REDIS_URL')
     health = {
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
         'version': '3.0.0',  # Phase 3
-        'checks': {}
+        'checks': {},
+        'uptime_seconds': int(time.time() - PROCESS_START_TIME),
+        'memory_usage_mb': round((__import__('resource').getrusage(__import__('resource').RUSAGE_SELF).ru_maxrss / 1024), 2),
+        'active_sessions': UserSession.query.filter_by(active=True).count(),
+        'active_websocket_connections': len(ACTIVE_SOCKET_CONNECTIONS),
+        'websocket_status': 'healthy'
     }
 
     # Database health
@@ -2540,6 +2630,17 @@ def health_check():
     else:
         health['checks']['environment'] = {'status': 'healthy', 'message': 'All required variables present'}
 
+    if redis_url:
+        try:
+            import redis
+            redis.Redis.from_url(redis_url, socket_connect_timeout=1).ping()
+            health['checks']['redis'] = {'status': 'healthy', 'message': 'Redis ping OK'}
+        except Exception as e:
+            health['checks']['redis'] = {'status': 'error', 'message': str(e)}
+            health['status'] = 'unhealthy'
+    else:
+        health['checks']['redis'] = {'status': 'disabled', 'message': 'REDIS_URL not configured'}
+
     # Set overall status
     if any(check.get('status') in ['unhealthy', 'error'] for check in health['checks'].values()):
         health['status'] = 'unhealthy'
@@ -2548,6 +2649,25 @@ def health_check():
 
     status_code = 200 if health['status'] == 'healthy' else 503
     return jsonify(health), status_code
+
+
+@app.route('/api/platform/status', methods=['GET'])
+@admin_required
+def platform_status():
+    return jsonify({
+        'success': True,
+        'timestamp': datetime.utcnow().isoformat(),
+        'metrics': {
+            'total_online_users': UserSession.query.filter_by(active=True).count(),
+            'total_online_officers': UserSession.query.filter(UserSession.active.is_(True), UserSession.role.in_(['Police', 'LEO', 'Dispatch'])).count(),
+            'active_dispatch_calls': DispatchCall.query.filter(DispatchCall.status.in_(['Open', 'Active', 'In Progress'])).count(),
+            'websocket_connections': len(ACTIVE_SOCKET_CONNECTIONS),
+            'communities_online': db.session.query(UserSession.tenant).filter(UserSession.active.is_(True)).distinct().count(),
+            'active_scenes': Incident.query.filter(Incident.status.in_(['Open', 'Active'])).count(),
+            'pending_hearings': Hearing.query.filter(Hearing.status.in_(['Scheduled', 'Pending'])).count(),
+            'open_warrants': Warrant.query.filter(Warrant.status.in_(['Active', 'Open'])).count()
+        }
+    })
 
 
 @app.route('/api/diagnostics', methods=['GET'])
