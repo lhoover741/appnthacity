@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, send_from_directory, session, redirect, abort, g
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_migrate import Migrate
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_limiter import Limiter
@@ -127,17 +128,19 @@ if os.environ.get('FLASK_ENV') == 'production':
     logger.info('🔒 Production mode: Reduced logging verbosity')
 
 app = Flask(__name__, static_folder='.', static_url_path='')
-_flask_secret = os.environ.get('FLASK_SECRET')
-_flask_secret = os.environ.get('FLASK_SECRET')
-if not _flask_secret:
-    logger.warning('FLASK_SECRET env var not set — admin sessions will not persist across restarts.')
-    _flask_secret = secrets.token_hex(32)
-app.secret_key = _flask_secret
+if not os.environ.get('SECRET_KEY'):
+    raise RuntimeError('SECRET_KEY environment variable is required')
+
+app.config['SECRET_KEY'] = os.environ['SECRET_KEY']
+app.secret_key = app.config['SECRET_KEY']
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # Configure secure session cookies
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'  # Only secure in production
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_DOMAIN'] = None
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 
 configure_database(app)
@@ -2293,44 +2296,30 @@ def user_login():
     user.last_login = datetime.utcnow()
     db.session.commit()
 
-    _session_hydrate_user(user)
-
-    memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
-    communities = []
-    for membership in memberships:
-        community = Community.query.filter_by(community_id=membership.community_id, status='Active').first()
-        if community:
-            communities.append({
-                'community': community.to_dict(),
-                'membership': membership.to_dict(),
-            })
-
-    redirect_url = '/communities'
-    next_step = 'community_picker'
-    if len(communities) == 1:
-        session['selected_community_id'] = communities[0]['community']['community_id']
-        session['active_community_id'] = communities[0]['community']['community_id']
-        session['selected_community_slug'] = communities[0]['community']['slug']
-        redirect_url = f"/c/{communities[0]['community']['slug']}/"
-        next_step = 'enter_community'
-    elif not communities:
-        redirect_url = '/create-community'
-        next_step = 'create_or_join_community'
+    is_owner = _session_hydrate_user(user)
+    session.permanent = True
+    session['community_id'] = _user_field(user, 'community_id', None)
     session.modified = True
 
-    logger.info("Auth login success user_id=%s is_platform_owner=%s session_created=%s", user.id, session.get('is_platform_owner'), bool(session.get('user_id')))
+    redirect_target = '/admin' if is_owner else '/communities'
+    requires_community_setup = False if is_owner else not bool(session.get('community_id'))
+
+    logger.info("Auth login success login_success=true user_id=%s username=%s role=%s platform_role=%s is_platform_owner=%s session_keys=%s redirect=%s session_modified=%s",
+                user.id, session.get('username'), session.get('role'), session.get('platform_role'), is_owner, sorted(list(session.keys())), redirect_target, session.modified)
     return jsonify({
         'success': True,
+        'authenticated': True,
         'user': {
             'id': user.id,
             'username': _user_field(user, 'username', ''),
+            'email': _user_field(user, 'email', None),
             'role': _user_field(user, 'role', 'Civilian') or 'Civilian',
-            'last_login': user.last_login.isoformat() if user.last_login else None
+            'platform_role': _user_field(user, 'platform_role', None),
+            'is_platform_owner': is_owner,
+            'community_id': _user_field(user, 'community_id', None),
+            'requires_community_setup': requires_community_setup,
         },
-        'communities': communities,
-        'community_count': len(communities),
-        'next_step': next_step,
-        'redirect_url': redirect_url,
+        'redirect': '/admin' if is_owner else '/communities'
     })
 
 
@@ -2384,35 +2373,48 @@ def user_logout():
 def user_session():
     user_id = session.get('user_id')
     if not user_id:
-        return jsonify({'success': False, 'error': 'Session expired', 'code': 'SESSION_EXPIRED'}), 401
+        logger.info("Auth session check has_user_id=false authenticated=false reason=missing_user_id")
+        return jsonify({'success': False, 'authenticated': False, 'error': 'Session expired', 'code': 'SESSION_EXPIRED'}), 401
 
     user = User.query.get(user_id)
     if not user or not user.active:
+        logger.info("Auth session check has_user_id=true user_id=%s authenticated=false reason=user_inactive_or_missing", user_id)
         session.clear()
-        return jsonify({'success': False, 'error': 'User not found or inactive', 'code': 'USER_INACTIVE'}), 401
+        return jsonify({'success': False, 'authenticated': False, 'error': 'User not found or inactive', 'code': 'USER_INACTIVE'}), 401
 
-    memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
-    communities = []
-    for membership in memberships:
-        community = Community.query.filter_by(community_id=membership.community_id, status='Active').first()
-        if community:
-            communities.append({'community': community.to_dict(), 'membership': membership.to_dict()})
-
+    owner = is_platform_owner()
+    redirect_target = '/admin' if owner else '/communities'
+    logger.info("Auth session check has_user_id=true user_id=%s authenticated=true is_platform_owner=%s", user_id, owner)
     return jsonify({
         'success': True,
+        'authenticated': True,
         'user': {
             'id': user.id,
             'username': _user_field(user, 'username', ''),
+            'email': _user_field(user, 'email', None),
             'role': _user_field(user, 'role', 'Civilian') or 'Civilian',
-            'platform_role': getattr(user, 'platform_role', None) or user.role,
-            'is_platform_owner': is_platform_owner(),
-            'last_login': user.last_login.isoformat() if user.last_login else None
+            'platform_role': _user_field(user, 'platform_role', None),
+            'is_platform_owner': owner,
+            'community_id': _user_field(user, 'community_id', None),
+            'requires_community_setup': False if owner else not bool(_user_field(user, 'community_id', None))
         },
-        'communities': communities,
-        'community_count': len(communities),
-        'active_community_id': session.get('active_community_id') or session.get('selected_community_id'),
-        'selected_community_id': session.get('selected_community_id'),
-        'selected_community_slug': session.get('selected_community_slug'),
+        'redirect': redirect_target,
+    })
+
+
+@app.route('/api/debug/session', methods=['GET'])
+def debug_session():
+    env = (os.environ.get('FLASK_ENV') or '').lower()
+    owner = bool(session.get('is_platform_owner'))
+    if env == 'production' and not owner:
+        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    return jsonify({
+        'has_session_user_id': bool(session.get('user_id')),
+        'session_keys': sorted(list(session.keys())),
+        'cookie_secure': app.config.get('SESSION_COOKIE_SECURE', False),
+        'cookie_samesite': app.config.get('SESSION_COOKIE_SAMESITE'),
+        'secret_key_configured': bool(app.config.get('SECRET_KEY')),
+        'is_platform_owner': owner,
     })
 
 

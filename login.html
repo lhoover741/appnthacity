@@ -36,7 +36,7 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
   status.textContent = '';
   const form = new FormData(event.target);
   try {
-    const res = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
+    const res = await fetch('/api/auth/login', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
     const data = await res.json();
     if (!res.ok || !data.success) {
       const errorByCode = {
@@ -51,7 +51,7 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
       return;
     }
     status.textContent = 'Login successful. Redirecting…';
-    window.location.href = data.redirect_url || '/communities';
+    window.location.href = data.redirect || data.redirect_url || '/communities';
   } catch (err) {
     status.textContent = 'Internal authentication error. Please try again.';
     button.disabled = false;
