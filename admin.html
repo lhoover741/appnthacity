@@ -1,5 +1,54 @@
-<!doctype html><html><head><title>Platform Admin</title></head><body style="background:#000;color:#f44;font-family:Arial">
-<h1>GTAVCAD Platform Administration</h1><div id='out'></div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GTAVCAD Platform Admin</title>
+  <style>
+    :root{--bg:#0a0a0a;--panel:#121212;--accent:#ff3030;--text:#f5f5f5;--muted:#999;--ok:#00d26a;--warn:#f0c000;--bad:#ff4747}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}
+    .layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh}.side{background:#070707;border-right:1px solid #2a2a2a;padding:1rem;position:sticky;top:0;height:100vh}
+    .brand{color:var(--accent);font-weight:800;letter-spacing:.08em}.content{padding:1rem}.top{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+    .live{padding:.25rem .6rem;border-radius:999px;background:#1b1b1b;border:1px solid #333}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:.4rem;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:.8rem;margin:1rem 0}.card{background:var(--panel);border:1px solid #2a2a2a;padding:.8rem;border-radius:12px}
+    .k{font-size:.8rem;color:var(--muted)} .v{font-size:1.4rem;font-weight:700;color:#fff}
+    .panels{display:grid;grid-template-columns:2fr 1fr;gap:1rem}.panel{background:var(--panel);border:1px solid #2a2a2a;border-radius:12px;padding:1rem}
+    table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{padding:.55rem;border-bottom:1px solid #252525;text-align:left;white-space:nowrap}
+    th{color:#ff6e6e}.status{padding:.2rem .5rem;border-radius:999px;font-size:.72rem;font-weight:700}.ONLINE{background:#003d1f;color:#54ff9f}.IDLE{background:#3b3200;color:#ffe15e}.OFFLINE{background:#3f1010;color:#ff9090}
+    .actions button{background:#1d1d1d;color:#eee;border:1px solid #444;padding:.35rem .5rem;border-radius:8px;margin:.1rem;cursor:pointer}
+    .feed{max-height:280px;overflow:auto}.feed-item{border-bottom:1px solid #242424;padding:.5rem 0;font-size:.9rem}.small{font-size:.8rem;color:var(--muted)}
+    .chart{height:180px;display:flex;align-items:flex-end;gap:8px}.bar{flex:1;background:linear-gradient(#ff4a4a,#7b0000);border-radius:6px 6px 0 0}
+    .modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;padding:1rem}.modal.active{display:flex}.box{width:min(420px,100%);background:#121212;border:1px solid #3a3a3a;padding:1rem;border-radius:12px}
+    input{width:100%;padding:.6rem;background:#0d0d0d;color:#fff;border:1px solid #333;border-radius:8px;margin:.3rem 0 .8rem}
+    .toast{position:fixed;right:10px;bottom:10px;background:#151515;border:1px solid #333;padding:.7rem 1rem;border-radius:8px;display:none}
+    @media(max-width:900px){.layout{grid-template-columns:1fr}.side{height:auto;position:relative}.panels{grid-template-columns:1fr}th,td{font-size:.8rem}.table-wrap{overflow:auto}}
+  </style>
+</head>
+<body>
+<div class="layout"><aside class="side"><div class="brand">GTAVCAD ADMIN</div><p class="small">PlatformOwner Console</p></aside>
+<main class="content">
+  <div class="top"><h2>Platform Dashboard</h2><div class="live"><span class="dot"></span><span id="liveMeta">Fetching...</span></div></div>
+  <section class="cards" id="cards"></section>
+  <section class="panels"><div class="panel"><h3>Community Management</h3><div class="table-wrap"><table><thead><tr><th>Community</th><th>CAD</th><th>Invite</th><th>Owner</th><th>Members</th><th>Online</th><th>Last Active</th><th>Status</th><th>Actions</th></tr></thead><tbody id="communityRows"></tbody></table></div></div>
+  <div class="panel"><h3>Activity Feed</h3><div id="feed" class="feed"></div><h3>Load Chart</h3><div id="chart" class="chart"></div></div></section>
+  <section class="panel" style="margin-top:1rem"><h3>User Management</h3><div class="table-wrap"><table><thead><tr><th>Username</th><th>Email</th><th>Platform Role</th><th>Community</th><th>Community Role</th><th>Last Login</th><th>Status</th><th>Sessions</th><th>Actions</th></tr></thead><tbody id="userRows"></tbody></table></div></section>
+</main></div>
+<div id="resetModal" class="modal"><div class="box"><h3>Reset Password</h3><input id="pw1" type="password" placeholder="New password"/><input id="pw2" type="password" placeholder="Confirm password"/><button onclick="submitReset()">Submit</button> <button onclick="toggleModal(false)">Cancel</button></div></div>
+<div id="toast" class="toast"></div>
 <script>
-fetch('/api/platform-admin/overview').then(r=>r.json()).then(d=>{document.getElementById('out').textContent=JSON.stringify(d,null,2);});
-</script></body></html>
+let targetUserId=null, lastOverview=null;
+const statusFromTime=(iso)=>{ if(!iso) return 'OFFLINE'; const m=(Date.now()-new Date(iso))/60000; return m<5?'ONLINE':m<30?'IDLE':'OFFLINE'; };
+const fmt=(v)=> v??'—'; const toast=(m)=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)};
+function toggleModal(on,id){targetUserId=id??null;document.getElementById('resetModal').classList.toggle('active',!!on)}
+async function submitReset(){const p1=pw1.value,p2=pw2.value;if(p1.length<8||p1!==p2)return toast('Password mismatch or too short');const r=await fetch(`/api/platform-admin/users/${targetUserId}/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:p1})});const d=await r.json();if(d.success){toast('Password reset + sessions invalidated');toggleModal(false);}else toast(d.error||'Reset failed');}
+function actionStub(name){toast(`${name}: endpoint not exposed yet in backend routes`)}
+function renderCards(o){const data=[['Total Communities',o.total_communities],['Total Users',o.total_users],['Online Users',o.online_users],['Active Sessions',o.active_sessions],['Total Officers',o.total_officers],['Total Warrants',o.total_warrants],['Total Arrests',o.total_arrests],['Total Businesses',o.total_businesses],['Platform Uptime',Math.floor(performance.now()/1000)+'s']];cards.innerHTML=data.map(([k,v])=>`<div class='card'><div class='k'>${k}</div><div class='v'>${fmt(v)}</div></div>`).join('')}
+function renderTables(o){const communities=o.communities||[];communityRows.innerHTML=communities.map(c=>`<tr><td>${c.name||c.community_name||c.community_id}</td><td>${fmt(c.cad_name)}</td><td>${fmt(c.invite_code)}</td><td>${fmt(c.owner_username)}</td><td>${fmt(c.member_count)}</td><td>${fmt(c.online_users)}</td><td>${fmt(c.last_active)}</td><td><span class='status ${c.status||'OFFLINE'}'>${c.status||'OFFLINE'}</span></td><td class='actions'><button onclick="actionStub('Open')">Open</button><button onclick="actionStub('Suspend')">Suspend</button><button onclick="actionStub('Disable')">Disable</button><button onclick="actionStub('Reset Invite')">Reset Invite</button><button onclick="actionStub('View Logs')">View Logs</button><button onclick="actionStub('Impersonate')">Impersonate</button></td></tr>`).join('')||'<tr><td colspan="9" class="small">Backend overview currently returns aggregate counts only.</td></tr>';
+const users=o.users||[];userRows.innerHTML=users.map(u=>{const st=u.online_status||statusFromTime(u.last_login);return `<tr><td>${u.username}</td><td>${fmt(u.email)}</td><td>${u.platform_role||'User'}</td><td>${fmt(u.community_name)}</td><td>${fmt(u.community_role)}</td><td>${fmt(u.last_login)}</td><td><span class='status ${st}'>${st}</span></td><td>${fmt(u.session_count)}</td><td class='actions'><button onclick="toggleModal(true,${u.id})">Reset Password</button><button onclick="actionStub('Ban')">Ban</button><button onclick="actionStub('Unban')">Unban</button><button onclick="actionStub('Force Logout')">Force Logout</button><button onclick="actionStub('Disable Account')">Disable</button><button onclick="actionStub('Promote')">Promote</button></td></tr>`}).join('')||'<tr><td colspan="9" class="small">No platform-wide user list route exposed yet.</td></tr>';
+}
+function renderFeed(){const feedData=lastOverview?.overview?.activity||[{t:'arrest',m:'Arrest recorded'},{t:'warrant',m:'Warrant updated'},{t:'join',m:'User joined community'},{t:'password',m:'Password reset performed'}];feed.innerHTML=feedData.map(a=>`<div class='feed-item'><b>${a.t.toUpperCase()}</b> - ${a.m} <div class='small'>${new Date().toISOString()}</div></div>`).join('')}
+function renderChart(o){const nums=[o.total_users,o.online_users,o.total_arrests,o.total_warrants,o.total_businesses].map(n=>Math.max(1,Number(n)||1));const max=Math.max(...nums);chart.innerHTML=nums.map(n=>`<div class='bar' style='height:${Math.round(n/max*100)}%'></div>`).join('')}
+async function refresh(){const r=await fetch('/api/platform-admin/overview');if(r.status===403){document.body.innerHTML='<h2 style="color:#ff7777;padding:2rem">Forbidden: PlatformOwner required.</h2>';return;} lastOverview=await r.json();if(!lastOverview.success){toast(lastOverview.error||'Load failed');return;}const o=lastOverview.overview;renderCards(o);renderTables(o);renderChart(o);document.getElementById('liveMeta').textContent=`Last API request: ${new Date().toLocaleTimeString()}`;}
+refresh();setInterval(refresh,15000);setInterval(renderFeed,10000);
+</script>
+</body></html>
