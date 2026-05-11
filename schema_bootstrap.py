@@ -118,6 +118,15 @@ def bootstrap_schema():
                 rollback_session(db)
                 raise
 
+            # Run admin role migration.
+            logger.info('Running admin role migration...')
+            from migrate_admin_role import migrate_admin_role
+            if migrate_admin_role():
+                logger.info('✓ Admin role migration completed')
+            else:
+                logger.error('✗ Admin role migration failed')
+                return False
+
             # Run diagnostic and legacy schema fix for civilian compatibility.
             logger.info('Running database diagnostic...')
             from database_diagnostic import diagnose_database
