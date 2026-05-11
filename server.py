@@ -6217,6 +6217,14 @@ def is_platform_owner():
     return (owner_email and session_email == owner_email) or (owner_username and session_username == owner_username)
 
 
+def require_platform_owner():
+    if session.get('is_platform_owner') is True:
+        return None
+    if is_platform_owner():
+        return None
+    return jsonify({'success': False, 'error': 'PlatformOwner required'}), 403
+
+
 def log_platform_admin(action, target_user_id=None, tenant=None, details=None):
     db.session.add(PlatformAdminLog(
         actor_user_id=session.get('user_id') if isinstance(session.get('user_id'), int) else None,
@@ -6510,8 +6518,9 @@ def platform_admin_overview():
 
 @app.route('/api/platform-admin/users/<int:user_id>/reset-password', methods=['POST'])
 def platform_admin_reset_password(user_id):
-    if not is_platform_owner():
-        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
     data = request.get_json(silent=True) or {}
     user = User.query.get_or_404(user_id)
     user.password_hash = hash_password(data.get('new_password', ''))
@@ -6519,6 +6528,220 @@ def platform_admin_reset_password(user_id):
     log_platform_admin('platform_password_reset', target_user_id=user.id, tenant='*')
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/open', methods=['POST'])
+def platform_admin_open_community(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    redirect_url = f"/c/{community.slug}/"
+    log_platform_admin('community_open', tenant=community_id, details={'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'redirect': redirect_url, 'community': community.to_dict()})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/suspend', methods=['POST'])
+def platform_admin_suspend_community(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    community.status = 'SUSPENDED'
+    log_platform_admin('community_suspend', tenant=community_id, details={'status': 'SUSPENDED', 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'status': 'SUSPENDED'})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/disable', methods=['POST'])
+def platform_admin_disable_community(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    community.status = 'INACTIVE'
+    log_platform_admin('community_disable', tenant=community_id, details={'active': False, 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'active': False})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/reset-invite', methods=['POST'])
+def platform_admin_reset_invite(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    CommunityInvite.query.filter_by(community_id=community_id, active=True).update({'active': False})
+    new_code = secrets.token_urlsafe(6).replace('_', '').replace('-', '').upper()[:8]
+    invite = CommunityInvite(
+        invite_code=new_code,
+        community_id=community_id,
+        role='Civilian',
+        created_by=session.get('user_id') if isinstance(session.get('user_id'), int) else community.owner_user_id,
+        active=True,
+    )
+    db.session.add(invite)
+    log_platform_admin('community_reset_invite', tenant=community_id, details={'invite_code': new_code, 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'invite_code': new_code})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/logs', methods=['GET'])
+def platform_admin_community_logs(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    limit = min(max(int(request.args.get('limit', 50)), 1), 200)
+    logs = PlatformAdminLog.query.filter_by(tenant=community_id).order_by(PlatformAdminLog.created_at.desc()).limit(limit).all()
+    return jsonify({'success': True, 'logs': [{
+        'id': row.id,
+        'action': row.action,
+        'target_user_id': row.target_user_id,
+        'details': row.details,
+        'ip_address': row.ip_address,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+    } for row in logs]})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/impersonate', methods=['POST'])
+def platform_admin_impersonate_community(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    session['impersonating_community_id'] = community_id
+    session['impersonating_community_slug'] = community.slug
+    session['impersonation_active'] = True
+    session['original_user_id'] = session.get('user_id')
+    log_platform_admin('community_impersonate', tenant=community_id, details={'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'redirect': f"/c/{community.slug}/", 'impersonation_active': True})
+
+
+@app.route('/api/platform-admin/impersonation/exit', methods=['POST'])
+def platform_admin_exit_impersonation():
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    session.pop('impersonating_community_id', None)
+    session.pop('impersonating_community_slug', None)
+    session.pop('impersonation_active', None)
+    session.pop('original_user_id', None)
+    log_platform_admin('community_impersonation_exit', tenant='*', details={'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'redirect': '/admin'})
+
+
+def _platform_admin_self_block(user_id, action_name):
+    data = request.get_json(silent=True) or {}
+    if session.get('user_id') == user_id and not data.get('confirm_self'):
+        return jsonify({'success': False, 'error': f'Cannot {action_name} your own account without confirmation'}), 400
+    return None
+
+
+@app.route('/api/platform-admin/users/<int:user_id>/ban', methods=['POST'])
+def platform_admin_ban_user(user_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    self_block = _platform_admin_self_block(user_id, 'disable')
+    if self_block:
+        return self_block
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+    user.active = False
+    invalidate_user_sessions(user_id)
+    log_platform_admin('user_ban', target_user_id=user_id, tenant='*', details={'status': 'BANNED', 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'status': 'BANNED'})
+
+
+@app.route('/api/platform-admin/users/<int:user_id>/unban', methods=['POST'])
+def platform_admin_unban_user(user_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+    user.active = True
+    log_platform_admin('user_unban', target_user_id=user_id, tenant='*', details={'status': 'ACTIVE', 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'status': 'ACTIVE'})
+
+
+@app.route('/api/platform-admin/users/<int:user_id>/force-logout', methods=['POST'])
+def platform_admin_force_logout_user(user_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+    invalidate_user_sessions(user_id)
+    log_platform_admin('user_force_logout', target_user_id=user_id, tenant='*', details={'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'User sessions invalidated'})
+
+
+@app.route('/api/platform-admin/users/<int:user_id>/disable', methods=['POST'])
+def platform_admin_disable_user(user_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    self_block = _platform_admin_self_block(user_id, 'disable')
+    if self_block:
+        return self_block
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+    user.active = False
+    invalidate_user_sessions(user_id)
+    log_platform_admin('user_disable', target_user_id=user_id, tenant='*', details={'active': False, 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'active': False})
+
+
+@app.route('/api/platform-admin/users/<int:user_id>/promote', methods=['POST'])
+def platform_admin_promote_user(user_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+    data = request.get_json(silent=True) or {}
+    role = (data.get('role') or '').strip()
+    community_id = data.get('community_id')
+    if role == 'PlatformOwner':
+        user.role = 'PlatformOwner'
+    elif role in ('Admin', 'CommunityAdmin', 'CommunityOwner'):
+        if not community_id:
+            return jsonify({'success': False, 'error': 'community_id is required for community role promotion'}), 400
+        membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id).first()
+        if not membership:
+            membership = CommunityMember(user_id=user_id, community_id=community_id, role=role, status='Active')
+            db.session.add(membership)
+        else:
+            membership.role = role
+            membership.status = 'Active'
+    else:
+        return jsonify({'success': False, 'error': 'Invalid role'}), 400
+    log_platform_admin('user_promote', target_user_id=user_id, tenant=community_id or '*', details={'role': role, 'result': 'success'})
+    db.session.commit()
+    return jsonify({'success': True, 'user': user.to_dict()})
 
 
 @app.route('/api/community-admin/overview', methods=['GET'])
