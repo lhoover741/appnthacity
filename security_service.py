@@ -45,9 +45,9 @@ def verify_password(password_hash, password):
             result,
         )
         return result
-    except (ValueError, TypeError) as exc:
+    except Exception as exc:
         logger.warning(
-            "Password verify diagnostics: prefix=%s function=%s result=False error=%s",
+            "Password verification failure: prefix=%s function=%s result=False error=%s",
             hash_prefix,
             verify_function,
             exc,
