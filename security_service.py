@@ -27,11 +27,31 @@ def hash_password(password):
 def verify_password(password_hash, password):
     """Verify a password against its hash with defensive legacy handling."""
     if not password_hash or not password:
+        logger.info("Password verification skipped: missing hash or password")
         return False
+
+    normalized_hash = password_hash.strip() if isinstance(password_hash, str) else password_hash
+    hash_prefix = ''
+    if isinstance(normalized_hash, str):
+        hash_prefix = normalized_hash.split('$', 1)[0]
+
+    verify_function = 'werkzeug.check_password_hash'
     try:
-        return check_password_hash(password_hash, password)
-    except (ValueError, TypeError):
-        logger.warning("Password verification failed due to unsupported/legacy hash format")
+        result = check_password_hash(normalized_hash, password)
+        logger.info(
+            "Password verify diagnostics: prefix=%s function=%s result=%s",
+            hash_prefix,
+            verify_function,
+            result,
+        )
+        return result
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "Password verify diagnostics: prefix=%s function=%s result=False error=%s",
+            hash_prefix,
+            verify_function,
+            exc,
+        )
         return False
 
 def require_role(*roles):
