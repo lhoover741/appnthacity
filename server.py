@@ -2266,17 +2266,26 @@ def user_login():
     if not filters:
         logger.error("Auth login failed: user model missing username/email columns")
         return jsonify({'success': False, 'error': 'Authentication unavailable', 'code': 'AUTH_UNAVAILABLE'}), 500
-    user = User.query.filter(or_(*filters)).first()
-    if not user:
+    matched_users = User.query.filter(or_(*filters)).all()
+    if not matched_users:
         logger.warning("Auth login failed: account not found identifier=%s ip=%s", identifier_lower, request.remote_addr)
         return jsonify({'success': False, 'error': 'Account not found', 'code': 'ACCOUNT_NOT_FOUND'}), 404
+    if len(matched_users) != 1:
+        logger.warning("Auth login failed: ambiguous identifier=%s count=%s ip=%s", identifier_lower, len(matched_users), request.remote_addr)
+        return jsonify({'success': False, 'error': 'Ambiguous login identifier', 'code': 'AMBIGUOUS_IDENTIFIER'}), 409
+    user = matched_users[0]
+    hash_prefix = (user.password_hash or '')[:20]
+    logger.info("Auth login diagnostics identifier=%s user_found=true user_id=%s hash_prefix=%s active=%s role=%s platform_role=%s",
+                identifier_lower, user.id, hash_prefix, bool(_user_field(user, 'active', True)), _user_field(user, 'role', ''), _user_field(user, 'platform_role', ''))
     if not bool(_user_field(user, 'active', True)):
         logger.warning("Auth login failed: inactive account user_id=%s ip=%s", user.id, request.remote_addr)
         return jsonify({'success': False, 'error': 'Account is inactive', 'code': 'ACCOUNT_INACTIVE'}), 403
     if not user.password_hash:
         logger.error("Auth login failed: missing password hash user_id=%s", user.id)
         return jsonify({'success': False, 'error': 'Internal authentication error', 'code': 'AUTH_STATE_INVALID'}), 500
-    if not verify_password(user.password_hash, password):
+    verify_result = verify_password(user.password_hash, password)
+    logger.info("Auth login diagnostics user_id=%s verify_result=%s", user.id, verify_result)
+    if not verify_result:
         logger.warning("Auth login failed: invalid credentials user_id=%s ip=%s", user.id, request.remote_addr)
         return jsonify({'success': False, 'error': 'Invalid username or password', 'code': 'INVALID_CREDENTIALS'}), 401
 
@@ -2285,7 +2294,6 @@ def user_login():
     db.session.commit()
 
     _session_hydrate_user(user)
-    ensure_platform_owner(user)
 
     memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
     communities = []
@@ -2310,7 +2318,7 @@ def user_login():
         next_step = 'create_or_join_community'
     session.modified = True
 
-    logger.info("Auth login success user_id=%s is_platform_owner=%s", user.id, session.get('is_platform_owner'))
+    logger.info("Auth login success user_id=%s is_platform_owner=%s session_created=%s", user.id, session.get('is_platform_owner'), bool(session.get('user_id')))
     return jsonify({
         'success': True,
         'user': {
@@ -6157,6 +6165,9 @@ def ensure_platform_owner(user):
         db.session.commit()
         logger.info("PlatformOwner bootstrap normalized platform_role for user_id=%s", user.id)
 
+    if should_promote and not bool(_user_field(user, 'active', True)):
+        user.active = True
+        db.session.commit()
     return _session_hydrate_user(user)
 
 
@@ -6246,8 +6257,43 @@ def reset_password_with_token():
     user.password_hash = hash_password(new_password)
     prt.used = True
     invalidate_user_sessions(user.id)
+    log_platform_admin('token_password_reset', target_user_id=user.id, tenant=session.get('selected_community_id'))
     db.session.commit()
     return jsonify({'success': True, 'message': 'Password reset successful'})
+
+
+@app.route('/api/platform-owner/recovery/reset-password', methods=['POST'])
+@limiter.limit("5 per minute")
+def platform_owner_recovery_reset_password():
+    data = request.get_json(silent=True) or {}
+    configured_token = os.getenv('PLATFORM_OWNER_RECOVERY_TOKEN', '')
+    owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
+    email = (data.get('email') or '').strip().lower()
+    provided_token = data.get('token', '')
+    new_password = data.get('new_password', '')
+    confirm_password = data.get('confirm_password', '')
+
+    if not configured_token or provided_token != configured_token:
+        return jsonify({'success': False, 'error': 'Invalid recovery token'}), 403
+    if len(new_password) < 8 or new_password != confirm_password:
+        return jsonify({'success': False, 'error': 'Password validation failed'}), 400
+
+    user = User.query.filter(func.lower(User.email) == email).first()
+    if not user:
+        return jsonify({'success': False, 'error': 'PlatformOwner account not found'}), 404
+    if user.role != 'PlatformOwner' and getattr(user, 'platform_role', None) != 'PlatformOwner' and (not owner_email or email != owner_email):
+        return jsonify({'success': False, 'error': 'User is not eligible for PlatformOwner recovery'}), 403
+
+    user.password_hash = hash_password(new_password)
+    user.role = 'PlatformOwner'
+    if hasattr(User, 'platform_role'):
+        user.platform_role = 'PlatformOwner'
+    user.active = True
+    invalidate_user_sessions(user.id)
+    log_platform_admin('platform_owner_recovery_password_reset', target_user_id=user.id, tenant='*', details={'email': email})
+    db.session.commit()
+    logger.info("PlatformOwner recovery reset completed for user_id=%s email=%s", user.id, email)
+    return jsonify({'success': True, 'message': 'PlatformOwner password reset successfully'})
 
 
 @app.route('/api/platform-admin/overview', methods=['GET'])

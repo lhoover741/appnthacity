@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""Update admin user password hash and permissions."""
+"""Ensure PlatformOwner role exists without mutating existing passwords."""
 
 import os
 import sys
 import logging
+from werkzeug.security import generate_password_hash
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,10 +18,15 @@ def _env_true(value):
 
 
 def migrate_admin_password():
-    """Update admin user permissions and initialize password hash only when needed."""
+    """Backward-compatible wrapper for ensure_platform_owner migration."""
+    return ensure_platform_owner()
+
+
+def ensure_platform_owner():
+    """Promote/create configured PlatformOwner and only initialize password when allowed."""
     try:
         logger.info('=' * 80)
-        logger.info('ADMIN PASSWORD AND PERMISSIONS MIGRATION')
+        logger.info('PLATFORM OWNER ENSURE MIGRATION')
         logger.info('=' * 80)
 
         from server import app
@@ -47,20 +53,29 @@ def migrate_admin_password():
 
             logger.info('   ✓ users table exists')
 
-            # 2. Check if admin user exists
-            logger.info('\n2. Checking for admin user...')
+            platform_owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or 'admin@govdirect.org').strip().lower()
+            platform_owner_username = (os.getenv('PLATFORM_OWNER_USERNAME') or 'platformowner').strip()
+            initial_password = os.getenv('PLATFORM_OWNER_INITIAL_PASSWORD')
+            force_reset = _env_true(os.environ.get('FORCE_ADMIN_PASSWORD_RESET', 'false'))
+
+            # 2. Check if configured PlatformOwner exists
+            logger.info('\n2. Checking for configured PlatformOwner...')
             cursor.execute("""
                 SELECT id, email, password_hash, role, platform_role, active
                 FROM users
-                WHERE email = 'admin@govdirect.org'
-            """)
+                WHERE LOWER(email) = %s
+            """, (platform_owner_email,))
 
             admin_user = cursor.fetchone()
             if not admin_user:
-                logger.error('   ✗ Admin user (admin@govdirect.org) not found')
-                cursor.close()
-                connection.close()
-                return False
+                logger.warning('   ! PlatformOwner user not found for email=%s, creating one', platform_owner_email)
+                password_hash = generate_password_hash(initial_password, method='pbkdf2:sha256') if initial_password else None
+                cursor.execute("""
+                    INSERT INTO users (username, email, password_hash, role, platform_role, active)
+                    VALUES (%s, %s, %s, 'PlatformOwner', 'PlatformOwner', true)
+                    RETURNING id, email, password_hash, role, platform_role, active
+                """, (platform_owner_username, platform_owner_email, password_hash))
+                admin_user = cursor.fetchone()
 
             user_id, email, current_hash, current_role, current_platform_role, current_active = admin_user
             logger.info(f'   ✓ Found user: {email}')
@@ -72,24 +87,31 @@ def migrate_admin_password():
             else:
                 logger.info('     Current password_hash: None')
 
-            # 3. Update admin user
-            logger.info('\n3. Updating admin user...')
-            new_password_hash = 'pbkdf2:sha256:1000000$cqcgUrSJTy4bVAs1$59ecfd1afb9fc7c659bcffd428d17c1c0778ceed03f1fa8d240c895f8eda0b17'
-            force_reset = _env_true(os.environ.get('FORCE_ADMIN_PASSWORD_RESET', 'false'))
-            should_set_password = not current_hash or force_reset
+            # 3. Update role/status and password only when allowed
+            logger.info('\n3. Ensuring PlatformOwner role/status...')
+            should_set_password = (not current_hash) or force_reset
 
             try:
                 if should_set_password:
-                    cursor.execute("""
-                        UPDATE users
-                        SET
-                            password_hash = %s,
-                            role = 'PlatformOwner',
-                            platform_role = 'PlatformOwner',
-                            active = true
-                        WHERE email = 'admin@govdirect.org'
-                    """, (new_password_hash,))
-                    logger.info('   ✓ Admin password initialized')
+                    if not initial_password:
+                        logger.warning('   ! Password initialization requested but PLATFORM_OWNER_INITIAL_PASSWORD not set; preserving current value')
+                        cursor.execute("""
+                            UPDATE users
+                            SET role = 'PlatformOwner', platform_role = 'PlatformOwner', active = true
+                            WHERE LOWER(email) = %s
+                        """, (platform_owner_email,))
+                    else:
+                        new_password_hash = generate_password_hash(initial_password, method='pbkdf2:sha256')
+                        cursor.execute("""
+                            UPDATE users
+                            SET
+                                password_hash = %s,
+                                role = 'PlatformOwner',
+                                platform_role = 'PlatformOwner',
+                                active = true
+                            WHERE LOWER(email) = %s
+                        """, (new_password_hash, platform_owner_email))
+                        logger.info('   ✓ PlatformOwner password initialized/reset by policy')
                 else:
                     cursor.execute("""
                         UPDATE users
@@ -97,9 +119,9 @@ def migrate_admin_password():
                             role = 'PlatformOwner',
                             platform_role = 'PlatformOwner',
                             active = true
-                        WHERE email = 'admin@govdirect.org'
-                    """)
-                    logger.info('   ✓ Existing admin password preserved')
+                        WHERE LOWER(email) = %s
+                    """, (platform_owner_email,))
+                    logger.info('   ✓ Existing PlatformOwner password preserved')
 
                 rows_affected = cursor.rowcount
                 connection.commit()
@@ -116,8 +138,8 @@ def migrate_admin_password():
             cursor.execute("""
                 SELECT id, email, password_hash, role, platform_role, active
                 FROM users
-                WHERE email = 'admin@govdirect.org'
-            """)
+                WHERE LOWER(email) = %s
+            """, (platform_owner_email,))
 
             updated_user = cursor.fetchone()
             if updated_user:
@@ -131,13 +153,10 @@ def migrate_admin_password():
                 else:
                     logger.info('     New password_hash: None')
 
-                expected_hash = new_password_hash if should_set_password else current_hash
-
                 # Verify all fields are correct
                 if (new_role == 'PlatformOwner' and
                         new_platform_role == 'PlatformOwner' and
-                        new_active == True and
-                        new_hash == expected_hash):
+                        new_active == True):
                     logger.info('   ✓ Update verified successfully')
                 else:
                     logger.error('   ✗ Update verification failed - fields do not match expected values')
@@ -154,11 +173,10 @@ def migrate_admin_password():
             connection.close()
 
             logger.info('\n' + '=' * 80)
-            logger.info('✓ ADMIN PASSWORD AND PERMISSIONS MIGRATION COMPLETED SUCCESSFULLY')
+            logger.info('✓ PLATFORM OWNER ENSURE MIGRATION COMPLETED SUCCESSFULLY')
             logger.info('=' * 80)
-            logger.info('\nAdmin user can now login with:')
-            logger.info('  Email: admin@govdirect.org')
-            logger.info('  Password: [use the password that hashes to the above hash]')
+            logger.info('\nPlatformOwner can now login with:')
+            logger.info(f'  Email: {platform_owner_email}')
             logger.info('  Role: PlatformOwner')
             logger.info('  Status: Active')
             return True
