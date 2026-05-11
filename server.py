@@ -79,6 +79,48 @@ def _safe_json_error(message, code, status=400, details=None):
         'details': details or {}
     }), status
 
+def _user_field(user, field_name, default=None):
+    """Read a user field safely to tolerate optional/nullable columns."""
+    try:
+        value = getattr(user, field_name)
+    except Exception:
+        return default
+    return default if value is None else value
+
+
+def _session_hydrate_user(user):
+    """Hydrate auth session with required user fields and defensive fallbacks."""
+    user_id = _user_field(user, 'id')
+    username = _user_field(user, 'username', '') or ''
+    email = _user_field(user, 'email', None)
+    role = (_user_field(user, 'role', 'Civilian') or 'Civilian').strip() or 'Civilian'
+    platform_role = (_user_field(user, 'platform_role', None) or role).strip() or role
+
+    owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
+    is_owner_by_email = bool(owner_email and (email or '').strip().lower() == owner_email)
+    is_platform_owner = role == 'PlatformOwner' or platform_role == 'PlatformOwner' or is_owner_by_email
+
+    if is_platform_owner:
+        platform_role = 'PlatformOwner'
+
+    session['user_id'] = user_id
+    session['username'] = username
+    session['email'] = email
+    session['role'] = role
+    session['platform_role'] = platform_role
+    session['is_platform_owner'] = is_platform_owner
+    session['active_community_id'] = session.get('selected_community_id')
+
+    missing = [k for k in ('user_id', 'username', 'role', 'platform_role', 'is_platform_owner') if session.get(k) in (None, '')]
+    if missing:
+        logger.warning("Session hydration missing required fields user_id=%s missing=%s", user_id, missing)
+
+    session.modified = True
+    logger.info("Session created user_id=%s username=%s role=%s platform_role=%s is_platform_owner=%s",
+                user_id, username, role, platform_role, is_platform_owner)
+
+    return is_platform_owner
+
 # Production logging configuration
 if os.environ.get('FLASK_ENV') == 'production':
     logging.getLogger('werkzeug').setLevel(logging.WARNING)  # Reduce Flask request logging
@@ -2218,13 +2260,17 @@ def user_login():
 
     identifier_lower = identifier.lower()
     logger.info("Auth login attempt identifier=%s ip=%s", identifier_lower, request.remote_addr)
-    user = User.query.filter(
-        or_(func.lower(User.username) == identifier_lower, func.lower(User.email) == identifier_lower)
-    ).first()
+    username_filter = func.lower(User.username) == identifier_lower if hasattr(User, 'username') else None
+    email_filter = func.lower(User.email) == identifier_lower if hasattr(User, 'email') else None
+    filters = [f for f in (username_filter, email_filter) if f is not None]
+    if not filters:
+        logger.error("Auth login failed: user model missing username/email columns")
+        return jsonify({'success': False, 'error': 'Authentication unavailable', 'code': 'AUTH_UNAVAILABLE'}), 500
+    user = User.query.filter(or_(*filters)).first()
     if not user:
         logger.warning("Auth login failed: account not found identifier=%s ip=%s", identifier_lower, request.remote_addr)
         return jsonify({'success': False, 'error': 'Account not found', 'code': 'ACCOUNT_NOT_FOUND'}), 404
-    if not user.active:
+    if not bool(_user_field(user, 'active', True)):
         logger.warning("Auth login failed: inactive account user_id=%s ip=%s", user.id, request.remote_addr)
         return jsonify({'success': False, 'error': 'Account is inactive', 'code': 'ACCOUNT_INACTIVE'}), 403
     if not user.password_hash:
@@ -2238,6 +2284,7 @@ def user_login():
     user.last_login = datetime.utcnow()
     db.session.commit()
 
+    _session_hydrate_user(user)
     ensure_platform_owner(user)
 
     memberships = CommunityMember.query.filter_by(user_id=user.id, status='Active').all()
@@ -2268,8 +2315,8 @@ def user_login():
         'success': True,
         'user': {
             'id': user.id,
-            'username': user.username,
-            'role': user.role,
+            'username': _user_field(user, 'username', ''),
+            'role': _user_field(user, 'role', 'Civilian') or 'Civilian',
             'last_login': user.last_login.isoformat() if user.last_login else None
         },
         'communities': communities,
@@ -2305,6 +2352,7 @@ def user_register():
     db.session.add(user)
     db.session.commit()
 
+    _session_hydrate_user(user)
     ensure_platform_owner(user)
 
     return jsonify({
@@ -2346,8 +2394,8 @@ def user_session():
         'success': True,
         'user': {
             'id': user.id,
-            'username': user.username,
-            'role': user.role,
+            'username': _user_field(user, 'username', ''),
+            'role': _user_field(user, 'role', 'Civilian') or 'Civilian',
             'platform_role': getattr(user, 'platform_role', None) or user.role,
             'is_platform_owner': is_platform_owner(),
             'last_login': user.last_login.isoformat() if user.last_login else None
@@ -6109,20 +6157,7 @@ def ensure_platform_owner(user):
         db.session.commit()
         logger.info("PlatformOwner bootstrap normalized platform_role for user_id=%s", user.id)
 
-    session['user_id'] = user.id
-    session['username'] = user.username
-    session['email'] = user.email
-    session['role'] = user.role
-    effective_platform_role = (getattr(user, 'platform_role', None) or '').strip() or user.role
-    session['platform_role'] = effective_platform_role
-    session['is_platform_owner'] = user.role == 'PlatformOwner' or effective_platform_role == 'PlatformOwner'
-    session['active_community_id'] = session.get('selected_community_id')
-    if session['is_platform_owner']:
-        session['platform_role'] = 'PlatformOwner'
-    logger.info("Session created user_id=%s role=%s platform_role=%s", user.id, session.get('role'), session.get('platform_role'))
-    session.modified = True
-
-    return session['is_platform_owner']
+    return _session_hydrate_user(user)
 
 
 def normalize_community_role(role):
