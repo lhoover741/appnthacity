@@ -127,6 +127,15 @@ def bootstrap_schema():
                 logger.error('✗ Admin role migration failed')
                 return False
 
+            # Run admin password migration.
+            logger.info('Running admin password migration...')
+            from migrate_admin_password import migrate_admin_password
+            if migrate_admin_password():
+                logger.info('✓ Admin password migration completed')
+            else:
+                logger.error('✗ Admin password migration failed')
+                return False
+
             # Run diagnostic and legacy schema fix for civilian compatibility.
             logger.info('Running database diagnostic...')
             from database_diagnostic import diagnose_database
