@@ -346,7 +346,7 @@ async function refreshAuthNavigation() {
   const navs = document.querySelectorAll('.global-nav');
   if (!navs.length || !window.fetch) return;
   try {
-    const res = await fetch('/api/auth/session');
+    const res = await fetch('/api/auth/session', { credentials: 'include' });
     if (!res.ok) return;
     const data = await res.json();
     if (!data.success) return;
@@ -355,7 +355,7 @@ async function refreshAuthNavigation() {
       link.href = '#logout';
       link.addEventListener('click', async (event) => {
         event.preventDefault();
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
         window.location.href = '/login';
       }, { once: true });
     });

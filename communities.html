@@ -32,7 +32,7 @@
     const list = document.getElementById('communities-list');
     const onboarding = document.getElementById('community-onboarding');
     try {
-      const sessionRes = await fetch('/api/auth/session');
+      const sessionRes = await fetch('/api/auth/session', { credentials: 'include' });
       if (sessionRes.status === 401) {
         status.textContent = 'Please login or register to see your communities.';
         const loginLink = document.createElement('a');
@@ -46,6 +46,7 @@
         return;
       }
       const sessionData = await sessionRes.json();
+      if (sessionData?.user?.is_platform_owner) { window.location.href = '/admin'; return; }
       const communities = sessionData.communities || [];
       if (!communities.length) {
         status.textContent = 'No communities found for your account.';
