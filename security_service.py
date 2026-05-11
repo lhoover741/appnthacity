@@ -25,8 +25,14 @@ def hash_password(password):
     return generate_password_hash(password, method='pbkdf2:sha256')
 
 def verify_password(password_hash, password):
-    """Verify a password against its hash."""
-    return check_password_hash(password_hash, password)
+    """Verify a password against its hash with defensive legacy handling."""
+    if not password_hash or not password:
+        return False
+    try:
+        return check_password_hash(password_hash, password)
+    except (ValueError, TypeError):
+        logger.warning("Password verification failed due to unsupported/legacy hash format")
+        return False
 
 def require_role(*roles):
     """Decorator to require specific roles."""

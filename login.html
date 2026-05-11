@@ -35,11 +35,28 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
   button.textContent = 'Logging in…';
   status.textContent = '';
   const form = new FormData(event.target);
-  const res = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
-  const data = await res.json();
-  if (!res.ok || !data.success) { status.textContent = data.error || 'Login failed'; button.disabled = false; button.textContent = 'Login'; return; }
-  status.textContent = 'Login successful. Redirecting…';
-window.location.href = data.redirect_url || '/communities';
+  try {
+    const res = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      const errorByCode = {
+        INVALID_CREDENTIALS: 'Invalid credentials. Please check your username/email and password.',
+        ACCOUNT_NOT_FOUND: 'Account missing. Please register or verify your email/username.',
+        SESSION_EXPIRED: 'Session expired. Please log in again.',
+        AUTH_STATE_INVALID: 'Internal authentication error. Please contact support.',
+      };
+      status.textContent = errorByCode[data.code] || data.error || 'Login failed';
+      button.disabled = false;
+      button.textContent = 'Login';
+      return;
+    }
+    status.textContent = 'Login successful. Redirecting…';
+    window.location.href = data.redirect_url || '/communities';
+  } catch (err) {
+    status.textContent = 'Internal authentication error. Please try again.';
+    button.disabled = false;
+    button.textContent = 'Login';
+  }
 });
 document.getElementById('forgot-password-link').addEventListener('click', async (event) => {
   event.preventDefault();
