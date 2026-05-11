@@ -6349,16 +6349,19 @@ def platform_owner_recovery_reset_password():
 
 @app.route('/api/platform-admin/overview', methods=['GET'])
 def platform_admin_overview():
-    """Get platform admin overview with safe hydration and fallback values."""
+    """Get platform admin overview with defensive hydration and fallback values."""
     if not is_platform_owner():
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
     try:
-        logger.info('Fetching platform admin overview...')
+        request_id = str(uuid.uuid4())
+        user_id = session.get('user_id')
+        logger.info('[platform_overview] request_id=%s user_id=%s is_platform_owner=%s started',
+                    request_id, user_id, True)
         now = datetime.utcnow()
+        warnings = []
 
         def _safe_isoformat(dt):
-            """Safely convert a datetime to ISO string, returning None on failure."""
             if dt is None:
                 return None
             try:
@@ -6368,47 +6371,63 @@ def platform_admin_overview():
             except Exception:
                 return None
 
-        # --- Communities ---
-        logger.info('Hydrating communities...')
+        def _section_failed(section, err, warning_message):
+            logger.error('[platform_overview] request_id=%s section=%s failed=%s',
+                         request_id, section, err, exc_info=True)
+            warnings.append(warning_message)
+
+        def _safe_count(label, query_fn):
+            try:
+                return query_fn()
+            except Exception as e:
+                _section_failed(f'metrics.{label}', e, f'{label} metric failed')
+                return 0
+
+        logger.info('[platform_overview] request_id=%s section=communities started', request_id)
         community_rows = []
         try:
-            communities = Community.query.order_by(Community.created_at.desc()).all()
+            communities = Community.query.order_by(Community.name.asc()).all()
             for c in communities:
                 try:
+                    community_id = getattr(c, 'community_id', None)
                     active_sessions_count = 0
                     try:
                         active_sessions_count = UserSession.query.filter_by(
-                            tenant=c.community_id, active=True
+                            tenant=community_id, active=True
                         ).count()
                     except Exception as e:
-                        logger.warning(f'Could not count active sessions for community {c.community_id}: {e}')
+                        logger.warning('[platform_overview] request_id=%s community_id=%s active-session-count failed=%s',
+                                       request_id, community_id, e)
 
                     last_seen = None
                     try:
                         last_session = UserSession.query.filter_by(
-                            tenant=c.community_id
+                            tenant=community_id
                         ).order_by(UserSession.last_seen.desc()).first()
                         if last_session and last_session.last_seen:
                             last_seen = last_session.last_seen
                     except Exception as e:
-                        logger.warning(f'Could not fetch last session for community {c.community_id}: {e}')
+                        logger.warning('[platform_overview] request_id=%s community_id=%s last-session failed=%s',
+                                       request_id, community_id, e)
 
                     owner_username = 'Unknown'
                     try:
-                        if c.owner_user_id:
-                            owner_user = User.query.get(c.owner_user_id)
+                        if getattr(c, 'owner_user_id', None):
+                            owner_user = User.query.filter_by(id=c.owner_user_id).first()
                             if owner_user and owner_user.username:
                                 owner_username = owner_user.username
                     except Exception as e:
-                        logger.warning(f'Could not fetch owner for community {c.community_id}: {e}')
+                        logger.warning('[platform_overview] request_id=%s community_id=%s owner lookup failed=%s',
+                                       request_id, community_id, e)
 
                     member_count = 0
                     try:
                         member_count = CommunityMember.query.filter_by(
-                            community_id=c.community_id, status='Active'
+                            community_id=community_id, status='Active'
                         ).count()
                     except Exception as e:
-                        logger.warning(f'Could not count members for community {c.community_id}: {e}')
+                        logger.warning('[platform_overview] request_id=%s community_id=%s member-count failed=%s',
+                                       request_id, community_id, e)
 
                     if last_seen and (now - last_seen).total_seconds() < 300:
                         live_status = 'ONLINE'
@@ -6418,36 +6437,39 @@ def platform_admin_overview():
                         live_status = 'OFFLINE'
 
                     community_rows.append({
-                        'community_id': c.community_id,
+                        'community_id': community_id,
+                        'id': community_id,
                         'name': c.name or 'Unknown',
                         'slug': c.slug,
                         'cad_name': c.cad_name or c.name or 'Unknown',
+                        'invite': getattr(c, 'invite', None),
+                        'owner': owner_username,
                         'owner_username': owner_username,
-                        'member_count': member_count,
-                        'online_users': active_sessions_count,
+                        'members': member_count,
+                        'online': active_sessions_count,
                         'last_active': _safe_isoformat(last_seen),
                         'status': live_status or 'OFFLINE',
+                        'active': True,
                     })
                 except Exception as e:
-                    logger.warning(f'Error serializing community {getattr(c, "community_id", "unknown")}: {e}')
+                    logger.warning('[platform_overview] request_id=%s community_id=%s serialization failed=%s',
+                                   request_id, getattr(c, 'community_id', 'unknown'), e, exc_info=True)
                     continue
-            logger.info(f'Hydrated {len(community_rows)} communities')
+            logger.info('[platform_overview] request_id=%s section=communities success count=%s',
+                        request_id, len(community_rows))
         except Exception as e:
-            logger.error(f'Failed to hydrate communities: {e}', exc_info=True)
-            communities = []
+            _section_failed('communities', e, 'Community hydration failed')
 
-        # --- Users ---
-        logger.info('Hydrating users...')
+        logger.info('[platform_overview] request_id=%s section=users started', request_id)
         user_rows = []
         try:
-            users = User.query.order_by(User.created_at.desc()).limit(200).all()
+            users = User.query.order_by(User.id.desc()).limit(200).all()
             for u in users:
                 try:
-                    last_login_iso = _safe_isoformat(u.last_login)
-                    if u.last_login and (now - u.last_login).total_seconds() < 300:
+                    last_login = getattr(u, 'last_login', None)
+                    last_login_iso = _safe_isoformat(last_login)
+                    if last_login and (now - last_login).total_seconds() < 300:
                         online_status = 'ONLINE'
-                    elif u.last_login and (now - u.last_login).total_seconds() < 1800:
-                        online_status = 'IDLE'
                     else:
                         online_status = 'OFFLINE'
 
@@ -6459,34 +6481,39 @@ def platform_admin_overview():
                     except Exception as e:
                         logger.warning(f'Could not count sessions for user {u.id}: {e}')
 
+                    member = CommunityMember.query.filter_by(user_id=u.id, status='Active').first()
                     user_rows.append({
                         'id': u.id,
                         'username': u.username or 'Unknown',
                         'email': u.email or 'Unknown',
-                        'platform_role': u.role or 'User',
-                        'tenant_role': normalize_community_role((getattr(CommunityMember.query.filter_by(user_id=u.id, status='Active').first(), 'role', None))) or 'Unknown',
+                        'platform_role': getattr(u, 'platform_role', None) or getattr(u, 'role', None) or 'User',
+                        'role': getattr(u, 'role', None) or 'User',
+                        'community': getattr(member, 'community_id', None),
+                        'community_role': normalize_community_role(getattr(member, 'role', None)) or 'Unknown',
                         'last_login': last_login_iso,
                         'sessions': session_count,
-                        'session_count': session_count,
                         'status': online_status,
-                        'online_status': online_status,
                     })
                 except Exception as e:
-                    logger.warning(f'Error serializing user {getattr(u, "id", "unknown")}: {e}')
+                    logger.warning('[platform_overview] request_id=%s user_id=%s serialization failed=%s',
+                                   request_id, getattr(u, 'id', 'unknown'), e, exc_info=True)
                     continue
-            logger.info(f'Hydrated {len(user_rows)} users')
+            logger.info('[platform_overview] request_id=%s section=users success count=%s',
+                        request_id, len(user_rows))
         except Exception as e:
-            logger.error(f'Failed to hydrate users: {e}', exc_info=True)
-            users = []
+            _section_failed('users', e, 'User hydration failed')
 
-        # --- Activity feed ---
-        logger.info('Hydrating activity feed...')
+        logger.info('[platform_overview] request_id=%s section=activity started', request_id)
         recent_activity = []
-        try:
-            activity_logs = ActivityLog.query.order_by(
-                ActivityLog.created_at.desc()
-            ).limit(50).all()
-            for a in activity_logs:
+        activity_models = [globals().get(n) for n in ['PlatformActivityLog', 'PlatformAdminLog', 'ActivityLog', 'AuditLog']]
+        for model in [m for m in activity_models if m is not None]:
+            try:
+                rows = model.query.order_by(model.created_at.desc()).limit(50).all()
+            except Exception as e:
+                logger.warning('[platform_overview] request_id=%s activity source=%s failed=%s',
+                               request_id, getattr(model, '__name__', 'unknown'), e)
+                continue
+            for a in rows:
                 try:
                     recent_activity.append({
                         'id': getattr(a, 'log_id', None),
@@ -6500,61 +6527,40 @@ def platform_admin_overview():
                         'created_at': _safe_isoformat(getattr(a, 'created_at', None)),
                     })
                 except Exception as e:
-                    logger.warning(f'Error serializing activity log: {e}')
+                    logger.warning('[platform_overview] request_id=%s activity serialization failed=%s', request_id, e)
                     continue
-            logger.info(f'Hydrated {len(recent_activity)} activity logs')
-        except Exception as e:
-            logger.error(f'Failed to hydrate activity feed: {e}', exc_info=True)
+            if recent_activity:
+                break
+        if not recent_activity:
+            warnings.append('Activity hydration failed')
 
-        # --- Aggregate metrics (each wrapped independently) ---
-        def _safe_count(query_fn):
-            try:
-                return query_fn()
-            except Exception as e:
-                logger.warning(f'Count query failed: {e}')
-                return 0
-
-        total_communities = len(community_rows)
-        total_users = len(user_rows)
-        online_users = _safe_count(lambda: UserSession.query.filter_by(active=True).count())
-        active_sessions = online_users
-        total_arrests = _safe_count(lambda: Arrest.query.count())
-        total_warrants = _safe_count(lambda: Warrant.query.count())
-        total_civilians = _safe_count(lambda: Civilian.query.count())
-        total_businesses = _safe_count(lambda: Business.query.count())
-        total_officers = _safe_count(lambda: OfficerSession.query.count())
-        total_bolos = _safe_count(lambda: Bolo.query.count())
-        total_dispatch_calls = _safe_count(lambda: DispatchCall.query.count())
-        total_hearings = _safe_count(lambda: Hearing.query.count())
-        total_evidence_records = _safe_count(lambda: Evidence.query.count())
-
-        logger.info('Platform admin overview hydrated successfully')
-        return jsonify({'success': True, 'overview': {
-            'total_communities': total_communities,
-            'total_users': total_users,
-            'online_users': online_users,
-            'active_sessions': active_sessions,
-            'total_arrests': total_arrests,
-            'total_warrants': total_warrants,
-            'total_civilians': total_civilians,
-            'total_businesses': total_businesses,
-            'total_officers': total_officers,
-            'total_bolos': total_bolos,
-            'total_dispatch_calls': total_dispatch_calls,
-            'total_hearings': total_hearings,
-            'total_evidence_records': total_evidence_records,
+        metrics = {
+            'total_communities': _safe_count('total_communities', lambda: Community.query.count()),
+            'total_users': _safe_count('total_users', lambda: User.query.count()),
+            'online_users': _safe_count('online_users', lambda: UserSession.query.filter_by(active=True).count()),
+            'active_sessions': _safe_count('active_sessions', lambda: UserSession.query.filter_by(active=True).count()),
+            'total_officers': _safe_count('total_officers', lambda: OfficerSession.query.count()),
+            'total_warrants': _safe_count('total_warrants', lambda: Warrant.query.count()),
+            'total_arrests': _safe_count('total_arrests', lambda: Arrest.query.count()),
+            'total_businesses': _safe_count('total_businesses', lambda: Business.query.count()),
+            'platform_uptime': '0s',
+        }
+        response = {
+            'success': True,
+            'metrics': metrics,
             'communities': community_rows,
             'users': user_rows,
             'activity': recent_activity,
-        }})
+            'chart': {'labels': [], 'datasets': []},
+            'warnings': warnings,
+            'overview': {**metrics, 'communities': community_rows, 'users': user_rows, 'activity': recent_activity},
+        }
+        logger.info('[platform_overview] request_id=%s final_success=true warnings=%s', request_id, len(warnings))
+        return jsonify(response), 200
 
     except Exception as e:
-        logger.error(f'Platform admin overview failed: {e}', exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': 'Failed to load platform overview',
-            'details': str(e) if app.debug else 'Internal server error',
-        }), 500
+        logger.error('[platform_overview] unhandled failure error=%s', e, exc_info=True)
+        return jsonify({'success': False, 'error': 'Failed to load platform overview'}), 500
 
 
 @app.route('/api/platform-admin/users/<int:user_id>/reset-password', methods=['POST'])
