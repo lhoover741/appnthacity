@@ -470,6 +470,33 @@ def require_police_cad_access():
     return None
 
 
+def get_user_community_membership(user_id):
+    if not user_id:
+        return None, None
+    membership = CommunityMember.query.filter_by(user_id=user_id, status='Active').first()
+    if not membership:
+        return None, None
+    community = Community.query.filter_by(community_id=membership.community_id).first()
+    return membership, community
+
+
+def user_can_access_police_cad(owner, community_role):
+    if owner:
+        return True
+    normalized = normalize_community_role(community_role) if community_role else None
+    return normalized in {'PlatformOwner','CommunityOwner','CommunityAdmin','Owner','Admin','Police','Officer','Dispatch','Dispatcher','EMS'}
+
+
+def get_post_login_redirect(owner, community_slug, requires_community_setup):
+    if owner:
+        return '/admin'
+    if community_slug:
+        return f'/c/{community_slug}/'
+    if requires_community_setup:
+        return '/community-setup'
+    return '/dashboard'
+
+
 @app.errorhandler(500)
 def internal_error(error):
     """Handle internal server errors without exposing stack traces."""
@@ -2301,8 +2328,12 @@ def user_login():
     session['community_id'] = _user_field(user, 'community_id', None)
     session.modified = True
 
-    redirect_target = '/admin' if is_owner else '/communities'
-    requires_community_setup = False if is_owner else not bool(session.get('community_id'))
+    membership, community = get_user_community_membership(user.id)
+    community_id = _user_field(user, 'community_id', None) or (membership.community_id if membership else None)
+    community_slug = (community.slug if community else None) or session.get('selected_community_slug')
+    community_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
+    requires_community_setup = False if is_owner else not bool(community_id)
+    redirect_target = get_post_login_redirect(is_owner, community_slug, requires_community_setup)
 
     logger.info("Auth login success login_success=true user_id=%s username=%s role=%s platform_role=%s is_platform_owner=%s session_keys=%s redirect=%s session_modified=%s",
                 user.id, session.get('username'), session.get('role'), session.get('platform_role'), is_owner, sorted(list(session.keys())), redirect_target, session.modified)
@@ -2316,10 +2347,13 @@ def user_login():
             'role': _user_field(user, 'role', 'Civilian') or 'Civilian',
             'platform_role': _user_field(user, 'platform_role', None),
             'is_platform_owner': is_owner,
-            'community_id': _user_field(user, 'community_id', None),
+            'community_id': community_id,
+            'community_slug': community_slug,
+            'community_role': community_role,
             'requires_community_setup': requires_community_setup,
+            'can_access_police_cad': user_can_access_police_cad(is_owner, community_role),
         },
-        'redirect': '/admin' if is_owner else '/communities'
+        'redirect': redirect_target
     })
 
 
@@ -2383,7 +2417,12 @@ def user_session():
         return jsonify({'success': False, 'authenticated': False, 'error': 'User not found or inactive', 'code': 'USER_INACTIVE'}), 401
 
     owner = is_platform_owner()
-    redirect_target = '/admin' if owner else '/communities'
+    membership, community = get_user_community_membership(user.id)
+    community_id = _user_field(user, 'community_id', None) or (membership.community_id if membership else None)
+    community_slug = (community.slug if community else None) or session.get('selected_community_slug')
+    community_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
+    requires_community_setup = False if owner else not bool(community_id)
+    redirect_target = get_post_login_redirect(owner, community_slug, requires_community_setup)
     logger.info("Auth session check has_user_id=true user_id=%s authenticated=true is_platform_owner=%s", user_id, owner)
     return jsonify({
         'success': True,
@@ -2395,8 +2434,11 @@ def user_session():
             'role': _user_field(user, 'role', 'Civilian') or 'Civilian',
             'platform_role': _user_field(user, 'platform_role', None),
             'is_platform_owner': owner,
-            'community_id': _user_field(user, 'community_id', None),
-            'requires_community_setup': False if owner else not bool(_user_field(user, 'community_id', None))
+            'community_id': community_id,
+            'community_slug': community_slug,
+            'community_role': community_role,
+            'requires_community_setup': requires_community_setup,
+            'can_access_police_cad': user_can_access_police_cad(owner, community_role),
         },
         'redirect': redirect_target,
     })
@@ -6018,8 +6060,7 @@ def join_community_page():
 
 @app.route('/c/<community_slug>/')
 def community_home(community_slug):
-    # Tenant entry point should always land in full CAD/MDT shell.
-    return frontend_page('police.html')
+    return frontend_page('community.html')
 
 
 @app.route('/c/<community_slug>/<page>')

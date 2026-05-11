@@ -128,10 +128,10 @@ function enforceCadRoleVisibility() {
     main.innerHTML = `
       <section class="container section">
         <div class="card notice-card">
-          <h1>Police CAD Restricted</h1>
+          <h1>Police CAD access required</h1>
           <p>Regular civilian accounts can use civilian registry, DMV, businesses, applications, complaints, and public rules. Police CAD tools require Owner, Admin, Police, EMS, Dispatch, DOJ, Staff, or approved LEO access.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="civilian.html">Civilian Registry</a>
+            <a class="button button-primary" href="/c/${CURRENT_COMMUNITY_SLUG}/">Return to Community Home</a>
             <a class="button button-secondary" href="dmv.html">DMV</a>
             <a class="button button-secondary" href="businesses.html">Businesses</a>
           </div>
