@@ -5862,9 +5862,41 @@ def reset_password_with_token():
 def platform_admin_overview():
     if not is_platform_owner():
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    communities = Community.query.order_by(Community.created_at.desc()).all()
+    users = User.query.order_by(User.created_at.desc()).all()
+    now = datetime.utcnow()
+
+    community_rows = []
+    for c in communities:
+        active_sessions = UserSession.query.filter_by(tenant=c.community_id, active=True).all()
+        last_session = UserSession.query.filter_by(tenant=c.community_id).order_by(UserSession.last_seen.desc()).first()
+        owner_member = CommunityMember.query.filter_by(community_id=c.community_id, role='Owner', status='Active').first()
+        owner_user = User.query.get(owner_member.user_id) if owner_member else None
+        last_seen = last_session.last_seen if last_session and last_session.last_seen else None
+        if last_seen and (now - last_seen).total_seconds() < 300:
+            live_status = 'ONLINE'
+        elif last_seen and (now - last_seen).total_seconds() < 1800:
+            live_status = 'IDLE'
+        else:
+            live_status = 'OFFLINE'
+        community_rows.append({
+            'community_id': c.community_id,
+            'name': c.name,
+            'cad_name': c.cad_name,
+            'invite_code': c.invite_code,
+            'owner_username': owner_user.username if owner_user else None,
+            'member_count': CommunityMember.query.filter_by(community_id=c.community_id, status='Active').count(),
+            'online_users': len(active_sessions),
+            'last_active': last_seen.isoformat() if last_seen else None,
+            'status': live_status,
+        })
+
+    recent_activity = [activity_log_to_dict(a) for a in ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(50).all()]
+
     return jsonify({'success': True, 'overview': {
-        'total_communities': Community.query.count(),
-        'total_users': User.query.count(),
+        'total_communities': len(communities),
+        'total_users': len(users),
         'online_users': UserSession.query.filter_by(active=True).count(),
         'active_sessions': UserSession.query.filter_by(active=True).count(),
         'total_arrests': Arrest.query.count(),
@@ -5872,6 +5904,20 @@ def platform_admin_overview():
         'total_civilians': Civilian.query.count(),
         'total_businesses': Business.query.count(),
         'total_officers': OfficerSession.query.count(),
+        'total_bolos': Bolo.query.count(),
+        'total_dispatch_calls': DispatchCall.query.count(),
+        'total_hearings': Hearing.query.count(),
+        'total_evidence_records': Evidence.query.count(),
+        'communities': community_rows,
+        'users': [{
+            'id': u.id,
+            'username': u.username,
+            'email': u.email,
+            'platform_role': u.role,
+            'last_login': u.last_login.isoformat() if u.last_login else None,
+            'session_count': UserSession.query.filter_by(user_id=u.id, active=True).count(),
+        } for u in users],
+        'activity': recent_activity,
     }})
 
 
@@ -5895,12 +5941,34 @@ def community_admin_overview():
     membership = CommunityMember.query.filter_by(user_id=session.get('user_id'), community_id=community_id, status='Active').first()
     if not membership or membership.role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
+
+    community = Community.query.filter_by(community_id=community_id).first()
+    members = CommunityMember.query.filter_by(community_id=community_id, status='Active').all()
+    invites = CommunityInvite.query.filter_by(community_id=community_id, active=True).all()
+    officer_sessions = scoped_query(OfficerSession, community_id).order_by(OfficerSession.updated_at.desc()).all()
+    activities = [activity_log_to_dict(a) for a in scoped_query(ActivityLog, community_id).order_by(ActivityLog.created_at.desc()).limit(50).all()]
+
+    user_map = {u.id: u for u in User.query.filter(User.id.in_([m.user_id for m in members])).all()} if members else {}
+    session_map = {s.user_id: s for s in UserSession.query.filter(UserSession.user_id.in_(list(user_map.keys())), UserSession.active.is_(True)).all()} if user_map else {}
+
     return jsonify({'success': True, 'overview': {
-        'community': Community.query.filter_by(community_id=community_id).first().to_dict(),
-        'total_members': CommunityMember.query.filter_by(community_id=community_id, status='Active').count(),
+        'community': community.to_dict() if community else {'community_id': community_id},
+        'total_members': len(members),
         'online_members': UserSession.query.filter_by(tenant=community_id, active=True).count(),
         'officers': OfficerSession.query.filter_by(community_id=community_id).count(),
         'civilians': Civilian.query.filter_by(community_id=community_id).count(),
         'active_calls': DispatchCall.query.filter_by(community_id=community_id, status='Active').count(),
         'active_warrants': Warrant.query.filter_by(community_id=community_id, warrant_status='Active').count(),
+        'members': [{
+            'user_id': m.user_id,
+            'username': user_map.get(m.user_id).username if user_map.get(m.user_id) else f'user-{m.user_id}',
+            'role': m.role,
+            'callsign': None,
+            'department': None,
+            'last_active': session_map.get(m.user_id).last_seen.isoformat() if session_map.get(m.user_id) and session_map.get(m.user_id).last_seen else None,
+            'status': 'ONLINE' if session_map.get(m.user_id) else 'OFFLINE',
+        } for m in members],
+        'invites': [i.to_dict() for i in invites],
+        'activity': activities,
+        'officer_sessions': [officer_session_response(s) for s in officer_sessions],
     }})
