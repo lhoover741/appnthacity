@@ -62,7 +62,7 @@ from models import (
     ActivityLog, Bolo, OfficerSession, Alert, RadioLog,
     ServerStatus, Inmate, Hearing, DispatchCall,
     KnownAssociate, Business, Citation, JailBooking,
-    UseOfForceReport, OfficerNote, CaseFile,
+    UseOfForceReport, OfficerNote, CaseFile, CaseCharge, CadAuditLog,
     AIGenerationLog, AuditLog,
     Community, CommunityMember, CommunityInvite,
     PlatformAdminLog, PlatformActivityLog, PasswordResetToken, CommunityStatus, UserSession
@@ -638,6 +638,21 @@ def ensure_arrest_automation_schema():
     inspector = sa_inspect(db.engine)
     dialect = db.engine.dialect.name
     column_specs = {
+        'dispatch_calls': {
+            'call_id': 'VARCHAR(64)',
+            'community_id': 'VARCHAR(64)',
+            'caller_name': 'VARCHAR(255)',
+            'phone': 'VARCHAR(64)',
+            'location': 'TEXT',
+            'description': 'TEXT',
+            'call_type': 'VARCHAR(255)',
+            'priority': 'VARCHAR(64)',
+            'status': 'VARCHAR(64)',
+            'assigned_unit': 'VARCHAR(255)',
+            'notes': 'TEXT',
+            'created_at': 'TIMESTAMP',
+            'updated_at': 'TIMESTAMP',
+        },
         'arrests': {
             'arrest_id': 'VARCHAR(64)',
             'civilian_id': 'VARCHAR(64)',
@@ -692,6 +707,30 @@ def ensure_arrest_automation_schema():
         },
         'inmates': {
             'civilian_id': 'VARCHAR(64)',
+        },
+        'case_files': {
+            'case_number': 'VARCHAR(64)',
+            'title': 'VARCHAR(255)',
+            'case_type': 'VARCHAR(64)',
+            'priority': 'VARCHAR(64)',
+            'location': 'TEXT',
+            'involved_civilians': 'TEXT',
+            'involved_officers': 'TEXT',
+            'linked_911_call_id': 'VARCHAR(64)',
+            'linked_arrest_id': 'VARCHAR(64)',
+            'linked_warrant_id': 'VARCHAR(64)',
+            'linked_evidence_ids': 'TEXT',
+            'report_notes': 'TEXT',
+            'created_by': 'VARCHAR(255)',
+            'assigned_to': 'VARCHAR(255)',
+        },
+        'evidence': {
+            'evidence_type': 'VARCHAR(128)',
+            'officer': 'VARCHAR(255)',
+            'clip_link': 'TEXT',
+            'screenshot_link': 'TEXT',
+            'storage_status': 'VARCHAR(64)',
+            'chain_of_custody': 'TEXT',
         },
     }
     for table, columns in column_specs.items():
@@ -5839,6 +5878,552 @@ def release_evidence_route(evidence_id):
         logger.error(f'Failed to release evidence: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+
+# ---------------------------------------------------------------------------
+# Tenant-scoped CAD Case Workflow Routes
+# ---------------------------------------------------------------------------
+
+CASE_TYPES = {'incident', 'arrest', 'warrant', 'use_of_force', 'court'}
+CASE_STATUSES_CAD = {'open', 'pending_review', 'closed', 'archived'}
+CHARGE_SEVERITIES = {'infraction', 'misdemeanor', 'felony'}
+
+
+def _cad_json_error(message, status=400):
+    return jsonify({'success': False, 'error': message, 'request_id': getattr(g, 'request_id', None)}), status
+
+
+def _require_cad_community():
+    denied = require_police_cad_access()
+    if denied:
+        return None, denied
+    community_id = get_current_community_id()
+    if not community_id:
+        return None, _cad_json_error('community_id is required for CAD data access', 400)
+    return community_id, None
+
+
+def _actor_name():
+    return session.get('username') or session.get('email') or str(session.get('user_id') or 'system')
+
+
+def _cad_audit(action, community_id, case_id=None, details=None):
+    audit = CadAuditLog(
+        audit_id=f"CAD-AUD-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3)}",
+        acting_user_id=session.get('user_id'),
+        community_id=community_id,
+        case_id=case_id,
+        action=action,
+        request_id=getattr(g, 'request_id', None),
+        ip_address=getattr(g, 'client_ip', None) or request.remote_addr,
+        details=json.dumps(details or {}, default=str),
+    )
+    db.session.add(audit)
+
+
+def _split_csv(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [part.strip() for part in str(value).split(',') if part.strip()]
+
+
+def _join_values(value):
+    if isinstance(value, list):
+        return ','.join(str(v).strip() for v in value if str(v).strip())
+    return str(value or '').strip()
+
+
+def _case_public_id(case):
+    return case.case_number or case.case_id
+
+
+def _case_to_dict(case, include_related=False):
+    charges = scoped_query(CaseCharge, case.community_id).filter_by(case_id=case.case_id).order_by(CaseCharge.created_at.asc()).all()
+    linked_evidence = _split_csv(case.linked_evidence_ids or case.evidence_ids)
+    payload = {
+        'id': case.case_id,
+        'case_id': case.case_id,
+        'case_number': _case_public_id(case),
+        'community_id': case.community_id,
+        'title': case.title or '',
+        'type': case.case_type or 'incident',
+        'status': (case.status or 'open').lower(),
+        'priority': case.priority or 'medium',
+        'location': case.location or '',
+        'involved_civilians': _split_csv(case.involved_civilians or case.defendant_civilian_id),
+        'involved_officers': _split_csv(case.involved_officers),
+        'linked_911_call_id': case.linked_911_call_id or '',
+        'linked_arrest_id': case.linked_arrest_id or case.arrest_id or '',
+        'linked_warrant_id': case.linked_warrant_id or '',
+        'linked_evidence_ids': linked_evidence,
+        'report_notes': case.report_notes or case.prosecutor_notes or '',
+        'created_by': case.created_by or '',
+        'assigned_to': case.assigned_to or '',
+        'created_at': case.created_at.isoformat() if case.created_at else None,
+        'updated_at': case.updated_at.isoformat() if case.updated_at else None,
+        'charges': [_charge_to_dict(c) for c in charges],
+    }
+    if include_related:
+        payload['evidence'] = [_evidence_workflow_to_dict(e) for e in scoped_query(Evidence, case.community_id).filter_by(case_number=_case_public_id(case)).order_by(Evidence.created_at.desc()).all()]
+    return payload
+
+
+def _charge_to_dict(charge):
+    return {
+        'charge_id': charge.charge_id,
+        'case_id': charge.case_id,
+        'charge_name': charge.charge_name,
+        'penal_code': charge.penal_code or '',
+        'severity': charge.severity or 'misdemeanor',
+        'counts': charge.counts or 1,
+        'recommended_fine': charge.recommended_fine or '',
+        'recommended_jail_time': charge.recommended_jail_time or '',
+        'notes': charge.notes or '',
+        'created_at': charge.created_at.isoformat() if charge.created_at else None,
+        'updated_at': charge.updated_at.isoformat() if charge.updated_at else None,
+    }
+
+
+def _evidence_workflow_to_dict(evidence):
+    return {
+        'evidence_id': evidence.evidence_id,
+        'case_number': evidence.case_number or '',
+        'evidence_type': evidence.evidence_type or 'Other',
+        'description': evidence.evidence_description or '',
+        'officer': evidence.officer or evidence.collected_by or '',
+        'clip_link': evidence.clip_link or '',
+        'screenshot_link': evidence.screenshot_link or '',
+        'storage_status': evidence.storage_status or evidence.status or 'Logged',
+        'chain_of_custody': evidence.chain_of_custody or evidence.notes or '',
+        'created_at': evidence.created_at.isoformat() if evidence.created_at else None,
+        'updated_at': evidence.updated_at.isoformat() if evidence.updated_at else None,
+    }
+
+
+def _apply_case_payload(case, data, creating=False):
+    case.case_number = case.case_number or data.get('case_number') or case.case_id
+    case.title = (data.get('title') or case.title or 'Untitled CAD Case').strip()
+    case.case_type = (data.get('type') or data.get('case_type') or case.case_type or 'incident').strip().lower()
+    if case.case_type not in CASE_TYPES:
+        case.case_type = 'incident'
+    case.status = (data.get('status') or case.status or 'open').strip().lower()
+    if case.status not in CASE_STATUSES_CAD:
+        case.status = 'open'
+    case.priority = (data.get('priority') or case.priority or 'medium').strip()
+    case.location = data.get('location', case.location) or ''
+    case.involved_civilians = _join_values(data.get('involved_civilians', case.involved_civilians or case.defendant_civilian_id))
+    case.involved_officers = _join_values(data.get('involved_officers', case.involved_officers))
+    case.linked_911_call_id = data.get('linked_911_call_id', case.linked_911_call_id) or ''
+    case.linked_arrest_id = data.get('linked_arrest_id', data.get('arrest_id', case.linked_arrest_id or case.arrest_id)) or ''
+    case.linked_warrant_id = data.get('linked_warrant_id', case.linked_warrant_id) or ''
+    case.linked_evidence_ids = _join_values(data.get('linked_evidence_ids', case.linked_evidence_ids or case.evidence_ids))
+    case.evidence_ids = case.linked_evidence_ids
+    case.arrest_id = case.linked_arrest_id
+    case.defendant_civilian_id = _split_csv(case.involved_civilians)[0] if _split_csv(case.involved_civilians) else case.defendant_civilian_id
+    case.report_notes = data.get('report_notes', data.get('notes', case.report_notes)) or ''
+    case.charges = data.get('charges', case.charges) or case.charges
+    case.created_by = case.created_by or data.get('created_by') or _actor_name()
+    case.assigned_to = data.get('assigned_to', case.assigned_to) or ''
+    case.updated_at = datetime.utcnow()
+    if creating and not case.created_at:
+        case.created_at = datetime.utcnow()
+
+
+@app.route('/api/cad/cases', methods=['GET'])
+def cad_cases_list():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    status = request.args.get('status')
+    query = scoped_query(CaseFile, community_id)
+    if status:
+        query = query.filter(func.lower(CaseFile.status) == status.lower())
+    cases = query.order_by(CaseFile.created_at.desc()).limit(200).all()
+    return jsonify({'success': True, 'cases': [_case_to_dict(case) for case in cases]})
+
+
+@app.route('/api/cad/cases', methods=['POST'])
+def cad_cases_create():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    case_number = data.get('case_number') or f"CASE-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}"
+    case = CaseFile(community_id=community_id, case_id=case_number, case_number=case_number, created_at=datetime.utcnow())
+    _apply_case_payload(case, data, creating=True)
+    db.session.add(case)
+    _cad_audit('case_created', community_id, case.case_id, {'case_number': case.case_number})
+    db.session.commit()
+    return jsonify({'success': True, 'case': _case_to_dict(case, include_related=True), 'case_number': _case_public_id(case)}), 201
+
+
+@app.route('/api/cad/cases/<case_id>', methods=['GET'])
+def cad_cases_get(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    return jsonify({'success': True, 'case': _case_to_dict(case, include_related=True)})
+
+
+@app.route('/api/cad/cases/<case_id>', methods=['PATCH'])
+def cad_cases_patch(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    _apply_case_payload(case, request.get_json(silent=True) or {})
+    _cad_audit('case_updated', community_id, case.case_id)
+    db.session.commit()
+    return jsonify({'success': True, 'case': _case_to_dict(case, include_related=True)})
+
+
+@app.route('/api/cad/cases/<case_id>/close', methods=['POST'])
+def cad_cases_close(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    data = request.get_json(silent=True) or {}
+    case.status = 'closed'
+    case.outcome = data.get('outcome') or data.get('notes') or case.outcome
+    case.updated_at = datetime.utcnow()
+    _cad_audit('case_closed', community_id, case.case_id)
+    db.session.commit()
+    return jsonify({'success': True, 'case': _case_to_dict(case, include_related=True)})
+
+
+@app.route('/api/cad/911-calls/<call_id>', methods=['PATCH'])
+def cad_911_update(call_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    call = scoped_query(DispatchCall, community_id).filter_by(call_id=call_id).first()
+    if not call:
+        return _cad_json_error('911 call not found', 404)
+    if 'assigned_unit' in data or 'assignedUnit' in data or 'units' in data:
+        units = data.get('assigned_unit') or data.get('assignedUnit') or data.get('units')
+        call.assigned_unit = ','.join(units) if isinstance(units, list) else str(units or '')
+    if 'status' in data:
+        call.status = data.get('status') or call.status
+    if 'notes' in data or 'dispatch_notes' in data:
+        note = data.get('notes') or data.get('dispatch_notes') or ''
+        call.notes = ((call.notes or '') + f"\n[{datetime.utcnow().isoformat()}] {note}").strip()
+    if 'location' in data:
+        call.location = data.get('location') or call.location
+    if data.get('resolved') or data.get('status') == 'Resolved':
+        call.status = 'Resolved'
+    call.updated_at = datetime.utcnow()
+    _cad_audit('911_call_updated', community_id, None, {'call_id': call.call_id})
+    db.session.commit()
+    return jsonify({'success': True, 'call_id': call.call_id, 'status': call.status})
+
+
+@app.route('/api/cad/911-calls/<call_id>/convert-to-case', methods=['POST'])
+def cad_911_convert_to_case(call_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    call = scoped_query(DispatchCall, community_id).filter_by(call_id=call_id).first()
+    if not call:
+        return _cad_json_error('911 call not found', 404)
+    existing = scoped_query(CaseFile, community_id).filter_by(linked_911_call_id=call.call_id).first()
+    if existing:
+        return jsonify({'success': True, 'case_number': _case_public_id(existing), 'redirect': f'/c/{getattr(g, "community", None).slug if getattr(g, "community", None) else ""}/cad?case={_case_public_id(existing)}', 'case': _case_to_dict(existing)})
+    case_number = f"CASE-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}"
+    case = CaseFile(
+        community_id=community_id,
+        case_id=case_number,
+        case_number=case_number,
+        title=data.get('title') or f"{call.priority or '911'} Incident - {call.location or 'Unknown Location'}",
+        case_type='incident',
+        status='open',
+        priority=data.get('priority') or call.priority or 'medium',
+        location=data.get('location') or call.location or '',
+        involved_officers=call.assigned_unit or '',
+        linked_911_call_id=call.call_id,
+        report_notes=data.get('notes') or call.description or '',
+        created_by=_actor_name(),
+        assigned_to=call.assigned_unit or '',
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    call.status = data.get('call_status') or 'Converted'
+    call.updated_at = datetime.utcnow()
+    db.session.add(case)
+    _cad_audit('call_converted', community_id, case.case_id, {'call_id': call.call_id})
+    db.session.commit()
+    slug = getattr(getattr(g, 'community', None), 'slug', '')
+    return jsonify({'success': True, 'case_number': _case_public_id(case), 'redirect': f'/c/{slug}/cad?case={_case_public_id(case)}', 'case': _case_to_dict(case, include_related=True)})
+
+
+@app.route('/api/cad/cases/<case_id>/charges', methods=['POST'])
+def cad_case_add_charge(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    data = request.get_json(silent=True) or {}
+    if not data.get('charge_name'):
+        return _cad_json_error('charge_name is required', 400)
+    charge = CaseCharge(
+        charge_id=f"CHG-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(2).upper()}",
+        community_id=community_id,
+        case_id=case.case_id,
+        charge_name=data.get('charge_name'),
+        penal_code=data.get('penal_code') or '',
+        severity=(data.get('severity') or 'misdemeanor').lower() if (data.get('severity') or 'misdemeanor').lower() in CHARGE_SEVERITIES else 'misdemeanor',
+        counts=int(data.get('counts') or 1),
+        recommended_fine=str(data.get('recommended_fine') or ''),
+        recommended_jail_time=str(data.get('recommended_jail_time') or ''),
+        notes=data.get('notes') or '',
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(charge)
+    case.charges = '\n'.join([line for line in [case.charges, f"{charge.counts}x {charge.penal_code} {charge.charge_name}".strip()] if line])
+    case.updated_at = datetime.utcnow()
+    _cad_audit('charge_added', community_id, case.case_id, {'charge_id': charge.charge_id})
+    db.session.commit()
+    return jsonify({'success': True, 'charge': _charge_to_dict(charge)}), 201
+
+
+@app.route('/api/cad/cases/<case_id>/charges/<charge_id>', methods=['PATCH', 'DELETE'])
+def cad_case_charge_mutate(case_id, charge_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+    charge = scoped_query(CaseCharge, community_id).filter_by(case_id=case.case_id if case else '', charge_id=charge_id).first()
+    if not case or not charge:
+        return _cad_json_error('Charge not found', 404)
+    if request.method == 'DELETE':
+        db.session.delete(charge)
+        _cad_audit('charge_deleted', community_id, case.case_id, {'charge_id': charge_id})
+        db.session.commit()
+        return jsonify({'success': True})
+    data = request.get_json(silent=True) or {}
+    for field in ['charge_name', 'penal_code', 'recommended_fine', 'recommended_jail_time', 'notes']:
+        if field in data:
+            setattr(charge, field, str(data.get(field) or ''))
+    if 'severity' in data and str(data['severity']).lower() in CHARGE_SEVERITIES:
+        charge.severity = str(data['severity']).lower()
+    if 'counts' in data:
+        charge.counts = int(data.get('counts') or 1)
+    charge.updated_at = datetime.utcnow()
+    _cad_audit('charge_updated', community_id, case.case_id, {'charge_id': charge_id})
+    db.session.commit()
+    return jsonify({'success': True, 'charge': _charge_to_dict(charge)})
+
+
+@app.route('/api/cad/cases/<case_id>/evidence', methods=['GET', 'POST'])
+def cad_case_evidence(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    if request.method == 'GET':
+        evidence = scoped_query(Evidence, community_id).filter_by(case_number=_case_public_id(case)).order_by(Evidence.created_at.desc()).all()
+        return jsonify({'success': True, 'evidence': [_evidence_workflow_to_dict(e) for e in evidence]})
+    data = request.get_json(silent=True) or {}
+    evidence = Evidence(
+        community_id=community_id,
+        evidence_id=data.get('evidence_id') or f"EV-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}",
+        case_number=_case_public_id(case),
+        evidence_type=data.get('evidence_type') or 'Other',
+        evidence_description=data.get('description') or data.get('evidence_description') or '',
+        collected_by=data.get('officer') or _actor_name(),
+        officer=data.get('officer') or _actor_name(),
+        clip_link=data.get('clip_link') or '',
+        screenshot_link=data.get('screenshot_link') or '',
+        storage_status=data.get('storage_status') or 'Logged',
+        chain_of_custody=data.get('chain_of_custody') or f"[{datetime.utcnow().isoformat()}] Logged by {_actor_name()}",
+        status=data.get('storage_status') or 'Logged',
+        notes=data.get('notes') or '',
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(evidence)
+    ids = set(_split_csv(case.linked_evidence_ids or case.evidence_ids))
+    ids.add(evidence.evidence_id)
+    case.linked_evidence_ids = ','.join(sorted(ids))
+    case.evidence_ids = case.linked_evidence_ids
+    case.updated_at = datetime.utcnow()
+    _cad_audit('evidence_added', community_id, case.case_id, {'evidence_id': evidence.evidence_id})
+    db.session.commit()
+    return jsonify({'success': True, 'evidence': _evidence_workflow_to_dict(evidence)}), 201
+
+
+@app.route('/api/cad/evidence/<evidence_id>', methods=['PATCH'])
+def cad_evidence_patch(evidence_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    evidence = scoped_query(Evidence, community_id).filter_by(evidence_id=evidence_id).first()
+    if not evidence:
+        return _cad_json_error('Evidence not found', 404)
+    data = request.get_json(silent=True) or {}
+    mapping = {'description': 'evidence_description'}
+    for field in ['evidence_type', 'officer', 'clip_link', 'screenshot_link', 'storage_status', 'chain_of_custody', 'notes']:
+        if field in data:
+            setattr(evidence, field, data.get(field) or '')
+    if 'description' in data:
+        evidence.evidence_description = data.get('description') or ''
+    evidence.collected_by = evidence.officer or evidence.collected_by
+    evidence.status = evidence.storage_status or evidence.status
+    evidence.updated_at = datetime.utcnow()
+    _cad_audit('evidence_updated', community_id, None, {'evidence_id': evidence_id})
+    db.session.commit()
+    return jsonify({'success': True, 'evidence': _evidence_workflow_to_dict(evidence)})
+
+
+def _case_or_404_for_link(case_id, community_id):
+    return scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id)).first()
+
+
+@app.route('/api/cad/cases/<case_id>/create-warrant', methods=['POST'])
+def cad_case_create_warrant(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = _case_or_404_for_link(case_id, community_id)
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    data = request.get_json(silent=True) or {}
+    warrant = Warrant(
+        community_id=community_id,
+        warrant_id=data.get('warrant_id') or f"WAR-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}",
+        civilian_id=data.get('civilian_id') or (case.defendant_civilian_id or (_split_csv(case.involved_civilians)[0] if _split_csv(case.involved_civilians) else '')),
+        warrant_name=data.get('warrant_name') or case.title or _case_public_id(case),
+        warrant_charges=data.get('warrant_charges') or case.charges or '',
+        warrant_issuer=data.get('warrant_issuer') or _actor_name(),
+        warrant_notes=data.get('warrant_notes') or case.report_notes or '',
+        warrant_status=data.get('warrant_status') or 'Active',
+        justification=data.get('justification') or f"Probable cause linked to case {_case_public_id(case)}.",
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(warrant)
+    case.linked_warrant_id = warrant.warrant_id
+    case.updated_at = datetime.utcnow()
+    _cad_audit('warrant_created', community_id, case.case_id, {'warrant_id': warrant.warrant_id})
+    db.session.commit()
+    return jsonify({'success': True, 'warrant': warrant_to_dict(warrant), 'case': _case_to_dict(case)})
+
+
+@app.route('/api/cad/cases/<case_id>/create-arrest', methods=['POST'])
+def cad_case_create_arrest(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = _case_or_404_for_link(case_id, community_id)
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    data = request.get_json(silent=True) or {}
+    arrest = Arrest(
+        community_id=community_id,
+        arrest_id=data.get('arrest_id') or f"ARR-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}",
+        civilian_id=data.get('civilian_id') or case.defendant_civilian_id or '',
+        suspect_name=data.get('suspect_name') or data.get('suspectName') or '',
+        charges=data.get('charges') or case.charges or '',
+        arresting_officer=data.get('arresting_officer') or _actor_name(),
+        arrest_location=data.get('arrest_location') or case.location or '',
+        evidence_attached=data.get('evidence_attached') or case.linked_evidence_ids or '',
+        report_notes=data.get('report_notes') or case.report_notes or '',
+        narrative=data.get('narrative') or case.report_notes or '',
+        status=data.get('status') or 'Active',
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(arrest)
+    case.linked_arrest_id = arrest.arrest_id
+    case.arrest_id = arrest.arrest_id
+    case.updated_at = datetime.utcnow()
+    _cad_audit('arrest_created', community_id, case.case_id, {'arrest_id': arrest.arrest_id})
+    db.session.commit()
+    return jsonify({'success': True, 'arrest': arrest_to_dict(arrest), 'case': _case_to_dict(case)})
+
+
+@app.route('/api/cad/cases/<case_id>/link-warrant', methods=['POST'])
+def cad_case_link_warrant(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = _case_or_404_for_link(case_id, community_id)
+    data = request.get_json(silent=True) or {}
+    warrant = scoped_query(Warrant, community_id).filter_by(warrant_id=data.get('warrant_id')).first()
+    if not case or not warrant:
+        return _cad_json_error('Case or warrant not found', 404)
+    if data.get('warrant_status'):
+        warrant.warrant_status = data.get('warrant_status')
+    case.linked_warrant_id = warrant.warrant_id
+    case.updated_at = warrant.updated_at = datetime.utcnow()
+    _cad_audit('warrant_linked', community_id, case.case_id, {'warrant_id': warrant.warrant_id})
+    db.session.commit()
+    return jsonify({'success': True, 'case': _case_to_dict(case), 'warrant': warrant_to_dict(warrant)})
+
+
+@app.route('/api/cad/cases/<case_id>/link-arrest', methods=['POST'])
+def cad_case_link_arrest(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = _case_or_404_for_link(case_id, community_id)
+    data = request.get_json(silent=True) or {}
+    arrest = scoped_query(Arrest, community_id).filter_by(arrest_id=data.get('arrest_id')).first()
+    if not case or not arrest:
+        return _cad_json_error('Case or arrest not found', 404)
+    if data.get('status'):
+        arrest.status = data.get('status')
+    case.linked_arrest_id = arrest.arrest_id
+    case.arrest_id = arrest.arrest_id
+    case.updated_at = arrest.updated_at = datetime.utcnow()
+    _cad_audit('arrest_linked', community_id, case.case_id, {'arrest_id': arrest.arrest_id})
+    db.session.commit()
+    return jsonify({'success': True, 'case': _case_to_dict(case), 'arrest': arrest_to_dict(arrest)})
+
+
+@app.route('/api/cad/cases/<case_id>/court-packet', methods=['GET'])
+def cad_case_court_packet(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = _case_or_404_for_link(case_id, community_id)
+    if not case:
+        return _cad_json_error('Case not found', 404)
+    charges = scoped_query(CaseCharge, community_id).filter_by(case_id=case.case_id).order_by(CaseCharge.created_at.asc()).all()
+    evidence = scoped_query(Evidence, community_id).filter(Evidence.evidence_id.in_(_split_csv(case.linked_evidence_ids or case.evidence_ids))).all() if _split_csv(case.linked_evidence_ids or case.evidence_ids) else scoped_query(Evidence, community_id).filter_by(case_number=_case_public_id(case)).all()
+    arrest = scoped_query(Arrest, community_id).filter_by(arrest_id=case.linked_arrest_id or case.arrest_id).first() if (case.linked_arrest_id or case.arrest_id) else None
+    warrant = scoped_query(Warrant, community_id).filter_by(warrant_id=case.linked_warrant_id).first() if case.linked_warrant_id else None
+    civilians = scoped_query(Civilian, community_id).filter(Civilian.civilian_id.in_(_split_csv(case.involved_civilians or case.defendant_civilian_id))).all() if _split_csv(case.involved_civilians or case.defendant_civilian_id) else []
+    packet = {
+        'case_summary': _case_to_dict(case),
+        'suspect_civilian_details': [_civilian_response(c) for c in civilians],
+        'charges': [_charge_to_dict(c) for c in charges],
+        'officer_narrative': case.report_notes or (arrest.narrative if arrest else '') or '',
+        'evidence_links': [_evidence_workflow_to_dict(e) for e in evidence],
+        'witness_notes': case.defense_notes or '',
+        'arrest_info': arrest_to_dict(arrest) if arrest else None,
+        'warrant_info': warrant_to_dict(warrant) if warrant else None,
+        'use_of_force_info': None,
+        'timestamps': {'created_at': case.created_at.isoformat() if case.created_at else None, 'updated_at': case.updated_at.isoformat() if case.updated_at else None},
+        'chain_of_custody': [e.chain_of_custody or e.notes or '' for e in evidence],
+        'recommended_sentence_fine': {'fine': sum(float(str(c.recommended_fine or '0').replace('$','') or 0) for c in charges if str(c.recommended_fine or '0').replace('$','').replace('.','',1).isdigit()), 'jail_time': ', '.join([c.recommended_jail_time for c in charges if c.recommended_jail_time])},
+        'officer_signature_name': case.created_by or _actor_name(),
+    }
+    _cad_audit('court_packet_viewed', community_id, case.case_id)
+    db.session.commit()
+    return jsonify({'success': True, 'court_packet': packet})
 
 # ---------------------------------------------------------------------------
 # Court Routes

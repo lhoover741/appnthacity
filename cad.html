@@ -13,8 +13,8 @@
 
         body {
             font-family: 'Courier New', monospace;
-            background: #0a0e27;
-            color: #00ff00;
+            background: radial-gradient(circle at top, #1b0508 0, #07080d 50%, #020203 100%);
+            color: #ff3b3b;
             line-height: 1.6;
         }
 
@@ -26,7 +26,8 @@
 
         header {
             background: #1a1f3a;
-            border: 2px solid #00ff00;
+            border: 2px solid #8b0000;
+            box-shadow: 0 0 18px rgba(180,0,0,.35);
             padding: 20px;
             margin-bottom: 20px;
             text-align: center;
@@ -42,14 +43,14 @@
             display: flex;
             gap: 10px;
             margin-bottom: 20px;
-            border-bottom: 2px solid #00ff00;
+            border-bottom: 2px solid #b40000;
             flex-wrap: wrap;
         }
 
         .tab-button {
-            background: #1a1f3a;
-            color: #00ff00;
-            border: 2px solid #00ff00;
+            background: #16070a;
+            color: #ff3b3b;
+            border: 2px solid #8b0000;
             padding: 10px 20px;
             cursor: pointer;
             font-family: 'Courier New', monospace;
@@ -57,13 +58,13 @@
         }
 
         .tab-button:hover {
-            background: #00ff00;
-            color: #0a0e27;
+            background: #b40000;
+            color: #ffffff;
         }
 
         .tab-button.active {
-            background: #00ff00;
-            color: #0a0e27;
+            background: #b40000;
+            color: #ffffff;
         }
 
         .tab-content {
@@ -248,15 +249,20 @@
         <!-- Main CAD UI (shown when authenticated) -->
         <div id="cad-panel" style="display:none;">
             <div class="tabs">
-                <button class="tab-button active" onclick="switchTab('civilian-gen', event)">Generate Civilian</button>
-                <button class="tab-button" onclick="switchTab('civilian-search', event)">Search Civilians</button>
-                <button class="tab-button" onclick="switchTab('dispatch', event)">Dispatch</button>
-                <button class="tab-button" onclick="switchTab('alerts', event)">Alerts</button>
+                <button class="tab-button active" onclick="switchTab('dispatch', event)">Dispatch</button>
+                <button class="tab-button" onclick="switchTab('active-calls', event); loadDispatchCalls();">Active Calls</button>
+                <button class="tab-button" onclick="switchTab('cases', event); loadCases();">Cases</button>
+                <button class="tab-button" onclick="switchTab('arrests', event)">Arrests</button>
+                <button class="tab-button" onclick="switchTab('warrants', event)">Warrants</button>
+                <button class="tab-button" onclick="switchTab('evidence', event)">Evidence</button>
+                <button class="tab-button" onclick="switchTab('court-packets', event)">Court Packets</button>
+                <button class="tab-button" onclick="switchTab('civilian-search', event)">Civilian Lookup</button>
+                <button class="tab-button" onclick="switchTab('vehicle-lookup', event)">Vehicle Lookup</button>
                 <button onclick="adminLogout()" style="margin-left:auto;background:#2a0a0a;color:#ff4444;border:1px solid #ff4444;">Logout</button>
             </div>
 
             <!-- Civilian Generation Tab -->
-            <div id="civilian-gen" class="tab-content active">
+            <div id="civilian-gen" class="tab-content">
                 <h2>🤖 AI Civilian Generator</h2>
                 <p style="margin-bottom: 20px; color: #0099ff;">Generate realistic civilians with complete backgrounds, employment history, and profiles.</p>
 
@@ -390,12 +396,46 @@
             </div>
 
             <!-- Dispatch Tab -->
-            <div id="dispatch" class="tab-content">
+            <div id="dispatch" class="tab-content active">
                 <h2>📞 Dispatch Calls</h2>
                 <p style="color: #0099ff; margin-bottom: 20px;">Active dispatch calls and incident management.</p>
                 <button onclick="loadDispatchCalls()">Load Active Calls</button>
                 <div id="dispatch-list" style="margin-top: 20px;"></div>
             </div>
+
+            <div id="active-calls" class="tab-content">
+                <h2>☎️ Active 911 Calls</h2>
+                <p style="color:#ff7777;">Assign units, update status, and convert 911 calls into incident case files.</p>
+                <button onclick="loadDispatchCalls()">Refresh Calls</button>
+                <div id="active-calls-list" style="margin-top:20px;"></div>
+            </div>
+
+            <div id="cases" class="tab-content">
+                <h2>📁 Case Files</h2>
+                <div class="grid">
+                    <div>
+                        <h3>Create Case</h3>
+                        <input id="case-title" placeholder="Case title">
+                        <select id="case-type"><option>incident</option><option>arrest</option><option>warrant</option><option>use_of_force</option><option>court</option></select>
+                        <input id="case-priority" placeholder="Priority" value="medium">
+                        <input id="case-location" placeholder="Location">
+                        <textarea id="case-notes" placeholder="Officer narrative / report notes"></textarea>
+                        <button onclick="createCase()">Create Case</button>
+                    </div>
+                    <div>
+                        <h3>Case List</h3>
+                        <button onclick="loadCases()">Refresh Cases</button>
+                        <div id="case-list"></div>
+                    </div>
+                </div>
+                <div id="case-detail" class="card" style="display:none;margin-top:20px;"></div>
+            </div>
+
+            <div id="arrests" class="tab-content"><h2>🚓 Arrests</h2><p>Create or link arrests from the Case detail panel.</p><div id="arrest-panel"></div></div>
+            <div id="warrants" class="tab-content"><h2>📜 Warrants</h2><p>Create or link warrants from the Case detail panel.</p><div id="warrant-panel"></div></div>
+            <div id="evidence" class="tab-content"><h2>🧾 Evidence</h2><p>Add and review evidence from the Case detail panel.</p><div id="evidence-panel"></div></div>
+            <div id="court-packets" class="tab-content"><h2>⚖️ Court Packets</h2><p>Generate printable packets from the Case detail panel.</p><div id="court-packet-output" class="card"></div></div>
+            <div id="vehicle-lookup" class="tab-content"><h2>🚗 Vehicle Lookup</h2><p>Use Civilian Lookup by plate while full vehicle lookup is connected.</p></div>
 
             <!-- Alerts Tab -->
             <div id="alerts" class="tab-content">
@@ -716,23 +756,126 @@
                 const data = await response.json();
 
                 const calls = data.calls || [];
-                if (calls.length > 0) {
-                    listDiv.innerHTML = calls.map(call => `
+                const html = calls.length > 0 ? calls.map(call => {
+                    const callId = call.call_id || call.id;
+                    return `
                         <div class="card">
-                            <div class="card-title">${call.location || 'Unknown Location'}</div>
+                            <div class="card-title">${call.location || 'Unknown Location'} <span style="color:#ff7777;">${callId || ''}</span></div>
                             <div class="card-content">
                                 <p><strong>Priority:</strong> ${call.priority || '—'}</p>
                                 <p><strong>Status:</strong> ${call.status || '—'}</p>
+                                <p><strong>Units:</strong> ${(call.assigned_units || []).join(', ') || call.assigned_unit || 'Unassigned'}</p>
                                 <p><strong>Description:</strong> ${call.description || '—'}</p>
+                                <input id="unit-${callId}" placeholder="Assign unit/callsign">
+                                <button onclick="updateCall('${callId}')">Assign / Update</button>
+                                <button onclick="convertCallToCase('${callId}')">Convert to Case</button>
+                                <button onclick="resolveCall('${callId}')">Mark Resolved</button>
                             </div>
-                        </div>
-                    `).join('');
-                } else {
-                    listDiv.innerHTML = '<p style="color:#0099ff;">No active calls.</p>';
-                }
+                        </div>`;
+                }).join('') : '<p style="color:#0099ff;">No active calls.</p>';
+                listDiv.innerHTML = html;
+                const activeList = document.getElementById('active-calls-list');
+                if (activeList) activeList.innerHTML = html;
             } catch (error) {
                 listDiv.innerHTML = `<p style="color:#ff4444;">❌ Error loading calls: ${error.message}</p>`;
             }
+        }
+
+
+        async function apiJson(url, options = {}) {
+            const response = await fetch(url, {
+                ...options,
+                headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.success === false) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        async function updateCall(callId) {
+            const unit = document.getElementById(`unit-${callId}`)?.value || '';
+            await apiJson(`/api/cad/911-calls/${callId}`, { method: 'PATCH', body: JSON.stringify({ assigned_unit: unit, status: unit ? 'Assigned' : 'New' }) });
+            loadDispatchCalls();
+        }
+
+        async function resolveCall(callId) {
+            await apiJson(`/api/cad/911-calls/${callId}`, { method: 'PATCH', body: JSON.stringify({ resolved: true, status: 'Resolved' }) });
+            loadDispatchCalls();
+        }
+
+        async function convertCallToCase(callId) {
+            const data = await apiJson(`/api/cad/911-calls/${callId}/convert-to-case`, { method: 'POST', body: JSON.stringify({}) });
+            await loadCases();
+            switchTab('cases');
+            if (data.case_number) openCase(data.case_number);
+        }
+
+        async function loadCases() {
+            const data = await apiJson('/api/cad/cases');
+            const cases = data.cases || [];
+            const target = document.getElementById('case-list');
+            target.innerHTML = cases.length ? cases.map(c => `
+                <div class="card">
+                    <div class="card-title">${c.case_number} — ${c.title || 'Untitled'}</div>
+                    <p><strong>Status:</strong> ${c.status} <strong>Type:</strong> ${c.type}</p>
+                    <p><strong>Location:</strong> ${c.location || '—'}</p>
+                    <button onclick="openCase('${c.case_number}')">Open Detail</button>
+                </div>`).join('') : '<p>No cases yet.</p>';
+        }
+
+        async function createCase() {
+            const payload = {
+                title: document.getElementById('case-title').value,
+                type: document.getElementById('case-type').value,
+                priority: document.getElementById('case-priority').value,
+                location: document.getElementById('case-location').value,
+                report_notes: document.getElementById('case-notes').value
+            };
+            const data = await apiJson('/api/cad/cases', { method: 'POST', body: JSON.stringify(payload) });
+            await loadCases();
+            openCase(data.case_number);
+        }
+
+        async function openCase(caseNumber) {
+            const data = await apiJson(`/api/cad/cases/${caseNumber}`);
+            const c = data.case;
+            const detail = document.getElementById('case-detail');
+            detail.style.display = 'block';
+            detail.innerHTML = `
+                <h3>${c.case_number} — ${c.title}</h3>
+                <p><strong>Status:</strong> ${c.status} | <strong>Priority:</strong> ${c.priority} | <strong>Location:</strong> ${c.location || '—'}</p>
+                <p><strong>Narrative:</strong> ${c.report_notes || '—'}</p>
+                <div class="grid">
+                    <div><h4>Add Charge</h4><input id="charge-name" placeholder="Charge name"><input id="penal-code" placeholder="Penal code"><select id="severity"><option>infraction</option><option>misdemeanor</option><option>felony</option></select><input id="counts" type="number" value="1"><input id="fine" placeholder="Recommended fine"><input id="jail" placeholder="Recommended jail time"><button onclick="addCharge('${c.case_number}')">Add Charge</button></div>
+                    <div><h4>Add Evidence</h4><input id="evidence-type" placeholder="Evidence type"><textarea id="evidence-desc" placeholder="Description"></textarea><input id="clip-link" placeholder="Clip link"><input id="screenshot-link" placeholder="Screenshot link"><button onclick="addEvidence('${c.case_number}')">Add Evidence</button></div>
+                </div>
+                <h4>Charges</h4><div>${(c.charges || []).map(ch => `<p>${ch.counts}x ${ch.penal_code} ${ch.charge_name} (${ch.severity})</p>`).join('') || 'No charges.'}</div>
+                <h4>Evidence</h4><div>${(c.evidence || []).map(ev => `<p>${ev.evidence_id}: ${ev.description} ${ev.clip_link ? `<a href="${ev.clip_link}" target="_blank">clip</a>` : ''}</p>`).join('') || 'No evidence.'}</div>
+                <button onclick="createWarrant('${c.case_number}')">Create Warrant</button>
+                <button onclick="createArrest('${c.case_number}')">Create Arrest</button>
+                <button onclick="courtPacket('${c.case_number}')">Generate Court Packet</button>
+                <button onclick="closeCase('${c.case_number}')">Close Case</button>`;
+        }
+
+        async function addCharge(caseNumber) {
+            await apiJson(`/api/cad/cases/${caseNumber}/charges`, { method: 'POST', body: JSON.stringify({ charge_name: document.getElementById('charge-name').value, penal_code: document.getElementById('penal-code').value, severity: document.getElementById('severity').value, counts: document.getElementById('counts').value, recommended_fine: document.getElementById('fine').value, recommended_jail_time: document.getElementById('jail').value }) });
+            openCase(caseNumber);
+        }
+
+        async function addEvidence(caseNumber) {
+            await apiJson(`/api/cad/cases/${caseNumber}/evidence`, { method: 'POST', body: JSON.stringify({ evidence_type: document.getElementById('evidence-type').value, description: document.getElementById('evidence-desc').value, clip_link: document.getElementById('clip-link').value, screenshot_link: document.getElementById('screenshot-link').value }) });
+            openCase(caseNumber);
+        }
+
+        async function createWarrant(caseNumber) { await apiJson(`/api/cad/cases/${caseNumber}/create-warrant`, { method: 'POST', body: JSON.stringify({}) }); openCase(caseNumber); }
+        async function createArrest(caseNumber) { await apiJson(`/api/cad/cases/${caseNumber}/create-arrest`, { method: 'POST', body: JSON.stringify({}) }); openCase(caseNumber); }
+        async function closeCase(caseNumber) { await apiJson(`/api/cad/cases/${caseNumber}/close`, { method: 'POST', body: JSON.stringify({ outcome: 'Closed from CAD terminal' }) }); openCase(caseNumber); }
+        async function courtPacket(caseNumber) {
+            const data = await apiJson(`/api/cad/cases/${caseNumber}/court-packet`);
+            switchTab('court-packets');
+            const packet = data.court_packet;
+            const text = JSON.stringify(packet, null, 2);
+            document.getElementById('court-packet-output').innerHTML = `<h3>Printable Court Packet — ${packet.case_summary.case_number}</h3><button onclick="navigator.clipboard.writeText(document.getElementById('packet-text').textContent)">Copy Summary</button><pre id="packet-text" style="white-space:pre-wrap;color:#fff;background:#050505;padding:16px;">${text}</pre>`;
         }
 
         // ---------------------------------------------------------------------------

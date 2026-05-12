@@ -243,8 +243,14 @@ class Evidence(db.Model):
     evidence_id = db.Column(db.String(64), unique=True, nullable=False)
     community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
     case_number = db.Column(db.String(64))
+    evidence_type = db.Column(db.String(128))
     evidence_description = db.Column(db.Text)
     collected_by = db.Column(db.String(255))
+    officer = db.Column(db.String(255))
+    clip_link = db.Column(db.Text)
+    screenshot_link = db.Column(db.Text)
+    storage_status = db.Column(db.String(64), default='Logged')
+    chain_of_custody = db.Column(db.Text)
     location_found = db.Column(db.String(255))
     status = db.Column(db.String(64), default='Active')
     notes = db.Column(db.Text)
@@ -450,6 +456,7 @@ class DispatchCall(db.Model):
     phone = db.Column(db.String(64))
     location = db.Column(db.Text)
     description = db.Column(db.Text)
+    call_type = db.Column(db.String(255))
     priority = db.Column(db.String(64), default='Normal')
     status = db.Column(db.String(64), default='Open')
     assigned_unit = db.Column(db.String(255))
@@ -571,7 +578,21 @@ class CaseFile(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.String(64), unique=True, nullable=False)
+    case_number = db.Column(db.String(64), unique=True)
     community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
+    title = db.Column(db.String(255))
+    case_type = db.Column(db.String(64), default='incident')
+    priority = db.Column(db.String(64), default='medium')
+    location = db.Column(db.Text)
+    involved_civilians = db.Column(db.Text)
+    involved_officers = db.Column(db.Text)
+    linked_911_call_id = db.Column(db.String(64))
+    linked_arrest_id = db.Column(db.String(64))
+    linked_warrant_id = db.Column(db.String(64))
+    linked_evidence_ids = db.Column(db.Text)
+    report_notes = db.Column(db.Text)
+    created_by = db.Column(db.String(255))
+    assigned_to = db.Column(db.String(255))
     defendant_civilian_id = db.Column(db.String(64))
     charges = db.Column(db.Text)
     evidence_ids = db.Column(db.Text)
@@ -580,10 +601,43 @@ class CaseFile(db.Model):
     prosecutor_notes = db.Column(db.Text)
     defense_notes = db.Column(db.Text)
     court_date = db.Column(db.DateTime)
-    status = db.Column(db.String(64), default='Open')
+    status = db.Column(db.String(64), default='open')
     outcome = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime)
+
+
+class CaseCharge(db.Model):
+    __tablename__ = 'case_charges'
+
+    id = db.Column(db.Integer, primary_key=True)
+    charge_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=False)
+    case_id = db.Column(db.String(64), nullable=False)
+    charge_name = db.Column(db.String(255), nullable=False)
+    penal_code = db.Column(db.String(64))
+    severity = db.Column(db.String(64), default='misdemeanor')
+    counts = db.Column(db.Integer, default=1)
+    recommended_fine = db.Column(db.String(64))
+    recommended_jail_time = db.Column(db.String(64))
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime)
+
+
+class CadAuditLog(db.Model):
+    __tablename__ = 'cad_audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    audit_id = db.Column(db.String(64), unique=True, nullable=False)
+    acting_user_id = db.Column(db.Integer, nullable=True)
+    community_id = db.Column(db.String(64), nullable=False)
+    case_id = db.Column(db.String(64), nullable=True)
+    action = db.Column(db.String(128), nullable=False)
+    request_id = db.Column(db.String(64))
+    ip_address = db.Column(db.String(64))
+    details = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class AIGenerationLog(db.Model):
