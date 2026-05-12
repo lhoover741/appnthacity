@@ -499,6 +499,11 @@ def _current_police_cad_access_decision(route=None, role=None, user=None, member
         community_id = get_current_community_id()
         if membership is None and user_id and community_id:
             membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id, status='Active').first()
+    if membership is not None:
+        try:
+            _community_admin_apply_cad_permission_attrs(membership)
+        except NameError:
+            pass
     effective_role = role
     if effective_role is None:
         effective_role = getattr(g, 'current_role', None) or getattr(membership, 'role', None) or session.get('current_role') or session.get('role', 'Civilian')
@@ -538,6 +543,11 @@ def user_can_access_police_cad(owner=False, community_role=None, user=None, memb
     session_values = _cad_session_values()
     if owner:
         session_values['is_platform_owner'] = True
+    if membership is not None:
+        try:
+            _community_admin_apply_cad_permission_attrs(membership)
+        except NameError:
+            pass
     decision = evaluate_police_cad_access(
         user=user,
         role=community_role,
@@ -6195,10 +6205,11 @@ def platform_admin_page():
 @app.route('/community-admin')
 @require_auth
 def community_admin_page():
-    community_id = get_current_community_id()
-    membership = CommunityMember.query.filter_by(user_id=session.get('user_id'), community_id=community_id, status='Active').first()
-    normalized_role = normalize_community_role(membership.role) if membership else None
-    if normalized_role not in ('Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'):
+    try:
+        current_user, community, membership, error, status = require_community_admin()
+    except NameError:
+        current_user, community, membership, error, status = None, None, None, None, None
+    if error:
         return frontend_page('community-admin-forbidden.html'), 403
     return frontend_page('community-admin.html')
 
@@ -6868,92 +6879,575 @@ def platform_admin_promote_user(user_id):
     return jsonify({'success': True, 'user': user.to_dict()})
 
 
+
+
+@app.errorhandler(Exception)
+def community_admin_json_exception(error):
+    if request.path.startswith('/api/community-admin'):
+        logger.exception('Community admin endpoint failed request_id=%s path=%s', getattr(g, 'request_id', None), request.path)
+        code = getattr(error, 'code', 500) or 500
+        if code >= 500:
+            return jsonify({'success': False, 'error': 'Community admin request failed'}), 500
+        return jsonify({'success': False, 'error': getattr(error, 'description', 'Community admin request failed')}), code
+    raise error
+
+COMMUNITY_ADMIN_ROLES = {'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'}
+COMMUNITY_SUPPORTED_ROLES = {
+    'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer',
+    'Dispatch', 'Dispatcher', 'EMS', 'Civilian', 'Member', 'BusinessOwner'
+}
+CAD_ELIGIBLE_ROLES = {'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher', 'EMS'}
+COMMUNITY_SETTING_KEYS = {
+    'departments', 'officer_ranks', 'ranks', 'call_types', 'penal_code_categories',
+    'business_categories', 'invite_policy', 'cad_access_policy'
+}
+COMMUNITY_SETTING_ALIASES = {
+    'ranks': 'officer_ranks',
+}
+
+
+
+def _community_admin_generate_invite_code(length=10):
+    alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    for _ in range(100):
+        code = ''.join(secrets.choice(alphabet) for _ in range(length))
+        if not CommunityInvite.query.filter_by(invite_code=code).first():
+            return code
+    raise RuntimeError('Unable to generate a unique invite code')
+
+def _json_loads(value, default=None):
+    if value in (None, ''):
+        return default
+    if isinstance(value, (dict, list, bool, int, float)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _community_admin_config_value(community_id, key, default=None):
+    config = Config.query.filter_by(community_id=community_id, key=key).first()
+    return _json_loads(config.value, default) if config else default
+
+
+def _community_admin_set_config_value(community_id, key, value, description=None):
+    key = COMMUNITY_SETTING_ALIASES.get(key, key)
+    config = Config.query.filter_by(community_id=community_id, key=key).first()
+    if not config:
+        config = Config(community_id=community_id, key=key, description=description or f'Community setting: {key}')
+        db.session.add(config)
+    config.value = json.dumps(value)
+    config.updated_at = datetime.utcnow()
+    return config
+
+
+def _community_admin_cad_permissions(community_id):
+    data = _community_admin_config_value(community_id, 'cad_permissions', {})
+    return data if isinstance(data, dict) else {}
+
+
+def _community_admin_save_cad_permissions(community_id, data):
+    _community_admin_set_config_value(community_id, 'cad_permissions', data, 'Per-member Police CAD permissions')
+
+
+def _community_admin_apply_cad_permission_attrs(membership):
+    if not membership:
+        return membership
+    data = _community_admin_cad_permissions(membership.community_id).get(str(membership.user_id), {})
+    if isinstance(data, dict):
+        for key in ('can_access_police_cad', 'can_dispatch', 'can_manage_warrants', 'can_manage_evidence', 'can_manage_arrests', 'rank'):
+            if key in data:
+                setattr(membership, key, data.get(key))
+    return membership
+
+
+def _community_admin_body():
+    return request.get_json(silent=True) or {}
+
+
+def _community_admin_requested_community_id():
+    data = _community_admin_body() if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') else {}
+    community_id = (request.args.get('community_id') or data.get('community_id') or '').strip()
+    slug = (request.args.get('slug') or request.args.get('community_slug') or data.get('slug') or data.get('community_slug') or '').strip()
+    if not slug:
+        slug = getattr(g, 'community', None).slug if getattr(g, 'community', None) else None
+    if slug:
+        community = Community.query.filter_by(slug=slug).first()
+        if community:
+            return community.community_id
+    return community_id or None
+
+
+def _community_admin_resolve_context(require_selected=True):
+    user_id = session.get('user_id')
+    if not user_id:
+        return None, None, None, jsonify({'success': False, 'error': 'Authentication required'}), 401
+    current_user = getattr(g, 'current_user', None) or User.query.get(user_id)
+    if not current_user:
+        return None, None, None, jsonify({'success': False, 'error': 'Authentication required'}), 401
+
+    requested_id = _community_admin_requested_community_id()
+    owner = is_platform_owner()
+    route_context_id = getattr(g, 'community_id', None) if request.path.startswith('/c/') else None
+    candidates = [
+        requested_id,
+        route_context_id,
+        session.get('impersonating_community_id') if owner else None,
+        getattr(g, 'community_id', None),
+        session.get('selected_community_id'),
+        session.get('active_community_id'),
+    ]
+
+    community = None
+    for community_id in candidates:
+        if community_id:
+            community = Community.query.filter_by(community_id=community_id).first()
+            if community:
+                break
+
+    membership = None
+    if community:
+        membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community.community_id, status='Active').first()
+
+    if owner and not community:
+        community = Community.query.order_by(Community.created_at.asc()).first()
+        if community:
+            membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community.community_id, status='Active').first()
+
+    if not owner:
+        if requested_id and (not community or community.community_id != requested_id):
+            return current_user, None, None, jsonify({'success': False, 'error': 'Community admin access required'}), 403
+        if not community:
+            admin_membership = CommunityMember.query.filter(
+                CommunityMember.user_id == user_id,
+                CommunityMember.status == 'Active',
+                CommunityMember.role.in_(list(COMMUNITY_ADMIN_ROLES)),
+            ).first()
+            if admin_membership:
+                community = Community.query.filter_by(community_id=admin_membership.community_id).first()
+                membership = admin_membership
+        if not community:
+            return current_user, None, None, jsonify({'success': False, 'error': 'Community admin access required'}), 403
+        if community.owner_user_id != user_id and not (membership and normalize_community_role(membership.role) in COMMUNITY_ADMIN_ROLES):
+            return current_user, community, membership, jsonify({'success': False, 'error': 'Community admin access required'}), 403
+        if requested_id and requested_id != community.community_id:
+            return current_user, community, membership, jsonify({'success': False, 'error': 'Community admin access required'}), 403
+
+    if not community and require_selected:
+        return current_user, None, None, jsonify({'success': False, 'error': 'No community selected'}), 400
+
+    if community:
+        session['selected_community_id'] = community.community_id
+        session['selected_community_slug'] = community.slug
+        session.modified = True
+    return current_user, community, membership, None, None
+
+
+def require_community_admin():
+    current_user, community, membership, error, status = _community_admin_resolve_context()
+    if error:
+        return None, None, None, error, status
+    if is_platform_owner():
+        return current_user, community, membership, None, None
+    if community and community.owner_user_id == current_user.id:
+        return current_user, community, membership, None, None
+    if membership and normalize_community_role(membership.role) in COMMUNITY_ADMIN_ROLES:
+        return current_user, community, membership, None, None
+    return current_user, community, membership, jsonify({'success': False, 'error': 'Community admin access required'}), 403
+
+
+def _community_admin_member_dict(membership, user=None):
+    user = user or User.query.get(membership.user_id)
+    _community_admin_apply_cad_permission_attrs(membership)
+    return {
+        'member_id': membership.id,
+        'user_id': membership.user_id,
+        'username': user.username if user else f'user-{membership.user_id}',
+        'email': user.email if user else None,
+        'community_role': membership.role,
+        'role': membership.role,
+        'cad_access': user_can_access_police_cad(False, membership.role, user=user, membership=membership),
+        'can_access_police_cad': user_can_access_police_cad(False, membership.role, user=user, membership=membership),
+        'department': membership.department,
+        'rank': getattr(membership, 'rank', None),
+        'callsign': membership.callsign,
+        'joined_at': membership.joined_at.isoformat() if membership.joined_at else None,
+        'status': membership.status or 'Active',
+    }
+
+
+def _community_admin_permission_dict(membership, user=None):
+    user = user or User.query.get(membership.user_id)
+    _community_admin_apply_cad_permission_attrs(membership)
+    can_access = bool(getattr(membership, 'can_access_police_cad', False)) or user_can_access_police_cad(False, membership.role, user=user, membership=membership)
+    return {
+        'user_id': membership.user_id,
+        'username': user.username if user else f'user-{membership.user_id}',
+        'community_role': membership.role,
+        'can_access_police_cad': can_access,
+        'department': membership.department,
+        'rank': getattr(membership, 'rank', None) or '',
+        'callsign': membership.callsign,
+        'can_dispatch': bool(getattr(membership, 'can_dispatch', False)),
+        'can_manage_warrants': bool(getattr(membership, 'can_manage_warrants', False)),
+        'can_manage_evidence': bool(getattr(membership, 'can_manage_evidence', False)),
+        'can_manage_arrests': bool(getattr(membership, 'can_manage_arrests', False)),
+    }
+
+
+def _community_admin_audit(community_id, action, result='success', target_user_id=None, details=None):
+    safe_details = details or {}
+    db.session.add(AuditLog(
+        log_id=f'audit-{uuid.uuid4().hex}',
+        community_id=community_id,
+        actor=str(session.get('user_id') or ''),
+        actor_role=session.get('role') or session.get('platform_role'),
+        action=f'community_admin.{action}.{result}',
+        record_type='community_admin',
+        record_id=str(target_user_id or community_id),
+        after_state=json.dumps(safe_details),
+        ip_address=getattr(g, 'client_ip', request.remote_addr),
+    ))
+
+
+def _community_admin_activity_rows(community_id, limit=50):
+    rows = []
+    try:
+        for row in AuditLog.query.filter_by(community_id=community_id).order_by(AuditLog.created_at.desc()).limit(limit).all():
+            rows.append({
+                'id': row.log_id,
+                'action': row.action,
+                'actor': row.actor,
+                'actor_role': row.actor_role,
+                'target': row.record_id,
+                'details': _json_loads(row.after_state, row.after_state) or '',
+                'ip_address': row.ip_address,
+                'created_at': row.created_at.isoformat() if row.created_at else None,
+            })
+    except Exception as exc:
+        logger.warning('Community admin audit log lookup failed community_id=%s error=%s', community_id, exc)
+    if rows:
+        return rows
+    try:
+        for row in ActivityLog.query.filter_by(community_id=community_id).order_by(ActivityLog.created_at.desc()).limit(limit).all():
+            rows.append(activity_log_to_dict(row))
+    except Exception as exc:
+        logger.warning('Community admin activity log lookup failed community_id=%s error=%s', community_id, exc)
+    try:
+        remaining = max(limit - len(rows), 0)
+        if remaining:
+            for row in PlatformAdminLog.query.filter_by(tenant=community_id).order_by(PlatformAdminLog.created_at.desc()).limit(remaining).all():
+                rows.append({
+                    'id': row.id,
+                    'action': row.action,
+                    'actor': row.actor_user_id,
+                    'target': row.target_user_id,
+                    'details': _json_loads(row.details, row.details) or '',
+                    'ip_address': row.ip_address,
+                    'created_at': row.created_at.isoformat() if row.created_at else None,
+                })
+    except Exception as exc:
+        logger.warning('Community admin platform log lookup failed community_id=%s error=%s', community_id, exc)
+    return rows[:limit]
+
+
+def _community_admin_settings_dict(community):
+    keys = sorted(COMMUNITY_SETTING_KEYS | {'cad_permissions'})
+    settings = {
+        'community_id': community.community_id,
+        'name': community.name,
+        'cad_name': community.cad_name,
+        'slug': community.slug,
+        'status': community.status,
+    }
+    for key in keys:
+        public_key = 'ranks' if key == 'officer_ranks' else key
+        settings[public_key] = _community_admin_config_value(community.community_id, key, [] if key in {'departments', 'officer_ranks', 'call_types', 'penal_code_categories', 'business_categories'} else {})
+    settings.pop('cad_permissions', None)
+    return settings
+
+
 @app.route('/api/community-admin/overview', methods=['GET'])
 @require_auth
 def community_admin_overview():
-    community_id = get_current_community_id()
-    current_user_id = session.get('user_id')
-    membership = CommunityMember.query.filter_by(user_id=current_user_id, community_id=community_id, status='Active').first()
-    community = Community.query.filter_by(community_id=community_id).first()
-    if not has_community_owner_access(current_user_id, community=community, membership=membership):
-        return jsonify({'success': False, 'error': 'Forbidden'}), 403
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    warnings = []
 
-    try:
-        members = CommunityMember.query.filter_by(community_id=community_id, status='Active').all()
-    except Exception as e:
-        logger.warning(f'Community admin members hydration failed for {community_id}: {e}')
-        members = []
-    try:
-        invites = CommunityInvite.query.filter_by(community_id=community_id, active=True).all()
-    except Exception as e:
-        logger.warning(f'Community admin invites hydration failed for {community_id}: {e}')
-        invites = []
-    try:
-        officer_sessions = scoped_query(OfficerSession, community_id).order_by(OfficerSession.updated_at.desc()).all()
-    except Exception as e:
-        logger.warning(f'Community admin officer sessions hydration failed for {community_id}: {e}')
-        officer_sessions = []
-    try:
-        activities = [activity_log_to_dict(a) for a in scoped_query(ActivityLog, community_id).order_by(ActivityLog.created_at.desc()).limit(50).all()]
-    except Exception as e:
-        logger.warning(f'Community admin activity hydration failed for {community_id}: {e}')
-        activities = []
-
-    current_user_obj = User.query.get(current_user_id) if current_user_id else None
-    user_map = {u.id: u for u in User.query.filter(User.id.in_([m.user_id for m in members])).all()} if members else {}
-    session_map = {s.user_id: s for s in UserSession.query.filter(UserSession.user_id.in_(list(user_map.keys())), UserSession.active.is_(True)).all()} if user_map else {}
-
-    owner_username = 'Unknown'
-    if community and community.owner_user_id:
+    def section(name, fallback, fn):
         try:
-            owner = User.query.get(community.owner_user_id)
-            owner_username = owner.username if owner and owner.username else 'Unknown'
-        except Exception as e:
-            logger.warning(f'Owner lookup failed for {community_id}: {e}')
+            return fn()
+        except Exception as exc:
+            logger.warning('Community admin overview %s failed community_id=%s error=%s', name, community.community_id, exc)
+            warnings.append(f'{name} unavailable')
+            return fallback
 
-    def _safe_count(query_fn):
-        try:
-            return query_fn()
-        except Exception as e:
-            logger.warning(f'Community admin count query failed for {community_id}: {e}')
-            return 0
+    members = section('members', [], lambda: CommunityMember.query.filter_by(community_id=community.community_id).all())
+    user_ids = [m.user_id for m in members]
+    users = section('users', {}, lambda: {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {})
+    member_rows = section('member_rows', [], lambda: [_community_admin_member_dict(m, users.get(m.user_id)) for m in members])
+    invites = section('invites', [], lambda: [i.to_dict() for i in CommunityInvite.query.filter_by(community_id=community.community_id).order_by(CommunityInvite.created_at.desc()).limit(25).all()])
+    activity = section('activity', [], lambda: _community_admin_activity_rows(community.community_id, 25))
+    permissions = section('cad_permissions', [], lambda: [_community_admin_permission_dict(m, users.get(m.user_id)) for m in members])
 
-    return jsonify({'success': True, 'overview': {
+    def count(fn):
+        return section('metrics', 0, fn)
+
+    roles = [normalize_community_role(m.role) for m in members]
+    current_role = membership.role if membership else ('PlatformOwner' if is_platform_owner() else None)
+    payload = {
+        'success': True,
         'community': {
-            'community_id': community.community_id if community else community_id,
-            'slug': community.slug if community else None,
-            'name': community.name if community else 'Unknown',
-            'cad_name': community.cad_name if community else 'Unknown',
-            'owner_user_id': community.owner_user_id if community else None,
-            'owner_username': owner_username,
-            'status': community.status if community and community.status else 'OFFLINE',
+            'community_id': community.community_id,
+            'name': community.name,
+            'slug': community.slug,
+            'cad_name': community.cad_name,
+            'owner_user_id': community.owner_user_id,
+            'status': (community.status or 'ACTIVE').upper(),
         },
-        'total_members': len(members),
-        'online_members': _safe_count(lambda: UserSession.query.filter_by(tenant=community_id, active=True).count()),
-        'officers': _safe_count(lambda: OfficerSession.query.filter_by(community_id=community_id).count()),
-        'civilians': _safe_count(lambda: Civilian.query.filter_by(community_id=community_id).count()),
-        'active_calls': _safe_count(lambda: DispatchCall.query.filter_by(community_id=community_id, status='Active').count()),
-        'active_warrants': _safe_count(lambda: Warrant.query.filter_by(community_id=community_id, warrant_status='Active').count()),
         'current_user': {
-            'id': current_user_id,
-            'username': session.get('username'),
-            'role': session.get('role', 'Civilian'),
-            'platform_role': session.get('platform_role'),
-            'community_role': membership.role if membership else None,
-            'is_platform_owner': bool(session.get('is_platform_owner')),
-            'can_access_police_cad': user_can_access_police_cad(is_platform_owner(), membership.role if membership else None, user=current_user_obj, membership=membership),
+            'id': current_user.id,
+            'username': current_user.username,
+            'role': current_user.role,
+            'community_role': current_role,
+            'is_platform_owner': is_platform_owner(),
         },
-        'members': [{
-            'user_id': m.user_id,
-            'username': user_map.get(m.user_id).username if user_map.get(m.user_id) else f'user-{m.user_id}',
-            'role': m.role,
-            'can_access_police_cad': user_can_access_police_cad(False, m.role, user=user_map.get(m.user_id), membership=m),
-            'callsign': None,
-            'department': None,
-            'last_active': session_map.get(m.user_id).last_seen.isoformat() if session_map.get(m.user_id) and session_map.get(m.user_id).last_seen else None,
-            'status': 'ONLINE' if session_map.get(m.user_id) else 'OFFLINE',
-        } for m in members],
-        'invites': [i.to_dict() for i in invites],
-        'activity': activities,
-        'officer_sessions': [officer_session_response(s) for s in officer_sessions],
-    }})
+        'metrics': {
+            'members': len(members),
+            'officers': sum(1 for role in roles if role in {'Police', 'Officer'}),
+            'dispatchers': sum(1 for role in roles if role in {'Dispatch', 'Dispatcher'}),
+            'civilians': count(lambda: Civilian.query.filter_by(community_id=community.community_id).count()),
+            'active_warrants': count(lambda: Warrant.query.filter_by(community_id=community.community_id, warrant_status='Active').count()),
+            'open_reports': count(lambda: Incident.query.filter_by(community_id=community.community_id, status='Open').count()),
+            'pending_applications': count(lambda: Application.query.filter_by(community_id=community.community_id, status='Pending').count()),
+            'active_invites': count(lambda: CommunityInvite.query.filter_by(community_id=community.community_id, active=True).count()),
+        },
+        'members': member_rows,
+        'invites': invites,
+        'activity': activity,
+        'cad_permissions': permissions,
+        'warnings': warnings,
+        'available_communities': [c.to_dict() for c in Community.query.order_by(Community.name.asc()).all()] if is_platform_owner() else [],
+    }
+    payload['overview'] = payload
+    return jsonify(payload)
+
+
+@app.route('/api/community-admin/members', methods=['GET'])
+@require_auth
+def community_admin_members():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    members = CommunityMember.query.filter_by(community_id=community.community_id).order_by(CommunityMember.joined_at.desc()).all()
+    users = {u.id: u for u in User.query.filter(User.id.in_([m.user_id for m in members])).all()} if members else {}
+    return jsonify({'success': True, 'members': [_community_admin_member_dict(m, users.get(m.user_id)) for m in members]})
+
+
+@app.route('/api/community-admin/members/<int:user_id>/role', methods=['POST'])
+@require_auth
+def community_admin_member_role(user_id):
+    current_user, community, acting_membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    data = _community_admin_body()
+    role = normalize_community_role(data.get('role'))
+    if role == 'PlatformOwner' or role not in COMMUNITY_SUPPORTED_ROLES:
+        return jsonify({'success': False, 'error': 'Invalid community role'}), 400
+    target = CommunityMember.query.filter_by(community_id=community.community_id, user_id=user_id).first()
+    if not target:
+        return jsonify({'success': False, 'error': 'Member not found in this community'}), 404
+    if community.owner_user_id == user_id and not is_platform_owner():
+        return jsonify({'success': False, 'error': 'Community owner cannot be demoted'}), 403
+    if role == 'CommunityOwner' and not (is_platform_owner() or normalize_community_role(getattr(acting_membership, 'role', None)) == 'CommunityOwner' or community.owner_user_id == current_user.id):
+        return jsonify({'success': False, 'error': 'Only PlatformOwner or CommunityOwner can assign CommunityOwner'}), 403
+    before = target.role
+    target.role = role
+    target.updated_at = datetime.utcnow()
+    _community_admin_audit(community.community_id, 'member_role_changed', target_user_id=user_id, details={'before_role': before, 'after_role': role})
+    invalidate_user_sessions(user_id)
+    db.session.commit()
+    return jsonify({'success': True, 'member': _community_admin_member_dict(target)})
+
+
+@app.route('/api/community-admin/members/<int:user_id>/remove', methods=['POST'])
+@require_auth
+def community_admin_member_remove(user_id):
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    data = _community_admin_body()
+    if community.owner_user_id == user_id and not (is_platform_owner() and data.get('confirm_owner')):
+        return jsonify({'success': False, 'error': 'Community owner cannot be removed without PlatformOwner confirmation'}), 403
+    target = CommunityMember.query.filter_by(community_id=community.community_id, user_id=user_id).first()
+    if not target:
+        return jsonify({'success': False, 'error': 'Member not found in this community'}), 404
+    db.session.delete(target)
+    perms = _community_admin_cad_permissions(community.community_id)
+    perms.pop(str(user_id), None)
+    _community_admin_save_cad_permissions(community.community_id, perms)
+    _community_admin_audit(community.community_id, 'member_removed', target_user_id=user_id, details={'result': 'success'})
+    invalidate_user_sessions(user_id)
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Member removed from community'})
+
+
+@app.route('/api/community-admin/invites', methods=['GET'])
+@require_auth
+def community_admin_invites():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    invites = CommunityInvite.query.filter_by(community_id=community.community_id).order_by(CommunityInvite.created_at.desc()).limit(100).all()
+    return jsonify({'success': True, 'invites': [i.to_dict() for i in invites]})
+
+
+@app.route('/api/community-admin/invites/create', methods=['POST'])
+@require_auth
+def community_admin_invite_create():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    data = _community_admin_body()
+    role = normalize_community_role(data.get('role') or 'Civilian')
+    if role == 'PlatformOwner' or role not in COMMUNITY_SUPPORTED_ROLES:
+        return jsonify({'success': False, 'error': 'Invalid community role'}), 400
+    max_uses = data.get('max_uses', 1)
+    try:
+        max_uses = None if max_uses in (None, '', 0, '0') else max(1, int(max_uses))
+    except Exception:
+        return jsonify({'success': False, 'error': 'max_uses must be a positive number'}), 400
+    try:
+        days = int(data.get('expires_in_days', 7))
+    except Exception:
+        days = 7
+    expires_at = datetime.utcnow() + timedelta(days=max(days, 1)) if days else None
+    invite = CommunityInvite(
+        invite_code=_community_admin_generate_invite_code(10),
+        community_id=community.community_id,
+        role=role,
+        created_by=current_user.id,
+        expires_at=expires_at,
+        max_uses=max_uses,
+        uses=0,
+        active=True,
+    )
+    db.session.add(invite)
+    _community_admin_audit(community.community_id, 'invite_created', details={'role': role, 'max_uses': max_uses, 'expires_at': expires_at.isoformat() if expires_at else None})
+    db.session.commit()
+    return jsonify({'success': True, 'invite': invite.to_dict()})
+
+
+@app.route('/api/community-admin/invites/<int:invite_id>/revoke', methods=['POST'])
+@require_auth
+def community_admin_invite_revoke(invite_id):
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    invite = CommunityInvite.query.filter_by(id=invite_id, community_id=community.community_id).first()
+    if not invite:
+        return jsonify({'success': False, 'error': 'Invite not found in this community'}), 404
+    invite.active = False
+    _community_admin_audit(community.community_id, 'invite_revoked', details={'invite_id': invite_id})
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Invite revoked'})
+
+
+@app.route('/api/community-admin/cad-permissions', methods=['GET'])
+@require_auth
+def community_admin_cad_permissions():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    members = CommunityMember.query.filter_by(community_id=community.community_id).order_by(CommunityMember.joined_at.desc()).all()
+    users = {u.id: u for u in User.query.filter(User.id.in_([m.user_id for m in members])).all()} if members else {}
+    return jsonify({'success': True, 'permissions': [_community_admin_permission_dict(m, users.get(m.user_id)) for m in members]})
+
+
+@app.route('/api/community-admin/cad-permissions/<int:user_id>/update', methods=['POST'])
+@require_auth
+def community_admin_cad_permission_update(user_id):
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    target = CommunityMember.query.filter_by(community_id=community.community_id, user_id=user_id).first()
+    if not target:
+        return jsonify({'success': False, 'error': 'Member not found in this community'}), 404
+    data = _community_admin_body()
+    role = normalize_community_role(target.role)
+    requested_access = bool(data.get('can_access_police_cad'))
+    if requested_access and role not in CAD_ELIGIBLE_ROLES:
+        return jsonify({'success': False, 'error': 'Civilian users do not get CAD access by default'}), 400
+    callsign = (data.get('callsign') or '').strip() or None
+    if callsign:
+        existing = CommunityMember.query.filter(
+            CommunityMember.community_id == community.community_id,
+            CommunityMember.callsign == callsign,
+            CommunityMember.user_id != user_id,
+        ).first()
+        if existing:
+            return jsonify({'success': False, 'error': 'Callsign already exists in this community'}), 409
+    target.department = (data.get('department') or '').strip() or target.department
+    target.callsign = callsign
+    target.updated_at = datetime.utcnow()
+    perms = _community_admin_cad_permissions(community.community_id)
+    user_perms = perms.get(str(user_id), {}) if isinstance(perms.get(str(user_id), {}), dict) else {}
+    for key in ('can_access_police_cad', 'can_dispatch', 'can_manage_warrants', 'can_manage_evidence', 'can_manage_arrests'):
+        if key in data:
+            user_perms[key] = bool(data.get(key))
+    user_perms['rank'] = (data.get('rank') or '').strip()
+    perms[str(user_id)] = user_perms
+    _community_admin_save_cad_permissions(community.community_id, perms)
+    _community_admin_audit(community.community_id, 'cad_permission_updated', target_user_id=user_id, details={'permission': user_perms, 'department': target.department, 'callsign': target.callsign})
+    invalidate_user_sessions(user_id)
+    db.session.commit()
+    return jsonify({'success': True, 'permission': _community_admin_permission_dict(target)})
+
+
+@app.route('/api/community-admin/settings', methods=['GET'])
+@require_auth
+def community_admin_settings_get():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    return jsonify({'success': True, 'settings': _community_admin_settings_dict(community)})
+
+
+@app.route('/api/community-admin/settings', methods=['POST'])
+@require_auth
+def community_admin_settings_post():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    data = _community_admin_body()
+    if 'name' in data:
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'error': 'Community name is required'}), 400
+        community.name = name
+    if 'cad_name' in data:
+        cad_name = (data.get('cad_name') or '').strip()
+        if not cad_name:
+            return jsonify({'success': False, 'error': 'CAD display name is required'}), 400
+        community.cad_name = cad_name
+    updated = []
+    for raw_key, value in data.items():
+        key = COMMUNITY_SETTING_ALIASES.get(raw_key, raw_key)
+        if key in COMMUNITY_SETTING_KEYS:
+            _community_admin_set_config_value(community.community_id, key, value)
+            updated.append(key)
+    community.updated_at = datetime.utcnow()
+    _community_admin_audit(community.community_id, 'settings_updated', details={'updated_keys': updated, 'name_changed': 'name' in data, 'cad_name_changed': 'cad_name' in data})
+    db.session.commit()
+    return jsonify({'success': True, 'settings': _community_admin_settings_dict(community)})
+
+
+@app.route('/api/community-admin/activity', methods=['GET'])
+@require_auth
+def community_admin_activity():
+    current_user, community, membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    return jsonify({'success': True, 'activity': _community_admin_activity_rows(community.community_id, 100)})
