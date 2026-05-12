@@ -27,6 +27,7 @@ from security_service import (
     require_auth,
     verify_password,
     hash_password,
+    validate_password_policy,
     ROLES
 )
 from performance_service import cache, paginate_query
@@ -88,33 +89,8 @@ def _safe_json_error(message, code, status=400, details=None):
 
 
 
-DEFAULT_OPENROUTER_MODEL = 'openai/gpt-4o-mini'
-
-def _resolve_openrouter_model():
-    for env_name in ('OPENROUTER_MODEL', 'OPEN_ROUTER_MODEL', 'AI_OPENROUTER_MODEL'):
-        raw_model = os.getenv(env_name)
-        model = raw_model.strip() if raw_model else ''
-        if model:
-            return model
-    return DEFAULT_OPENROUTER_MODEL
-
 def get_platform_ai_config():
-    enabled_raw = (os.getenv('AI_ENABLED', 'true') or 'true').strip().lower()
-    enabled = enabled_raw in ('1', 'true', 'yes', 'on')
-    api_key = (
-        os.getenv('OPENROUTER_API_KEY')
-        or os.getenv('OPEN_ROUTER_API_KEY')
-        or os.getenv('AI_OPENROUTER_API_KEY')
-        or ''
-    ).strip()
-    model = _resolve_openrouter_model()
-    return {
-        'enabled': enabled,
-        'provider': 'openrouter',
-        'model': model,
-        'has_api_key': bool(api_key),
-        'api_key': api_key,
-    }
+    return get_ai_config()
 
 
 def get_platform_ai_runtime_or_error():
@@ -2422,6 +2398,9 @@ def send_discord_notification(complaint):
 
 @app.route('/api/admin/login', methods=['POST'])
 def admin_login():
+    if (os.getenv('FLASK_ENV') or '').lower() == 'production' or (os.getenv('ALLOW_LEGACY_ADMIN_AUTH', '').lower() != 'true'):
+        logger.warning('Legacy admin authentication attempt blocked')
+        return jsonify({'success': False, 'error': 'Legacy admin authentication is disabled'}), 410
     data = request.get_json(silent=True) or {}
     password = data.get('password', '')
     admin_password_hash = os.environ.get('ADMIN_PASSWORD_HASH', '')
@@ -2437,12 +2416,16 @@ def admin_login():
 
 @app.route('/api/admin/logout', methods=['POST'])
 def admin_logout():
+    if (os.getenv('FLASK_ENV') or '').lower() == 'production' or (os.getenv('ALLOW_LEGACY_ADMIN_AUTH', '').lower() != 'true'):
+        return jsonify({'success': False, 'error': 'Legacy admin authentication is disabled'}), 410
     session.clear()
     return jsonify({'success': True})
 
 
 @app.route('/api/admin/session', methods=['GET'])
 def admin_session():
+    if (os.getenv('FLASK_ENV') or '').lower() == 'production' or (os.getenv('ALLOW_LEGACY_ADMIN_AUTH', '').lower() != 'true'):
+        return jsonify({'success': False, 'error': 'Legacy admin authentication is disabled'}), 410
     return jsonify({'success': True, 'loggedIn': bool(session.get('admin_logged_in'))})
 
 
@@ -2472,9 +2455,8 @@ def user_login():
         logger.warning("Auth login failed: ambiguous identifier=%s count=%s ip=%s", identifier_lower, len(matched_users), request.remote_addr)
         return jsonify({'success': False, 'error': 'Ambiguous login identifier', 'code': 'AMBIGUOUS_IDENTIFIER'}), 409
     user = matched_users[0]
-    hash_prefix = (user.password_hash or '')[:20]
-    logger.info("Auth login diagnostics identifier=%s user_found=true user_id=%s hash_prefix=%s active=%s role=%s platform_role=%s",
-                identifier_lower, user.id, hash_prefix, bool(_user_field(user, 'active', True)), _user_field(user, 'role', ''), _user_field(user, 'platform_role', ''))
+    logger.info("Auth login diagnostics identifier=%s user_found=true user_id=%s hash_present=%s active=%s role=%s platform_role=%s",
+                identifier_lower, user.id, bool(user.password_hash), bool(_user_field(user, 'active', True)), _user_field(user, 'role', ''), _user_field(user, 'platform_role', ''))
     if not bool(_user_field(user, 'active', True)):
         logger.warning("Auth login failed: inactive account user_id=%s ip=%s", user.id, request.remote_addr)
         return jsonify({'success': False, 'error': 'Account is inactive', 'code': 'ACCOUNT_INACTIVE'}), 403
@@ -2535,8 +2517,8 @@ def user_register():
     if not username or not password:
         return jsonify({'success': False, 'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
 
-    if len(password) < 8:
-        return jsonify({'success': False, 'error': 'Password must be at least 8 characters', 'code': 'PASSWORD_TOO_SHORT'}), 400
+    if not validate_password_policy(password):
+        return jsonify({'success': False, 'error': 'Password does not meet security requirements'}), 400
 
     existing_query = User.query.filter(User.username == username)
     if email:
@@ -2552,7 +2534,6 @@ def user_register():
     db.session.commit()
 
     _session_hydrate_user(user)
-    ensure_platform_owner(user)
 
     return jsonify({
         'success': True,
@@ -2677,8 +2658,8 @@ def change_password():
     if not current_password or not new_password:
         return jsonify({'success': False, 'error': 'Current and new password required', 'code': 'MISSING_PASSWORDS'}), 400
 
-    if len(new_password) < 8:
-        return jsonify({'success': False, 'error': 'New password must be at least 8 characters', 'code': 'PASSWORD_TOO_SHORT'}), 400
+    if not validate_password_policy(new_password):
+        return jsonify({'success': False, 'error': 'Password does not meet security requirements'}), 400
 
     user_id = session.get('user_id')
     user = User.query.get(user_id)
@@ -6938,34 +6919,6 @@ def configured_platform_owner_matches_user(user):
 def ensure_platform_owner(user):
     if not user:
         return False
-
-    normalized_role = (user.role or '').strip()
-    platform_role = (getattr(user, 'platform_role', None) or '').strip()
-    should_promote = False
-
-    if normalized_role == 'PlatformOwner' or platform_role == 'PlatformOwner':
-        should_promote = True
-    elif configured_platform_owner_matches_user(user):
-        should_promote = True
-    else:
-        owner_exists = User.query.filter_by(role='PlatformOwner').first() is not None
-        if not owner_exists:
-            should_promote = True
-
-    if should_promote and user.role != 'PlatformOwner':
-        user.role = 'PlatformOwner'
-        if hasattr(User, 'platform_role'):
-            user.platform_role = 'PlatformOwner'
-        db.session.commit()
-        logger.info("PlatformOwner bootstrap promoted user_id=%s email=%s", user.id, getattr(user, 'email', None))
-    elif should_promote and hasattr(User, 'platform_role') and getattr(user, 'platform_role', None) != 'PlatformOwner':
-        user.platform_role = 'PlatformOwner'
-        db.session.commit()
-        logger.info("PlatformOwner bootstrap normalized platform_role for user_id=%s", user.id)
-
-    if should_promote and not bool(_user_field(user, 'active', True)):
-        user.active = True
-        db.session.commit()
     return _session_hydrate_user(user)
 
 
@@ -6988,22 +6941,9 @@ def has_community_owner_access(user_id, community=None, membership=None):
 def is_platform_owner():
     user_id = session.get('user_id')
     user = User.query.get(user_id) if isinstance(user_id, int) else None
-    if user and ensure_platform_owner(user):
-        return True
-
-    session_role = (session.get('role') or '').strip()
-    session_platform_role = (session.get('platform_role') or '').strip()
-    if session_role == 'PlatformOwner' or session_platform_role == 'PlatformOwner':
-        return True
-
-    if user and configured_platform_owner_matches_user(user):
-        return True
-
-    session_email = (session.get('email') or '').strip().lower()
-    session_username = (session.get('username') or '').strip().lower()
-    owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
-    owner_username = (os.getenv('PLATFORM_OWNER_USERNAME') or '').strip().lower()
-    return (owner_email and session_email == owner_email) or (owner_username and session_username == owner_username)
+    if user:
+        return _session_hydrate_user(user)
+    return False
 
 
 def require_platform_owner():
@@ -7035,12 +6975,15 @@ def forgot_password():
     data = request.get_json(silent=True) or {}
     identifier = (data.get('identifier') or '').strip()
     user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
-    if not user:
-        return jsonify({'success': True, 'message': 'If the account exists, a reset token was generated.'})
-    token = secrets.token_urlsafe(32)
-    db.session.add(PasswordResetToken(user_id=user.id, token=token, tenant=session.get('selected_community_id'), expires_at=datetime.utcnow() + timedelta(hours=1)))
-    db.session.commit()
-    return jsonify({'success': True, 'reset_token': token, 'message': 'Use this token to reset password.'})
+    if user:
+        token = secrets.token_urlsafe(32)
+        db.session.add(PasswordResetToken(user_id=user.id, token=token, tenant=session.get('selected_community_id'), expires_at=datetime.utcnow() + timedelta(hours=1)))
+        db.session.commit()
+    response = {'success': True, 'message': 'If an account exists, password reset instructions have been sent.'}
+    dev_echo_enabled = (os.getenv('FLASK_ENV') or '').lower() != 'production' and (os.getenv('ALLOW_DEV_RESET_TOKEN_ECHO', '').lower() == 'true')
+    if dev_echo_enabled and user:
+        response['reset_token'] = token
+    return jsonify(response)
 
 
 @app.route('/api/auth/reset-password', methods=['POST'])
@@ -7050,8 +6993,10 @@ def reset_password_with_token():
     token = data.get('token')
     new_password = data.get('new_password', '')
     prt = PasswordResetToken.query.filter_by(token=token, used=False).first()
-    if not prt or prt.expires_at < datetime.utcnow() or len(new_password) < 8:
+    if not prt or prt.expires_at < datetime.utcnow():
         return jsonify({'success': False, 'error': 'Invalid token or password'}), 400
+    if not validate_password_policy(new_password):
+        return jsonify({'success': False, 'error': 'Password does not meet security requirements'}), 400
     user = User.query.get(prt.user_id)
     user.password_hash = hash_password(new_password)
     prt.used = True
@@ -7074,8 +7019,8 @@ def platform_owner_recovery_reset_password():
 
     if not configured_token or provided_token != configured_token:
         return jsonify({'success': False, 'error': 'Invalid recovery token'}), 403
-    if len(new_password) < 8 or new_password != confirm_password:
-        return jsonify({'success': False, 'error': 'Password validation failed'}), 400
+    if new_password != confirm_password or not validate_password_policy(new_password):
+        return jsonify({'success': False, 'error': 'Password does not meet security requirements'}), 400
 
     user = User.query.filter(func.lower(User.email) == email).first()
     if not user:
@@ -7317,8 +7262,11 @@ def platform_admin_reset_password(user_id):
     if auth_error:
         return auth_error
     data = request.get_json(silent=True) or {}
+    new_password = data.get('new_password', '')
+    if not validate_password_policy(new_password):
+        return jsonify({'success': False, 'error': 'Password does not meet security requirements'}), 400
     user = User.query.get_or_404(user_id)
-    user.password_hash = hash_password(data.get('new_password', ''))
+    user.password_hash = hash_password(new_password)
     invalidate_user_sessions(user.id)
     log_platform_admin('platform_password_reset', target_user_id=user.id, tenant='*')
     db.session.commit()
@@ -7630,12 +7578,20 @@ def _validate_invite_for_join(invite_code, lock=False):
 
 
 def _audit_invite_event(action, community_id=None, invite=None, result='success', assigned_role=None, details=None):
+    def _mask_invite_code(value):
+        code = (value or '').strip()
+        if not code:
+            return None
+        return f"{code[:4]}****" if len(code) >= 4 else "****"
     safe_details = dict(details or {})
+    raw_code = safe_details.pop('invite_code', None)
+    if raw_code:
+        safe_details['masked_invite_code'] = _mask_invite_code(raw_code)
     if assigned_role:
         safe_details['assigned_role'] = assigned_role
     if invite:
         safe_details['invite_id'] = getattr(invite, 'id', None)
-        safe_details['invite_code'] = getattr(invite, 'invite_code', None)
+        safe_details['masked_invite_code'] = _mask_invite_code(getattr(invite, 'invite_code', None))
     safe_details['request_id'] = getattr(g, 'request_id', None)
     db.session.add(AuditLog(
         log_id=f'audit-{uuid.uuid4().hex}',
@@ -7644,7 +7600,7 @@ def _audit_invite_event(action, community_id=None, invite=None, result='success'
         actor_role=session.get('community_role') or session.get('current_role') or session.get('role') or session.get('platform_role'),
         action=f'invite.{action}.{result}',
         record_type='community_invite',
-        record_id=str(getattr(invite, 'id', '') or safe_details.get('invite_code') or ''),
+        record_id=str(getattr(invite, 'id', '') or ''),
         after_state=json.dumps(safe_details),
         ip_address=getattr(g, 'client_ip', request.remote_addr),
     ))
