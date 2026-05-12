@@ -51,7 +51,7 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
       return;
     }
     status.textContent = 'Login successful. Redirecting…';
-    window.location.href = data.redirect || data.redirect_url || '/dashboard';
+    window.location.href = data.redirect || data.redirect_url || '/community-setup';
   } catch (err) {
     status.textContent = 'Internal authentication error. Please try again.';
     button.disabled = false;

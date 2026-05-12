@@ -461,7 +461,8 @@ logger.info("✓ Community routes registered")
 def current_role_allows_police_cad():
     """True when the active community role may access police CAD data/tools."""
     role = getattr(g, 'current_role', None) or session.get('role', 'Civilian')
-    return role in {'Owner', 'Admin', 'Police', 'EMS', 'Dispatch', 'DOJ', 'Staff', 'LEO'}
+    normalized = normalize_community_role(role)
+    return normalized in {'PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher'}
 
 
 def require_police_cad_access():
@@ -494,7 +495,7 @@ def get_post_login_redirect(owner, community_slug, requires_community_setup):
         return f'/c/{community_slug}/'
     if requires_community_setup:
         return '/community-setup'
-    return '/dashboard'
+    return '/community-setup'
 
 
 @app.errorhandler(500)
@@ -6057,10 +6058,22 @@ def create_community_page():
 def join_community_page():
     return frontend_page('join-community.html')
 
+@app.route('/community-setup')
+def community_setup_page():
+    return frontend_page('join-community.html')
+
 
 @app.route('/c/<community_slug>/')
 def community_home(community_slug):
     return frontend_page('community.html')
+
+@app.route('/c/<community_slug>/cad')
+def community_cad_page(community_slug):
+    if not session.get('user_id'):
+        return redirect('/login', code=302)
+    if not current_role_allows_police_cad():
+        return frontend_page('community-cad-forbidden.html'), 403
+    return frontend_page('police.html')
 
 
 @app.route('/c/<community_slug>/<page>')
@@ -6092,6 +6105,11 @@ def community_page(community_slug, page):
         'join': 'join.html',
     }
     page = extensionless_aliases.get(page, page)
+    if page in {'police.html', 'cad.html'}:
+        if not session.get('user_id'):
+            return redirect('/login', code=302)
+        if not current_role_allows_police_cad():
+            return frontend_page('community-cad-forbidden.html'), 403
     if page in allowed_pages:
         return frontend_page(page)
     abort(404)

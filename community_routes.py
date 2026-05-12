@@ -52,6 +52,14 @@ DEFAULT_PENAL_CODES = {
 
 DEFAULT_DISPATCH_CATEGORIES = ['Emergency', 'Non-Emergency', 'Traffic', 'Medical', 'Fire']
 
+POLICE_CAD_ALLOWED_ROLES = {'PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher'}
+
+
+def can_access_police_cad(platform_role, community_role):
+    if str(platform_role or '').strip() == 'PlatformOwner':
+        return True
+    return str(community_role or '').strip() in POLICE_CAD_ALLOWED_ROLES
+
 
 def generate_invite_code(length=8):
     """Generate a unique uppercase alphanumeric invite code."""
@@ -498,6 +506,15 @@ def get_current_community_context():
             'role': membership.role,
             'department': membership.department,
         } if membership else None,
+        'user': {
+            'id': user_id,
+            'username': session.get('username'),
+            'role': session.get('role', 'Civilian'),
+            'platform_role': session.get('platform_role'),
+            'community_role': membership.role if membership else None,
+            'is_platform_owner': bool(session.get('is_platform_owner')),
+            'can_access_police_cad': can_access_police_cad(session.get('platform_role'), membership.role if membership else None),
+        },
         'invite_code': invite.invite_code,
     }), 200
 
