@@ -8309,11 +8309,11 @@ def _cad_ai_guard(case_id=None):
     return {'community_id': community_id, 'community_slug': (community_ctx or {}).get('slug'), 'case': case_obj}, None
 
 
-def _log_ai_generation(generation_type, success, input_params, output_summary='', tokens_used=None, error_message=None):
+def _log_ai_generation(generation_type, success, input_params, output_summary='', tokens_used=None, error_message=None, community_id=None):
     try:
         log = AIGenerationLog(
             log_id=f"AI-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}",
-            community_id=get_current_community_id(),
+            community_id=community_id or get_current_community_id(),
             generation_type=generation_type,
             input_params=json.dumps(input_params)[:4000],
             output_summary=(output_summary or '')[:4000],
@@ -8328,15 +8328,17 @@ def _log_ai_generation(generation_type, success, input_params, output_summary=''
 
 
 def _ai_json_route(route_type, system_prompt, user_prompt, input_meta):
+    resolved_context = resolve_active_community()
+    resolved_community_id = ((input_meta or {}).get('community_id') or (resolved_context or {}).get('community_id') or get_current_community_id())
     data, err = ai_runtime_or_error()
     if err:
-        _log_ai_generation(route_type, False, input_meta, error_message=err)
+        _log_ai_generation(route_type, False, input_meta, error_message=err, community_id=resolved_community_id)
         return jsonify({'success': False, 'error': err}), 503
     out, provider_err, usage = chat_json(system_prompt, user_prompt)
     if provider_err:
-        _log_ai_generation(route_type, False, input_meta, error_message=provider_err)
+        _log_ai_generation(route_type, False, input_meta, error_message=provider_err, community_id=resolved_community_id)
         return jsonify({'success': False, 'error': 'AI provider request failed'}), 502
-    _log_ai_generation(route_type, True, {**(input_meta or {}), 'provider': data.get('provider'), 'model': data.get('model'), 'user_id': session.get('user_id')}, output_summary=json.dumps(out)[:1200], tokens_used=(usage or {}).get('total_tokens'))
+    _log_ai_generation(route_type, True, {**(input_meta or {}), 'provider': data.get('provider'), 'model': data.get('model'), 'user_id': session.get('user_id')}, output_summary=json.dumps(out)[:1200], tokens_used=(usage or {}).get('total_tokens'), community_id=resolved_community_id)
     return out, data
 
 
