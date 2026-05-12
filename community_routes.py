@@ -86,6 +86,13 @@ def can_access_police_cad(platform_role, community_role, user=None, membership=N
     return decision.get('final_can_access_police_cad') is True
 
 
+def mask_invite_code(value):
+    code = (value or '').strip()
+    if len(code) <= 4:
+        return '*' * len(code)
+    return f"{code[:2]}***{code[-2:]}"
+
+
 def generate_invite_code(length=8):
     """Generate a unique uppercase alphanumeric invite code."""
     alphabet = string.ascii_uppercase + string.digits
@@ -233,7 +240,7 @@ def select_community():
     
     Body:
     {
-        "community_id": "nthacityrp"
+        "community_id": "example-community"
     }
     """
     user_id = session.get('user_id')
@@ -802,7 +809,7 @@ def revoke_invite_code(community_id, invite_code):
         invite.active = False
         db.session.commit()
 
-        logger.info(f'✅ Revoked invite code {invite_code}')
+        logger.info('✅ Revoked invite code %s', mask_invite_code(invite_code))
 
         return jsonify({
             'success': True,
