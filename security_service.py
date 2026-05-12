@@ -20,6 +20,18 @@ ROLES = {
     'BusinessOwner': ['read', 'write', 'business'],
 }
 
+def validate_password_policy(password):
+    """Validate baseline password complexity requirements."""
+    if not isinstance(password, str):
+        return False
+    if len(password) < 10:
+        return False
+    has_upper = any(c.isupper() for c in password)
+    has_lower = any(c.islower() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_special = any(not c.isalnum() for c in password)
+    return has_upper and has_lower and has_digit and has_special
+
 def hash_password(password):
     """Hash a password using Werkzeug."""
     return generate_password_hash(password, method='pbkdf2:sha256')
@@ -39,16 +51,16 @@ def verify_password(password_hash, password):
     try:
         result = check_password_hash(normalized_hash, password)
         logger.info(
-            "Password verify diagnostics: prefix=%s function=%s result=%s",
-            hash_prefix,
+            "Password verify diagnostics: hash_present=%s function=%s result=%s",
+            bool(normalized_hash),
             verify_function,
             result,
         )
         return result
     except Exception as exc:
         logger.warning(
-            "Password verification failure: prefix=%s function=%s result=False error=%s",
-            hash_prefix,
+            "Password verification failure: hash_present=%s function=%s result=False error=%s",
+            bool(normalized_hash),
             verify_function,
             exc,
         )

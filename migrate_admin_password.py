@@ -83,9 +83,9 @@ def ensure_platform_owner():
             logger.info(f'     Current platform_role: {current_platform_role}')
             logger.info(f'     Current active: {current_active}')
             if current_hash:
-                logger.info(f'     Current password_hash: {current_hash[:20]}...')
+                logger.info('     Current hash_present=%s', bool(current_hash))
             else:
-                logger.info('     Current password_hash: None')
+                logger.info('     Current hash_present=%s', False)
 
             # 3. Update role/status and password only when allowed
             logger.info('\n3. Ensuring PlatformOwner role/status...')
@@ -149,9 +149,9 @@ def ensure_platform_owner():
                 logger.info(f'     New platform_role: {new_platform_role}')
                 logger.info(f'     New active: {new_active}')
                 if new_hash:
-                    logger.info(f'     New password_hash: {new_hash[:20]}...')
+                    logger.info('     password_initialized=%s', bool(new_hash))
                 else:
-                    logger.info('     New password_hash: None')
+                    logger.info('     password_initialized=%s', False)
 
                 # Verify all fields are correct
                 if (new_role == 'PlatformOwner' and
