@@ -7333,7 +7333,12 @@ def platform_admin_reset_invite(community_id):
         active=True,
     )
     db.session.add(invite)
-    log_platform_admin('community_reset_invite', tenant=community_id, details={'invite_code': new_code, 'result': 'success'})
+    db.session.flush()
+    log_platform_admin(
+        'community_reset_invite',
+        tenant=community_id,
+        details={'invite_id': invite.id, 'masked_invite_code': mask_invite_code(new_code), 'community_id': community_id, 'result': 'success'}
+    )
     db.session.commit()
     return jsonify({'success': True, 'invite_code': new_code})
 
@@ -7522,6 +7527,13 @@ def _invite_code_input(value):
     return ''.join(ch for ch in (value or '').strip().upper() if ch.isalnum())
 
 
+def mask_invite_code(value):
+    code = (value or '').strip()
+    if not code:
+        return None
+    return f"{code[:4]}****" if len(code) >= 4 else "****"
+
+
 def _invite_uses_remaining(invite):
     if invite.max_uses is None:
         return None
@@ -7578,20 +7590,15 @@ def _validate_invite_for_join(invite_code, lock=False):
 
 
 def _audit_invite_event(action, community_id=None, invite=None, result='success', assigned_role=None, details=None):
-    def _mask_invite_code(value):
-        code = (value or '').strip()
-        if not code:
-            return None
-        return f"{code[:4]}****" if len(code) >= 4 else "****"
     safe_details = dict(details or {})
     raw_code = safe_details.pop('invite_code', None)
     if raw_code:
-        safe_details['masked_invite_code'] = _mask_invite_code(raw_code)
+        safe_details['masked_invite_code'] = mask_invite_code(raw_code)
     if assigned_role:
         safe_details['assigned_role'] = assigned_role
     if invite:
         safe_details['invite_id'] = getattr(invite, 'id', None)
-        safe_details['masked_invite_code'] = _mask_invite_code(getattr(invite, 'invite_code', None))
+        safe_details['masked_invite_code'] = mask_invite_code(getattr(invite, 'invite_code', None))
     safe_details['request_id'] = getattr(g, 'request_id', None)
     db.session.add(AuditLog(
         log_id=f'audit-{uuid.uuid4().hex}',
