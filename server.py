@@ -8385,9 +8385,10 @@ def cad_ai_generate_911_call():
     data = request.get_json(silent=True) or {}
     area = (data.get('area_of_play') or 'City Only').strip() or 'City Only'
     prompt = f"Generate realistic GTA V Los Santos 911 call JSON with caller_name, location, incident_type, description, priority, recommended_units, status. Area of play: {area}. Input: {json.dumps(data)}"
-    out, _cfg = _ai_json_route('generate_911_call', 'Do not invent impossible locations. City Only unless explicitly provided. No markdown.', prompt, data)
-    if isinstance(out, tuple):
-        return out
+    ai_result = _ai_json_route('generate_911_call', 'Do not invent impossible locations. City Only unless explicitly provided. No markdown.', prompt, data)
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, _cfg = ai_result
     return jsonify({'success': True, 'call': {**out, 'status': 'Pending'}})
 
 
@@ -8398,9 +8399,10 @@ def cad_ai_cleanup_report():
         return err
     data = request.get_json(silent=True) or {}
     prompt = f"Clean this police RP report for grammar/tone without inventing facts. Return JSON keys cleaned_text, missing_info, notes. Input: {json.dumps(data)}"
-    out, _cfg = _ai_json_route('cleanup_report', 'Preserve facts exactly. Professional police report style.', prompt, data)
-    if isinstance(out, tuple):
-        return out
+    ai_result = _ai_json_route('cleanup_report', 'Preserve facts exactly. Professional police report style.', prompt, data)
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, _cfg = ai_result
     return jsonify({'success': True, 'cleaned_text': out.get('cleaned_text',''), 'missing_info': out.get('missing_info', []), 'notes': out.get('notes', [])})
 
 
@@ -8411,9 +8413,10 @@ def cad_ai_incident_report():
     if err:
         return err
     prompt = f"Write incident report JSON: narrative,timeline,probable_cause,officer_actions,suspect_actions,scene_control,evidence_references,recommended_missing_fields. Use only provided input: {json.dumps(data)}"
-    out, _cfg = _ai_json_route('incident_report', 'Do not invent evidence, names, links, or statements.', prompt, data)
-    if isinstance(out, tuple):
-        return out
+    ai_result = _ai_json_route('incident_report', 'Do not invent evidence, names, links, or statements.', prompt, data)
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, _cfg = ai_result
     return jsonify({'success': True, 'report': out})
 
 
@@ -8490,9 +8493,22 @@ def _serialize_incident_context(ctx):
     veh = ctx.get('vehicle')
     case_obj = ctx.get('case')
     dispatch = ctx.get('dispatch_call')
+    dispatch_payload = None
+    if dispatch:
+        dispatch_payload = {
+            'call_id': dispatch.call_id,
+            'caller_name': dispatch.caller_name,
+            'location': dispatch.location,
+            'call_type': getattr(dispatch, 'call_type', getattr(dispatch, 'incident_type', None)),
+            'priority': dispatch.priority,
+            'assigned_unit': dispatch.assigned_unit,
+            'status': dispatch.status,
+            'notes': getattr(dispatch, 'notes', getattr(dispatch, 'dispatch_notes', None)),
+        }
+
     return {
         'case': {'case_id': case_obj.case_id, 'title': case_obj.title, 'incident_type': case_obj.case_type, 'location': case_obj.location, 'priority': case_obj.priority, 'notes': case_obj.report_notes} if case_obj else None,
-        'dispatch_call': {'call_id': dispatch.call_id, 'caller_name': dispatch.caller_name, 'location': dispatch.location, 'call_type': dispatch.call_type, 'priority': dispatch.priority, 'assigned_unit': dispatch.assigned_unit, 'status': dispatch.status, 'notes': dispatch.notes} if dispatch else None,
+        'dispatch_call': dispatch_payload,
         'civilian': {'civilian_id': civ.civilian_id, 'name': f"{civ.first_name} {civ.last_name}", 'dob': civ.date_of_birth.isoformat() if civ.date_of_birth else None, 'address': civ.address, 'driver_license_status': civ.driver_license_status, 'firearm_license_status': civ.firearm_license_status, 'business_license_status': civ.business_license_status, 'gang_affiliation': civ.gang_affiliation} if civ else None,
         'vehicle': {'vehicle_id': veh.vehicle_id, 'plate': veh.plate, 'make': veh.make, 'model': veh.model, 'color': veh.color, 'year': veh.year, 'registration_status': veh.registration_status, 'insurance_status': veh.insurance_status, 'owner_name': veh.owner_name} if veh else None,
         'charges': [{'charge_id': c.charge_id, 'charge': c.charge_name, 'penal_code': c.penal_code, 'severity': c.severity, 'counts': c.counts, 'recommended_fine': c.recommended_fine, 'recommended_jail_time': c.recommended_jail_time, 'source': 'existing'} for c in ctx.get('charges', [])],
@@ -8521,9 +8537,10 @@ def cad_ai_incident_from_notes():
     system_prompt = 'Officer notes are primary truth. Use linked CAD records only as support. Never invent charges, warrants, BOLOs, arrests, civilians, vehicles, or evidence. Flag conflicts and missing court details under missing_info. Do not decide guilt. Professional GTA RP law-enforcement tone. Do not claim to review clips/bodycam.'
     user_prompt = f"Build incident report JSON with keys: title, incident_type, location, priority, summary, narrative, timeline, probable_cause, involved_civilians, involved_officers, vehicles, charges, warrants, bolos, evidence, related_cases, arrests, traffic_stops, scene_control, officer_actions, suspect_actions, recommended_next_steps, missing_info, court_risk_notes. Mark non-existing charge ideas as source=suggested. Input notes: {notes}. Linked data: {json.dumps(serialized)}"
 
-    out, cfg = _ai_json_route('incident_from_notes', system_prompt, user_prompt, {'case_id': payload.get('case_id'), 'call_id': payload.get('call_id'), 'civilian_id': payload.get('civilian_id'), 'vehicle_id': payload.get('vehicle_id')})
-    if isinstance(out, tuple):
-        return out
+    ai_result = _ai_json_route('incident_from_notes', system_prompt, user_prompt, {'case_id': payload.get('case_id'), 'call_id': payload.get('call_id'), 'civilian_id': payload.get('civilian_id'), 'vehicle_id': payload.get('vehicle_id')})
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, cfg = ai_result
 
     report = out if isinstance(out, dict) else {}
     report.setdefault('missing_info', [])
