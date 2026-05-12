@@ -51,6 +51,45 @@ def get_current_community_id():
     return None
 
 
+def resolve_active_community():
+    """
+    Resolve active tenant context without any hardcoded fallback.
+    Priority:
+    1) route/query slug
+    2) platform-owner impersonation session
+    3) selected community session
+    4) first active membership
+    """
+    requested_slug = request.args.get('community_slug') or resolve_community_slug_from_path()
+    user_id = session.get('user_id')
+
+    if requested_slug:
+        community = Community.query.filter_by(slug=requested_slug).first()
+        if community:
+            return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
+
+    impersonation_id = session.get('impersonating_community_id')
+    if impersonation_id:
+        community = Community.query.filter_by(community_id=impersonation_id).first()
+        if community:
+            return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
+
+    selected_id = session.get('selected_community_id')
+    if selected_id:
+        community = Community.query.filter_by(community_id=selected_id).first()
+        if community:
+            return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
+
+    if user_id:
+        membership = CommunityMember.query.filter_by(user_id=user_id, status='Active').first()
+        if membership:
+            community = Community.query.filter_by(community_id=membership.community_id).first()
+            if community:
+                return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
+
+    return None
+
+
 def resolve_community_slug_from_path():
     """Extract community slug from request path like /c/metro-rp/cad."""
     path_parts = request.path.strip('/').split('/')
@@ -271,6 +310,7 @@ __all__ = [
     'community_context_middleware',
     'scoped_query',
     'scope_query_to_community',
+    'resolve_active_community',
     'community_required',
     'community_member_required',
     'community_admin_required',

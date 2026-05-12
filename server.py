@@ -459,7 +459,7 @@ def socket_join_community(data):
         logger.exception(f'Websocket join failed: {e}')
         emit('socket:error', {'error': 'Unable to join room right now'})
 
-from community_service import community_context_middleware, get_current_community_id, scoped_query
+from community_service import community_context_middleware, get_current_community_id, scoped_query, resolve_active_community
 from community_routes import register_community_routes
 
 @app.before_request
@@ -8289,7 +8289,7 @@ def cad_ai_status():
     if err:
         return err
     cfg = get_ai_config()
-    return jsonify({'success': True, 'ai_enabled': cfg['enabled'], 'provider': cfg['provider'], 'model': cfg['model'], 'configured': cfg['configured'], 'has_api_key': cfg['has_api_key']})
+    return jsonify({'success': True, 'ai_enabled': cfg['enabled'], 'provider': cfg['provider'], 'model': cfg['model'], 'configured': cfg['configured'], 'has_api_key': cfg['has_api_key'], 'community_id': guard.get('community_id'), 'community_slug': guard.get('community_slug')})
 
 
 def _cad_ai_guard(case_id=None):
@@ -8297,15 +8297,16 @@ def _cad_ai_guard(case_id=None):
         return None, (jsonify({'success': False, 'error': 'Unauthorized'}), 401)
     if not current_role_allows_police_cad():
         return None, (jsonify({'success': False, 'error': 'Police CAD access required'}), 403)
-    community_id = get_current_community_id()
+    community_ctx = resolve_active_community()
+    community_id = (community_ctx or {}).get('community_id')
     if not community_id:
-        return None, (jsonify({'success': False, 'error': 'Police CAD access required'}), 403)
+        return None, (jsonify({'success': False, 'error': 'Community context required'}), 400)
     case_obj = None
     if case_id:
         case_obj = scoped_query(CaseFile, community_id).filter_by(case_id=case_id).first()
         if not case_obj:
             return None, (jsonify({'success': False, 'error': 'Case not found'}), 404)
-    return {'community_id': community_id, 'case': case_obj}, None
+    return {'community_id': community_id, 'community_slug': (community_ctx or {}).get('slug'), 'case': case_obj}, None
 
 
 def _log_ai_generation(generation_type, success, input_params, output_summary='', tokens_used=None, error_message=None):
