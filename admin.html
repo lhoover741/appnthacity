@@ -254,13 +254,13 @@
     setLiveMeta('Fetching...');
     try {
       const response = await fetch('/api/platform-admin/overview', { credentials: 'include' });
-      const data = await response.json().catch(() => {
-        throw new Error('Malformed dashboard response');
-      });
       if (response.status === 403) {
         document.body.innerHTML = "<div style='display:grid;place-items:center;min-height:100vh;background:#0a0a0a;color:#eee;font-family:Arial'><div style='max-width:560px;background:#121212;border:1px solid #3a2323;border-radius:12px;padding:1.2rem'><h2 style='color:#ff5a5a'>Platform Access Restricted</h2><p>You are authenticated but not a PlatformOwner.</p></div></div>";
         return;
       }
+      const data = await response.json().catch(() => {
+        throw new Error('Malformed dashboard response');
+      });
       if (!response.ok) {
         throw new Error((data && data.error) || `Server error (HTTP ${response.status})`);
       }
