@@ -95,8 +95,8 @@ function getCommunitySlugFromPath() {
 
 const CURRENT_COMMUNITY_SLUG = getCommunitySlugFromPath();
 
-const OFFICER_CAD_ROLES = ['Owner', 'Admin', 'Police', 'EMS', 'Dispatch', 'DOJ', 'Staff', 'LEO'];
-const CAD_ADMIN_BYPASS_ROLES = ['Owner', 'Admin'];
+const OFFICER_CAD_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher'];
+const CAD_ADMIN_BYPASS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'];
 
 function normalizeRole(role) {
   return String(role || '').trim();
@@ -169,6 +169,9 @@ async function applyCommunityBranding() {
   const buildCommunityHref = (target = '') => {
     if (!target || target === '/' || target === 'index' || target === 'index.html') {
       return `/c/${CURRENT_COMMUNITY_SLUG}/`;
+    }
+    if (target === 'cad' || target === 'cad.html' || target === 'police' || target === 'police.html') {
+      return `/c/${CURRENT_COMMUNITY_SLUG}/cad`;
     }
     const normalized = target.endsWith('.html') ? target : `${target}.html`;
     return `/c/${CURRENT_COMMUNITY_SLUG}/${normalized}`;
@@ -253,8 +256,22 @@ async function applyCommunityBranding() {
     if (communityCtxCad) communityCtxCad.textContent = window.GTAVCAD_CONTEXT.cadName || 'CAD';
     const communityCtxRole = document.querySelector('[data-context-role]');
     if (communityCtxRole) communityCtxRole.textContent = membership ? window.GTAVCAD_CONTEXT.role : 'No membership';
+    const usernameEl = document.querySelector('[data-context-username]');
+    if (usernameEl) usernameEl.textContent = data.user?.username || 'Unknown';
+    const communityRoleEl = document.querySelector('[data-context-community-role]');
+    if (communityRoleEl) communityRoleEl.textContent = membership?.role || 'Member';
     const communityCtxInvite = document.querySelector('[data-context-invite]');
     if (communityCtxInvite) communityCtxInvite.textContent = window.GTAVCAD_CONTEXT.inviteCode || 'Unavailable';
+    const cadAccess = Boolean(data.user?.can_access_police_cad);
+    const statusAccess = document.querySelector('[data-status-access]');
+    if (statusAccess) statusAccess.textContent = membership ? 'Active Member' : 'No Membership';
+    const statusCad = document.querySelector('[data-status-cad]');
+    if (statusCad) statusCad.textContent = cadAccess ? 'Authorized' : 'Police CAD access required';
+    document.querySelectorAll('[data-cad-link=\"true\"]').forEach((link) => {
+      if (cadAccess) return;
+      link.href = `/c/${CURRENT_COMMUNITY_SLUG}/cad`;
+      link.textContent = 'Locked';
+    });
     document.querySelectorAll('[data-context-department]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.department || '—'; });
     enforceCadRoleVisibility();
     window.dispatchEvent(new CustomEvent('gtavcad:context-ready', { detail: window.GTAVCAD_CONTEXT }));
