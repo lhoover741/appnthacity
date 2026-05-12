@@ -73,6 +73,25 @@ from models import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 PROCESS_START_TIME = time.time()
+
+def get_openrouter_http_referer():
+    domain = (os.getenv('OPENROUTER_HTTP_REFERER') or PLATFORM_DOMAIN or 'gtavcad.app').strip()
+    if domain.startswith(('http://', 'https://')):
+        return domain
+    return f'https://{domain}'
+
+
+def _safe_log_path(path):
+    parts = path.strip('/').split('/')
+    if len(parts) >= 3 and parts[0] == 'api' and parts[1] == 'invites':
+        parts[2] = '[redacted-invite-code]'
+        return '/' + '/'.join(parts)
+    if len(parts) >= 5 and parts[0] == 'api' and parts[1] == 'communities' and parts[3] == 'invites':
+        parts[4] = '[redacted-invite-code]'
+        return '/' + '/'.join(parts)
+    return path
+
+
 ACTIVE_SOCKET_CONNECTIONS = {}
 SOCKET_RATE_LIMITS = {}
 WEBSOCKET_EVENTS_PER_MINUTE = 120
@@ -482,7 +501,7 @@ def enrich_response_metadata(response):
         logger.info(json.dumps({
             'event': 'api_request',
             'request_id': getattr(g, 'request_id', None),
-            'path': request.path,
+            'path': _safe_log_path(request.path),
             'method': request.method,
             'status': response.status_code,
             'duration_ms': duration_ms,
@@ -3396,7 +3415,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3472,7 +3491,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3544,7 +3563,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3667,7 +3686,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3742,7 +3761,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3816,7 +3835,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3885,7 +3904,7 @@ Respond with ONLY a valid JSON object with one key:
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -3963,7 +3982,7 @@ Respond only with the JSON object. No markdown, no extra text."""
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
@@ -4319,7 +4338,7 @@ Structure: one opening sentence → **Calls** section → **Arrests** section �
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}',
-                'HTTP-Referer': 'https://nthacityrp.com',
+                'HTTP-Referer': get_openrouter_http_referer(),
                 'X-Title': 'GTAVCAD Police CAD'
             },
             method='POST'
