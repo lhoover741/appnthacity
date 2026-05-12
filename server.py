@@ -85,6 +85,62 @@ def _safe_json_error(message, code, status=400, details=None):
         'details': details or {}
     }), status
 
+
+
+DEFAULT_OPENROUTER_MODEL = 'openai/gpt-4o-mini'
+
+def _resolve_openrouter_model():
+    for env_name in ('OPENROUTER_MODEL', 'OPEN_ROUTER_MODEL', 'AI_OPENROUTER_MODEL'):
+        raw_model = os.getenv(env_name)
+        model = raw_model.strip() if raw_model else ''
+        if model:
+            return model
+    return DEFAULT_OPENROUTER_MODEL
+
+def get_platform_ai_config():
+    enabled_raw = (os.getenv('AI_ENABLED', 'true') or 'true').strip().lower()
+    enabled = enabled_raw in ('1', 'true', 'yes', 'on')
+    api_key = (
+        os.getenv('OPENROUTER_API_KEY')
+        or os.getenv('OPEN_ROUTER_API_KEY')
+        or os.getenv('AI_OPENROUTER_API_KEY')
+        or ''
+    ).strip()
+    model = _resolve_openrouter_model()
+    return {
+        'enabled': enabled,
+        'provider': 'openrouter',
+        'model': model,
+        'has_api_key': bool(api_key),
+        'api_key': api_key,
+    }
+
+
+def get_platform_ai_runtime_or_error():
+    cfg = get_platform_ai_config()
+    if not cfg['enabled'] or not cfg['has_api_key']:
+        return None, (jsonify({'success': False, 'error': 'AI assistant is not configured by the platform owner'}), 503)
+    return cfg, None
+
+
+def log_ai_request(route_name, success, model, error_message=None):
+    try:
+        uid = session.get('user_id')
+        log_row = AIGenerationLog(
+            community_id=get_current_community_id(),
+            user_id=uid if isinstance(uid, int) else None,
+            generation_type=route_name,
+            provider='OpenRouter',
+            model=model,
+            status='success' if success else 'failure',
+            error_message=(error_message or '')[:500] if not success else None,
+        )
+        db.session.add(log_row)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.warning(f'AI usage log failed for {route_name}: {e}')
+
 def _user_field(user, field_name, default=None):
     """Read a user field safely to tolerate optional/nullable columns."""
     try:
@@ -3284,9 +3340,10 @@ def clear_bolo(bolo_id):
 @police_required
 @app.route('/api/ai/use-of-force', methods=['POST'])
 def ai_use_of_force():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     officer       = data.get('officer', 'Unknown').strip()
@@ -3341,7 +3398,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -3388,9 +3445,10 @@ Respond only with the JSON object. No markdown, no extra text."""
 @police_required
 @app.route('/api/ai/generate-bolo', methods=['POST'])
 def ai_generate_bolo():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     charges = data.get('charges', '').strip()
@@ -3416,7 +3474,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -3452,9 +3510,10 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/ai/police-report', methods=['POST'])
 def ai_police_report():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured. Add it in your environment secrets.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     suspect = data.get('suspectName', 'Unknown')
@@ -3487,7 +3546,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user',   'content': user_msg}
@@ -3580,9 +3639,10 @@ def post_radio_log():
 @app.route('/api/ai/dispatch', methods=['POST'])
 @dispatch_required
 def ai_dispatch():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     caller = data.get('callerName', 'Unknown')
@@ -3609,7 +3669,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -3653,9 +3713,10 @@ Respond only with the JSON object. No markdown, no extra text."""
 @police_required
 @app.route('/api/ai/warrant', methods=['POST'])
 def ai_warrant():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     suspect = data.get('warrantName', 'Unknown')
@@ -3683,7 +3744,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -3725,9 +3786,10 @@ Respond only with the JSON object. No markdown, no extra text."""
 @app.route('/api/ai/generate-call', methods=['POST'])
 @dispatch_required
 def ai_generate_call():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     call_type = data.get('callType', '').strip()
@@ -3756,7 +3818,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -3792,9 +3854,10 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 @app.route('/api/ai/incident-summary', methods=['POST'])
 def ai_incident_summary():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     notes = data.get('notes', '').strip()
@@ -3824,7 +3887,7 @@ Respond with ONLY a valid JSON object with one key:
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -3860,9 +3923,10 @@ Respond with ONLY a valid JSON object with one key:
 
 @app.route('/api/ai/suspect-match', methods=['POST'])
 def ai_suspect_match():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data = request.get_json(silent=True) or {}
     description = data.get('description', '').strip()
@@ -3901,7 +3965,7 @@ Respond only with the JSON object. No markdown, no extra text."""
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
@@ -4201,9 +4265,10 @@ def post_cad_data():
 
 @app.route('/api/ai/shift-summary', methods=['POST'])
 def ai_shift_summary():
-    api_key = os.environ.get('OPENROUTER_API_KEY', '')
-    if not api_key:
-        return jsonify({'success': False, 'error': 'OPENROUTER_API_KEY not configured.'}), 503
+    ai_runtime, ai_error = get_platform_ai_runtime_or_error()
+    if ai_error:
+        return ai_error
+    api_key = ai_runtime['api_key']
 
     data     = request.get_json(silent=True) or {}
     officer  = data.get('officer',    'Unknown')
@@ -4258,7 +4323,7 @@ Structure: one opening sentence → **Calls** section → **Arrests** section �
 
     try:
         payload = json.dumps({
-            'model': 'openai/gpt-4o-mini',
+            'model': ai_runtime['model'],
             'messages': [
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user',   'content': user_msg}
@@ -8229,3 +8294,26 @@ def community_admin_activity():
     if error:
         return error, status
     return jsonify({'success': True, 'activity': _community_admin_activity_rows(community.community_id, 100)})
+
+
+@app.route('/api/ai/config', methods=['GET'])
+def get_ai_config_status():
+    cfg = get_platform_ai_config()
+    return jsonify({
+        'success': True,
+        'ai_enabled': bool(cfg['enabled'] and cfg['has_api_key']),
+        'provider': 'OpenRouter',
+        'model': cfg['model'],
+        'configured': cfg['has_api_key'],
+    })
+
+
+@app.route('/api/community-admin/ai-status', methods=['GET'])
+def community_admin_ai_status():
+    membership, denied = require_community_admin_membership()
+    if denied:
+        return denied
+    community_id = membership.community_id
+    cfg = get_platform_ai_config()
+    usage_count = scoped_query(AIGenerationLog).filter_by(community_id=community_id).count()
+    return jsonify({'success': True, 'ai_available': bool(cfg['enabled'] and cfg['has_api_key']), 'provider': 'Platform OpenRouter', 'model': cfg['model'], 'usage_count': usage_count})
