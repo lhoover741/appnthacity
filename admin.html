@@ -39,7 +39,7 @@
 let targetUserId=null, lastOverview=null;
 const statusFromTime=(iso)=>{ if(!iso) return 'OFFLINE'; const m=(Date.now()-new Date(iso))/60000; return m<5?'ONLINE':m<30?'IDLE':'OFFLINE'; };
 const fmt=(v)=> v??'—'; const toast=(m)=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)};
-const esc=(v)=>String(v??'').replace(/[&<>"']/g,(m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',\"'\":'&#39;'}[m]));
+const esc=(v)=>String(v??'').replace(/[&<>"']/g,(m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function toggleModal(on,id){targetUserId=id??null;document.getElementById('resetModal').classList.toggle('active',!!on)}
 async function submitReset(){const p1=pw1.value,p2=pw2.value;if(p1.length<8||p1!==p2)return toast('Password mismatch or too short');const r=await fetch(`/api/platform-admin/users/${targetUserId}/reset-password`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:p1})});const d=await r.json();if(d.success){toast('Password reset + sessions invalidated');toggleModal(false);}else toast(d.error||'Reset failed');}
 async function apiCall(url, method='POST', body=null){const r=await fetch(url,{method,credentials:'include',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});const d=await r.json().catch(()=>({success:false,error:'Invalid response'}));if(!r.ok||!d.success)throw new Error(d.error||`HTTP ${r.status}`);return d;}
