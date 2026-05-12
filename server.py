@@ -29,6 +29,10 @@ from security_service import (
     ROLES
 )
 from performance_service import cache, paginate_query
+from cad_access import (
+    evaluate_police_cad_access,
+    normalize_community_role as canonical_normalize_community_role,
+)
 from platform_config import (
     PLATFORM_NAME,
     PLATFORM_DOMAIN,
@@ -458,15 +462,64 @@ register_community_routes(app)
 logger.info("✓ Community routes registered")
 
 
+def _cad_session_values():
+    return {
+        'user_id': session.get('user_id'),
+        'role': session.get('role'),
+        'platform_role': session.get('platform_role'),
+        'email': session.get('email'),
+        'is_platform_owner': session.get('is_platform_owner'),
+        'community_id': get_current_community_id(),
+        'selected_community_id': session.get('selected_community_id'),
+    }
+
+
+def _log_police_cad_access_decision(route, decision):
+    logger.debug(
+        'Police CAD access decision route=%s user_id=%s community_id=%s role=%s normalized_role=%s '
+        'platform_role=%s is_platform_owner=%s explicit_permission=%s final_can_access_police_cad=%s',
+        route,
+        decision.get('user_id'),
+        decision.get('community_id'),
+        decision.get('role'),
+        decision.get('normalized_role'),
+        decision.get('platform_role'),
+        decision.get('is_platform_owner'),
+        decision.get('explicit_permission'),
+        decision.get('final_can_access_police_cad'),
+    )
+
+
+def _current_police_cad_access_decision(route=None, role=None, user=None, membership=None):
+    user_id = session.get('user_id')
+    if user is None and user_id:
+        user = getattr(g, 'current_user', None) or User.query.get(user_id)
+    if membership is None:
+        membership = getattr(g, 'current_membership', None)
+        community_id = get_current_community_id()
+        if membership is None and user_id and community_id:
+            membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id, status='Active').first()
+    effective_role = role
+    if effective_role is None:
+        effective_role = getattr(g, 'current_role', None) or getattr(membership, 'role', None) or session.get('current_role') or session.get('role', 'Civilian')
+    decision = evaluate_police_cad_access(
+        user=user,
+        role=effective_role,
+        membership=membership,
+        session_values=_cad_session_values(),
+    )
+    _log_police_cad_access_decision(route or request.path, decision)
+    return decision
+
+
 def current_role_allows_police_cad():
-    """True when the active community role may access police CAD data/tools."""
-    role = getattr(g, 'current_role', None) or session.get('role', 'Civilian')
-    normalized = normalize_community_role(role)
-    return normalized in {'PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher'}
+    """True when the active user may access police CAD data/tools."""
+    return _current_police_cad_access_decision(request.path).get('final_can_access_police_cad') is True
 
 
 def require_police_cad_access():
-    if not current_role_allows_police_cad():
+    decision = _current_police_cad_access_decision(request.path)
+    if decision.get('final_can_access_police_cad') is not True:
         return jsonify({'success': False, 'error': 'Police CAD access required'}), 403
     return None
 
@@ -481,11 +534,18 @@ def get_user_community_membership(user_id):
     return membership, community
 
 
-def user_can_access_police_cad(owner, community_role):
+def user_can_access_police_cad(owner=False, community_role=None, user=None, membership=None):
+    session_values = _cad_session_values()
     if owner:
-        return True
-    normalized = normalize_community_role(community_role) if community_role else None
-    return normalized in {'PlatformOwner','CommunityOwner','CommunityAdmin','Owner','Admin','Police','Officer','Dispatch','Dispatcher','EMS'}
+        session_values['is_platform_owner'] = True
+    decision = evaluate_police_cad_access(
+        user=user,
+        role=community_role,
+        membership=membership,
+        session_values=session_values,
+    )
+    _log_police_cad_access_decision(request.path if request else 'serialization', decision)
+    return decision.get('final_can_access_police_cad') is True
 
 
 def get_post_login_redirect(owner, community_slug, requires_community_setup):
@@ -2352,7 +2412,7 @@ def user_login():
             'community_slug': community_slug,
             'community_role': community_role,
             'requires_community_setup': requires_community_setup,
-            'can_access_police_cad': user_can_access_police_cad(is_owner, community_role),
+            'can_access_police_cad': user_can_access_police_cad(is_owner, community_role, user=user, membership=membership),
         },
         'redirect': redirect_target
     })
@@ -2439,7 +2499,7 @@ def user_session():
             'community_slug': community_slug,
             'community_role': community_role,
             'requires_community_setup': requires_community_setup,
-            'can_access_police_cad': user_can_access_police_cad(owner, community_role),
+            'can_access_police_cad': user_can_access_police_cad(owner, community_role, user=user, membership=membership),
         },
         'redirect': redirect_target,
     })
@@ -4026,6 +4086,9 @@ def post_alert():
 @police_required
 @app.route('/api/cad/arrests', methods=['POST'])
 def create_arrest_report():
+    denied = require_police_cad_access()
+    if denied:
+        return denied
     body = request.get_json(silent=True) or {}
     for field in ('suspectName', 'charges', 'arrestingOfficer', 'arrestLocation'):
         if not body.get(field):
@@ -4521,6 +4584,9 @@ def search_civilians():
 @app.route('/api/cad/search', methods=['POST'])
 def cad_search():
     """Search civilians in PostgreSQL database for CAD."""
+    denied = require_police_cad_access()
+    if denied:
+        return denied
     try:
         data = request.get_json(silent=True) or {}
         query_type = data.get('type', 'all')
@@ -6233,14 +6299,7 @@ def ensure_platform_owner(user):
 
 
 def normalize_community_role(role):
-    mapping = {
-        'communityowner': 'CommunityOwner',
-        'owner': 'Owner',
-        'communityadmin': 'CommunityAdmin',
-        'admin': 'Admin',
-    }
-    key = (role or '').strip().lower()
-    return mapping.get(key, role)
+    return canonical_normalize_community_role(role)
 
 
 def has_community_owner_access(user_id, community=None, membership=None):
@@ -6840,6 +6899,7 @@ def community_admin_overview():
         logger.warning(f'Community admin activity hydration failed for {community_id}: {e}')
         activities = []
 
+    current_user_obj = User.query.get(current_user_id) if current_user_id else None
     user_map = {u.id: u for u in User.query.filter(User.id.in_([m.user_id for m in members])).all()} if members else {}
     session_map = {s.user_id: s for s in UserSession.query.filter(UserSession.user_id.in_(list(user_map.keys())), UserSession.active.is_(True)).all()} if user_map else {}
 
@@ -6874,10 +6934,20 @@ def community_admin_overview():
         'civilians': _safe_count(lambda: Civilian.query.filter_by(community_id=community_id).count()),
         'active_calls': _safe_count(lambda: DispatchCall.query.filter_by(community_id=community_id, status='Active').count()),
         'active_warrants': _safe_count(lambda: Warrant.query.filter_by(community_id=community_id, warrant_status='Active').count()),
+        'current_user': {
+            'id': current_user_id,
+            'username': session.get('username'),
+            'role': session.get('role', 'Civilian'),
+            'platform_role': session.get('platform_role'),
+            'community_role': membership.role if membership else None,
+            'is_platform_owner': bool(session.get('is_platform_owner')),
+            'can_access_police_cad': user_can_access_police_cad(is_platform_owner(), membership.role if membership else None, user=current_user_obj, membership=membership),
+        },
         'members': [{
             'user_id': m.user_id,
             'username': user_map.get(m.user_id).username if user_map.get(m.user_id) else f'user-{m.user_id}',
             'role': m.role,
+            'can_access_police_cad': user_can_access_police_cad(False, m.role, user=user_map.get(m.user_id), membership=m),
             'callsign': None,
             'department': None,
             'last_active': session_map.get(m.user_id).last_seen.isoformat() if session_map.get(m.user_id) and session_map.get(m.user_id).last_seen else None,

@@ -19,6 +19,7 @@ from database import db
 from models import (
     User, Config, Community, CommunityMember, CommunityInvite
 )
+from cad_access import evaluate_police_cad_access
 from community_service import (
     get_current_community_id, get_user_communities,
     community_required, community_member_required,
@@ -52,13 +53,37 @@ DEFAULT_PENAL_CODES = {
 
 DEFAULT_DISPATCH_CATEGORIES = ['Emergency', 'Non-Emergency', 'Traffic', 'Medical', 'Fire']
 
-POLICE_CAD_ALLOWED_ROLES = {'PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher'}
 
 
-def can_access_police_cad(platform_role, community_role):
-    if str(platform_role or '').strip() == 'PlatformOwner':
-        return True
-    return str(community_role or '').strip() in POLICE_CAD_ALLOWED_ROLES
+def can_access_police_cad(platform_role, community_role, user=None, membership=None):
+    decision = evaluate_police_cad_access(
+        user=user,
+        role=community_role,
+        membership=membership,
+        session_values={
+            'user_id': session.get('user_id'),
+            'role': session.get('role'),
+            'platform_role': platform_role or session.get('platform_role'),
+            'email': session.get('email'),
+            'is_platform_owner': session.get('is_platform_owner'),
+            'community_id': getattr(membership, 'community_id', None) or get_current_community_id(),
+            'selected_community_id': session.get('selected_community_id'),
+        },
+    )
+    logger.debug(
+        'Police CAD access decision route=%s user_id=%s community_id=%s role=%s normalized_role=%s platform_role=%s '
+        'is_platform_owner=%s explicit_permission=%s final_can_access_police_cad=%s',
+        request.path,
+        decision.get('user_id'),
+        decision.get('community_id'),
+        decision.get('role'),
+        decision.get('normalized_role'),
+        decision.get('platform_role'),
+        decision.get('is_platform_owner'),
+        decision.get('explicit_permission'),
+        decision.get('final_can_access_police_cad'),
+    )
+    return decision.get('final_can_access_police_cad') is True
 
 
 def generate_invite_code(length=8):
@@ -513,7 +538,7 @@ def get_current_community_context():
             'platform_role': session.get('platform_role'),
             'community_role': membership.role if membership else None,
             'is_platform_owner': bool(session.get('is_platform_owner')),
-            'can_access_police_cad': can_access_police_cad(session.get('platform_role'), membership.role if membership else None),
+            'can_access_police_cad': can_access_police_cad(session.get('platform_role'), membership.role if membership else None, user=User.query.get(user_id) if user_id else None, membership=membership),
         },
         'invite_code': invite.invite_code,
     }), 200
