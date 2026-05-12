@@ -139,6 +139,7 @@ def create_dispatch_call(caller_name, location, call_type, description, priority
         caller_name=caller_name,
         location=location,
         description=description,
+        call_type=call_type,
         priority=priority,
         status='New',
     )
@@ -164,6 +165,7 @@ def get_active_calls():
         'caller_name': c.caller_name,
         'location': c.location,
         'description': c.description,
+        'call_type': c.call_type,
         'priority': c.priority,
         'status': c.status,
         'assigned_units': c.assigned_unit.split(',') if c.assigned_unit else [],
