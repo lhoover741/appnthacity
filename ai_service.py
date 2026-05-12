@@ -28,6 +28,7 @@ def get_ai_config():
         'provider': 'OpenRouter',
         'model': model,
         'configured': bool(api_key) and enabled,
+        'has_api_key': bool(api_key),
         'api_key': api_key,
     }
 

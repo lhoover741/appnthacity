@@ -33,7 +33,7 @@
   <div class="panel"><h3>Activity Feed</h3><div id="feed" class="feed"></div><h3>Load Chart</h3><div id="chart" class="chart"></div></div></section>
   <section class="panel" style="margin-top:1rem"><h3>User Management</h3><div class="table-wrap"><table><thead><tr><th>Username</th><th>Email</th><th>Platform Role</th><th>Community</th><th>Community Role</th><th>Last Login</th><th>Status</th><th>Sessions</th><th>Actions</th></tr></thead><tbody id="userRows"></tbody></table></div></section>
 </main></div>
-<div id="resetModal" class="modal"><div class="box"><h3>Reset Password</h3><input id="pw1" type="password" placeholder="New password"/><input id="pw2" type="password" placeholder="Confirm password"/><button onclick="submitReset()">Submit</button> <button onclick="toggleModal(false)">Cancel</button></div></div>
+<div id="resetModal" class="modal"><div class="box"><h3>Reset Password</h3><input id="pw1" type="password" placeholder="New password"/><input id="pw2" type="password" placeholder="Confirm password"/><div class="small">Minimum 10 chars with uppercase, lowercase, number, and special character.</div><button onclick="submitReset()">Submit</button> <button onclick="toggleModal(false)">Cancel</button></div></div>
 <div id="toast" class="toast"></div>
 <script>
 let targetUserId=null, lastOverview=null;
@@ -41,7 +41,7 @@ const statusFromTime=(iso)=>{ if(!iso) return 'OFFLINE'; const m=(Date.now()-new
 const fmt=(v)=> v??'—'; const toast=(m)=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2500)};
 const esc=(v)=>String(v??'').replace(/[&<>"']/g,(m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',\"'\":'&#39;'}[m]));
 function toggleModal(on,id){targetUserId=id??null;document.getElementById('resetModal').classList.toggle('active',!!on)}
-async function submitReset(){const p1=pw1.value,p2=pw2.value;if(p1.length<8||p1!==p2)return toast('Password mismatch or too short');const r=await fetch(`/api/platform-admin/users/${targetUserId}/reset-password`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:p1})});const d=await r.json();if(d.success){toast('Password reset + sessions invalidated');toggleModal(false);}else toast(d.error||'Reset failed');}
+async function submitReset(){const p1=pw1.value,p2=pw2.value;const strong=/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{10,}$/;if(!strong.test(p1)||p1!==p2)return toast('Password mismatch or must meet complexity requirements');const r=await fetch(`/api/platform-admin/users/${targetUserId}/reset-password`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_password:p1})});const d=await r.json();if(d.success){toast('Password reset + sessions invalidated');toggleModal(false);}else toast(d.error||'Reset failed');}
 async function apiCall(url, method='POST', body=null){const r=await fetch(url,{method,credentials:'include',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});const d=await r.json().catch(()=>({success:false,error:'Invalid response'}));if(!r.ok||!d.success)throw new Error(d.error||`HTTP ${r.status}`);return d;}
 async function openCommunity(id){const d=await apiCall(`/api/platform-admin/communities/${id}/open`);window.location.href=d.redirect;}
 async function suspendCommunity(id){await apiCall(`/api/platform-admin/communities/${id}/suspend`);toast('Community suspended');refresh();}
