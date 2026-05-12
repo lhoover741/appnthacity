@@ -90,7 +90,11 @@ def _safe_json_error(message, code, status=400, details=None):
 
 
 def get_platform_ai_config():
-    return get_ai_config()
+    cfg = get_ai_config()
+    return {
+        **cfg,
+        'has_api_key': bool(cfg.get('configured')),
+    }
 
 
 def get_platform_ai_runtime_or_error():
