@@ -87,6 +87,16 @@ def _safe_json_error(message, code, status=400, details=None):
 
 
 
+DEFAULT_OPENROUTER_MODEL = 'openai/gpt-4o-mini'
+
+def _resolve_openrouter_model():
+    for env_name in ('OPENROUTER_MODEL', 'OPEN_ROUTER_MODEL', 'AI_OPENROUTER_MODEL'):
+        raw_model = os.getenv(env_name)
+        model = raw_model.strip() if raw_model else ''
+        if model:
+            return model
+    return DEFAULT_OPENROUTER_MODEL
+
 def get_platform_ai_config():
     enabled_raw = (os.getenv('AI_ENABLED', 'true') or 'true').strip().lower()
     enabled = enabled_raw in ('1', 'true', 'yes', 'on')
@@ -96,7 +106,7 @@ def get_platform_ai_config():
         or os.getenv('AI_OPENROUTER_API_KEY')
         or ''
     ).strip()
-    model = (os.getenv('OPENROUTER_MODEL') or 'openai/gpt-4o-mini').strip()
+    model = _resolve_openrouter_model()
     return {
         'enabled': enabled,
         'provider': 'openrouter',
