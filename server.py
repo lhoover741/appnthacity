@@ -34,6 +34,7 @@ from cad_access import (
     evaluate_police_cad_access,
     normalize_community_role as canonical_normalize_community_role,
 )
+from ai_service import get_ai_config, ai_runtime_or_error, chat_json
 from platform_config import (
     PLATFORM_NAME,
     PLATFORM_DOMAIN,
@@ -8317,3 +8318,237 @@ def community_admin_ai_status():
     cfg = get_platform_ai_config()
     usage_count = scoped_query(AIGenerationLog).filter_by(community_id=community_id).count()
     return jsonify({'success': True, 'ai_available': bool(cfg['enabled'] and cfg['has_api_key']), 'provider': 'Platform OpenRouter', 'model': cfg['model'], 'usage_count': usage_count})
+
+
+@app.route('/api/cad/ai/status', methods=['GET'])
+def cad_ai_status():
+    if not session.get('user_id'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    if not current_role_allows_police_cad():
+        return jsonify({'success': False, 'error': 'Police CAD access required'}), 403
+    cfg = get_ai_config()
+    return jsonify({'success': True, 'ai_enabled': cfg['enabled'], 'provider': cfg['provider'], 'model': cfg['model'], 'configured': cfg['configured']})
+
+
+def _cad_ai_guard(case_id=None):
+    if not session.get('user_id'):
+        return None, (jsonify({'success': False, 'error': 'Unauthorized'}), 401)
+    if not current_role_allows_police_cad():
+        return None, (jsonify({'success': False, 'error': 'Police CAD access required'}), 403)
+    community_id = get_current_community_id()
+    if not community_id:
+        return None, (jsonify({'success': False, 'error': 'Police CAD access required'}), 403)
+    case_obj = None
+    if case_id:
+        case_obj = scoped_query(CaseFile, community_id).filter_by(case_id=case_id).first()
+        if not case_obj:
+            return None, (jsonify({'success': False, 'error': 'Case not found'}), 404)
+    return {'community_id': community_id, 'case': case_obj}, None
+
+
+def _log_ai_generation(generation_type, success, input_params, output_summary='', tokens_used=None, error_message=None):
+    try:
+        log = AIGenerationLog(
+            log_id=f"AI-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}",
+            community_id=get_current_community_id(),
+            generation_type=generation_type,
+            input_params=json.dumps(input_params)[:4000],
+            output_summary=(output_summary or '')[:4000],
+            tokens_used=tokens_used if isinstance(tokens_used, int) else None,
+            status='Success' if success else 'Failure',
+            error_message=(error_message or '')[:500],
+        )
+        db.session.add(log)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def _ai_json_route(route_type, system_prompt, user_prompt, input_meta):
+    data, err = ai_runtime_or_error()
+    if err:
+        _log_ai_generation(route_type, False, input_meta, error_message=err)
+        return jsonify({'success': False, 'error': err}), 503
+    out, provider_err, usage = chat_json(system_prompt, user_prompt)
+    if provider_err:
+        _log_ai_generation(route_type, False, input_meta, error_message=provider_err)
+        return jsonify({'success': False, 'error': 'AI provider request failed'}), 502
+    _log_ai_generation(route_type, True, input_meta, output_summary=json.dumps(out)[:1200], tokens_used=(usage or {}).get('total_tokens'))
+    return out, data
+
+
+@app.route('/api/cad/ai/generate-911-call', methods=['POST'])
+def cad_ai_generate_911_call():
+    guard, err = _cad_ai_guard()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    area = (data.get('area_of_play') or 'City Only').strip() or 'City Only'
+    prompt = f"Generate realistic GTA V Los Santos 911 call JSON with caller_name, location, incident_type, description, priority, recommended_units, status. Area of play: {area}. Input: {json.dumps(data)}"
+    ai_result = _ai_json_route('generate_911_call', 'Do not invent impossible locations. City Only unless explicitly provided. No markdown.', prompt, data)
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, _cfg = ai_result
+    return jsonify({'success': True, 'call': {**out, 'status': 'Pending'}})
+
+
+@app.route('/api/cad/ai/cleanup-report', methods=['POST'])
+def cad_ai_cleanup_report():
+    guard, err = _cad_ai_guard()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    prompt = f"Clean this police RP report for grammar/tone without inventing facts. Return JSON keys cleaned_text, missing_info, notes. Input: {json.dumps(data)}"
+    ai_result = _ai_json_route('cleanup_report', 'Preserve facts exactly. Professional police report style.', prompt, data)
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, _cfg = ai_result
+    return jsonify({'success': True, 'cleaned_text': out.get('cleaned_text',''), 'missing_info': out.get('missing_info', []), 'notes': out.get('notes', [])})
+
+
+@app.route('/api/cad/ai/incident-report', methods=['POST'])
+def cad_ai_incident_report():
+    data = request.get_json(silent=True) or {}
+    guard, err = _cad_ai_guard(case_id=data.get('case_id'))
+    if err:
+        return err
+    prompt = f"Write incident report JSON: narrative,timeline,probable_cause,officer_actions,suspect_actions,scene_control,evidence_references,recommended_missing_fields. Use only provided input: {json.dumps(data)}"
+    ai_result = _ai_json_route('incident_report', 'Do not invent evidence, names, links, or statements.', prompt, data)
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, _cfg = ai_result
+    return jsonify({'success': True, 'report': out})
+
+
+def _safe_split_csv(raw):
+    if not raw:
+        return []
+    return [x.strip() for x in str(raw).split(',') if x and x.strip()]
+
+
+def _incident_context_from_inputs(payload, community_id):
+    case_id = (payload.get('case_id') or '').strip()
+    call_id = (payload.get('call_id') or '').strip()
+    civilian_id = (payload.get('civilian_id') or '').strip()
+    vehicle_id = (payload.get('vehicle_id') or '').strip()
+    plate_number = (payload.get('plate_number') or '').strip()
+
+    context = {'case': None, 'dispatch_call': None, 'civilian': None, 'vehicle': None, 'charges': [], 'warrants': [], 'bolos': [], 'evidence': [], 'arrests': [], 'traffic_stops': [], 'related_cases': [], 'missing_info': []}
+
+    if case_id:
+        context['case'] = scoped_query(CaseFile, community_id).filter_by(case_id=case_id).first()
+        if not context['case']:
+            context['missing_info'].append('case_id_not_found')
+    if call_id:
+        context['dispatch_call'] = scoped_query(DispatchCall, community_id).filter_by(call_id=call_id).first()
+        if not context['dispatch_call']:
+            c911 = scoped_query(Call911, community_id).filter_by(call_id=call_id).first()
+            if c911:
+                context['dispatch_call'] = c911
+            else:
+                context['missing_info'].append('call_id_not_found')
+    if civilian_id:
+        context['civilian'] = scoped_query(Civilian, community_id).filter_by(civilian_id=civilian_id).first()
+        if not context['civilian']:
+            context['missing_info'].append('civilian_id_not_found')
+    if vehicle_id:
+        context['vehicle'] = scoped_query(Vehicle, community_id).filter_by(vehicle_id=vehicle_id).first()
+    if not context['vehicle'] and plate_number:
+        context['vehicle'] = scoped_query(Vehicle, community_id).filter_by(plate=plate_number).first()
+    if (vehicle_id or plate_number) and not context['vehicle']:
+        context['missing_info'].append('vehicle_not_found')
+
+    case_obj = context['case']
+    if case_obj:
+        context['charges'] = scoped_query(CaseCharge, community_id).filter_by(case_id=case_obj.case_id).all()
+        context['related_cases'] = scoped_query(CaseFile, community_id).filter(CaseFile.case_id != case_obj.case_id, or_(CaseFile.defendant_civilian_id == case_obj.defendant_civilian_id, CaseFile.arrest_id == case_obj.arrest_id)).limit(5).all()
+        linked_call = (case_obj.linked_911_call_id or '').strip()
+        if linked_call and not context['dispatch_call']:
+            context['dispatch_call'] = scoped_query(DispatchCall, community_id).filter_by(call_id=linked_call).first()
+        linked_evidence = _safe_split_csv(case_obj.linked_evidence_ids) + _safe_split_csv(case_obj.evidence_ids)
+        if linked_evidence:
+            context['evidence'] = scoped_query(Evidence, community_id).filter(Evidence.evidence_id.in_(linked_evidence)).all()
+
+    civ_id = civilian_id or (case_obj.defendant_civilian_id if case_obj else '')
+    if civ_id:
+        if not context['civilian']:
+            context['civilian'] = scoped_query(Civilian, community_id).filter_by(civilian_id=civ_id).first()
+        context['warrants'] = scoped_query(Warrant, community_id).filter_by(civilian_id=civ_id).all()
+        context['arrests'] = scoped_query(Arrest, community_id).filter_by(civilian_id=civ_id).order_by(Arrest.created_at.desc()).limit(5).all()
+        context['traffic_stops'] = scoped_query(TrafficStop, community_id).filter(or_(TrafficStop.driver_name == (f"{context['civilian'].first_name} {context['civilian'].last_name}" if context.get('civilian') else ''), TrafficStop.plate == (context['vehicle'].plate if context.get('vehicle') else ''))).order_by(TrafficStop.created_at.desc()).limit(5).all()
+
+    bolo_query = scoped_query(Bolo, community_id)
+    if context['civilian']:
+        full_name = f"{context['civilian'].first_name} {context['civilian'].last_name}".strip().lower()
+        context['bolos'] = [b for b in bolo_query.filter_by(status='Active').limit(50).all() if full_name in (b.suspect_name or '').lower()]
+    elif context['vehicle']:
+        plate = (context['vehicle'].plate or '').lower()
+        context['bolos'] = [b for b in bolo_query.filter_by(status='Active').limit(50).all() if plate and plate in ((b.vehicle or '').lower() + ' ' + (b.description or '').lower())]
+
+    return context
+
+
+def _serialize_incident_context(ctx):
+    civ = ctx.get('civilian')
+    veh = ctx.get('vehicle')
+    case_obj = ctx.get('case')
+    dispatch = ctx.get('dispatch_call')
+    dispatch_payload = None
+    if dispatch:
+        dispatch_payload = {
+            'call_id': dispatch.call_id,
+            'caller_name': dispatch.caller_name,
+            'location': dispatch.location,
+            'call_type': getattr(dispatch, 'call_type', getattr(dispatch, 'incident_type', None)),
+            'priority': dispatch.priority,
+            'assigned_unit': dispatch.assigned_unit,
+            'status': dispatch.status,
+            'notes': getattr(dispatch, 'notes', getattr(dispatch, 'dispatch_notes', None)),
+        }
+
+    return {
+        'case': {'case_id': case_obj.case_id, 'title': case_obj.title, 'incident_type': case_obj.case_type, 'location': case_obj.location, 'priority': case_obj.priority, 'notes': case_obj.report_notes} if case_obj else None,
+        'dispatch_call': dispatch_payload,
+        'civilian': {'civilian_id': civ.civilian_id, 'name': f"{civ.first_name} {civ.last_name}", 'dob': civ.date_of_birth.isoformat() if civ.date_of_birth else None, 'address': civ.address, 'driver_license_status': civ.driver_license_status, 'firearm_license_status': civ.firearm_license_status, 'business_license_status': civ.business_license_status, 'gang_affiliation': civ.gang_affiliation} if civ else None,
+        'vehicle': {'vehicle_id': veh.vehicle_id, 'plate': veh.plate, 'make': veh.make, 'model': veh.model, 'color': veh.color, 'year': veh.year, 'registration_status': veh.registration_status, 'insurance_status': veh.insurance_status, 'owner_name': veh.owner_name} if veh else None,
+        'charges': [{'charge_id': c.charge_id, 'charge': c.charge_name, 'penal_code': c.penal_code, 'severity': c.severity, 'counts': c.counts, 'recommended_fine': c.recommended_fine, 'recommended_jail_time': c.recommended_jail_time, 'source': 'existing'} for c in ctx.get('charges', [])],
+        'warrants': [{'warrant_id': w.warrant_id, 'status': w.warrant_status, 'charges': w.warrant_charges, 'issuer': w.warrant_issuer} for w in ctx.get('warrants', [])],
+        'bolos': [{'bolo_id': b.bolo_id, 'status': b.status, 'description': b.description, 'vehicle': b.vehicle} for b in ctx.get('bolos', [])],
+        'evidence': [{'evidence_id': e.evidence_id, 'type': e.evidence_type, 'description': e.evidence_description, 'link': e.clip_link or e.screenshot_link, 'officer': e.officer, 'storage_status': e.storage_status} for e in ctx.get('evidence', [])],
+        'arrests': [{'arrest_id': a.arrest_id, 'suspect_name': a.suspect_name, 'charges': a.charges, 'officer': a.arresting_officer, 'penalty': a.penalty, 'disposition': a.status} for a in ctx.get('arrests', [])],
+        'traffic_stops': [{'stop_id': t.stop_id, 'location': t.location, 'reason': t.reason, 'officer': t.officer, 'disposition': t.outcome, 'notes': t.notes} for t in ctx.get('traffic_stops', [])],
+        'related_cases': [{'case_id': c.case_id, 'title': c.title, 'status': c.status} for c in ctx.get('related_cases', [])],
+        'missing_info': ctx.get('missing_info', []),
+    }
+
+@app.route('/api/cad/ai/incident-from-notes', methods=['POST'])
+def cad_ai_incident_from_notes():
+    payload = request.get_json(silent=True) or {}
+    guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
+    if err:
+        return err
+    notes = (payload.get('officer_notes') or '').strip()
+    if not notes:
+        return jsonify({'success': False, 'error': 'officer_notes is required'}), 400
+
+    context = _incident_context_from_inputs(payload, guard['community_id'])
+    serialized = _serialize_incident_context(context)
+
+    system_prompt = 'Officer notes are primary truth. Use linked CAD records only as support. Never invent charges, warrants, BOLOs, arrests, civilians, vehicles, or evidence. Flag conflicts and missing court details under missing_info. Do not decide guilt. Professional GTA RP law-enforcement tone. Do not claim to review clips/bodycam.'
+    user_prompt = f"Build incident report JSON with keys: title, incident_type, location, priority, summary, narrative, timeline, probable_cause, involved_civilians, involved_officers, vehicles, charges, warrants, bolos, evidence, related_cases, arrests, traffic_stops, scene_control, officer_actions, suspect_actions, recommended_next_steps, missing_info, court_risk_notes. Mark non-existing charge ideas as source=suggested. Input notes: {notes}. Linked data: {json.dumps(serialized)}"
+
+    ai_result = _ai_json_route('incident_from_notes', system_prompt, user_prompt, {'case_id': payload.get('case_id'), 'call_id': payload.get('call_id'), 'civilian_id': payload.get('civilian_id'), 'vehicle_id': payload.get('vehicle_id')})
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out, cfg = ai_result
+
+    report = out if isinstance(out, dict) else {}
+    report.setdefault('missing_info', [])
+    for mi in serialized.get('missing_info', []):
+        if mi not in report['missing_info']:
+            report['missing_info'].append(mi)
+
+    return jsonify({'success': True, 'report': report, 'linked_context_counts': {
+        'charges': len(serialized['charges']), 'warrants': len(serialized['warrants']), 'bolos': len(serialized['bolos']),
+        'evidence': len(serialized['evidence']), 'arrests': len(serialized['arrests']), 'traffic_stops': len(serialized['traffic_stops'])
+    }})
