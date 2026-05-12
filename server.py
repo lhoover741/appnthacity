@@ -8285,10 +8285,9 @@ def community_admin_ai_status():
 
 @app.route('/api/cad/ai/status', methods=['GET'])
 def cad_ai_status():
-    if not session.get('user_id'):
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-    if not current_role_allows_police_cad():
-        return jsonify({'success': False, 'error': 'Police CAD access required'}), 403
+    guard, err = _cad_ai_guard()
+    if err:
+        return err
     cfg = get_ai_config()
     return jsonify({'success': True, 'ai_enabled': cfg['enabled'], 'provider': cfg['provider'], 'model': cfg['model'], 'configured': cfg['configured'], 'has_api_key': cfg['has_api_key']})
 
