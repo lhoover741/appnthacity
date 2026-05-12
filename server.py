@@ -8329,7 +8329,7 @@ def _log_ai_generation(generation_type, success, input_params, output_summary=''
 
 def _ai_json_route(route_type, system_prompt, user_prompt, input_meta):
     resolved_context = resolve_active_community()
-    resolved_community_id = ((input_meta or {}).get('community_id') or (resolved_context or {}).get('community_id') or get_current_community_id())
+    resolved_community_id = ((resolved_context or {}).get('community_id') or get_current_community_id() or (input_meta or {}).get('community_id'))
     data, err = ai_runtime_or_error()
     if err:
         _log_ai_generation(route_type, False, input_meta, error_message=err, community_id=resolved_community_id)
