@@ -722,9 +722,13 @@ class CommunityInvite(db.Model):
         return True
 
     def to_dict(self):
+        uses_remaining = None if self.max_uses is None else max(0, int(self.max_uses or 0) - int(self.uses or 0))
+        invite_link = f'https://gtavcad.app/join?code={self.invite_code}'
         return {
             'id': self.id,
             'invite_code': self.invite_code,
+            'code': self.invite_code,
+            'invite_link': invite_link,
             'community_id': self.community_id,
             'role': self.role,
             'department': self.department,
@@ -732,7 +736,9 @@ class CommunityInvite(db.Model):
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
             'max_uses': self.max_uses,
             'uses': self.uses,
+            'uses_remaining': uses_remaining,
             'active': self.active,
+            'revoked': not self.active,
             'valid': self.is_valid(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }

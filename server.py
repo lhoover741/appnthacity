@@ -4,6 +4,7 @@ import random
 import smtplib
 import logging
 import secrets
+import string
 import uuid
 import time
 import urllib.request
@@ -6130,6 +6131,14 @@ def create_community_page():
     return frontend_page('create-community.html')
 
 
+@app.route('/join')
+def invite_join_page():
+    return frontend_page('join-community.html')
+
+@app.route('/invite/<invite_code>')
+def invite_code_page(invite_code):
+    return frontend_page('join-community.html')
+
 @app.route('/join-community')
 def join_community_page():
     return frontend_page('join-community.html')
@@ -6905,6 +6914,183 @@ COMMUNITY_SETTING_ALIASES = {
     'ranks': 'officer_ranks',
 }
 
+PUBLIC_INVITE_ERROR = 'Invite is invalid, expired, revoked, or no longer available'
+INVITE_JOIN_ROLES = COMMUNITY_SUPPORTED_ROLES - {'PlatformOwner'}
+INVITE_ADMIN_LEVEL_ROLES = {'CommunityAdmin', 'CommunityOwner', 'Owner', 'Admin'}
+
+
+def _invite_code_input(value):
+    return ''.join(ch for ch in (value or '').strip().upper() if ch.isalnum())
+
+
+def _invite_uses_remaining(invite):
+    if invite.max_uses is None:
+        return None
+    return max(0, int(invite.max_uses or 0) - int(invite.uses or 0))
+
+
+def _public_invite_payload(invite, community):
+    return {
+        'code': invite.invite_code,
+        'community_id': community.community_id,
+        'community_name': community.name,
+        'community_slug': community.slug,
+        'cad_name': community.cad_name,
+        'role': invite.role,
+        'expires_at': invite.expires_at.isoformat() if invite.expires_at else None,
+        'uses_remaining': _invite_uses_remaining(invite),
+    }
+
+
+def _community_is_joinable(community):
+    if not community:
+        return False
+    return (community.status or '').strip().lower() == 'active'
+
+
+def _validate_invite_for_join(invite_code, lock=False):
+    code = _invite_code_input(invite_code)
+    if not code:
+        return None, None, 'missing_code'
+
+    query = CommunityInvite.query.filter(func.upper(CommunityInvite.invite_code) == code)
+    if lock:
+        try:
+            query = query.with_for_update()
+        except Exception:
+            pass
+    invite = query.first()
+    if not invite:
+        return None, None, 'not_found'
+
+    community = Community.query.filter_by(community_id=invite.community_id).first()
+    role = normalize_community_role(invite.role or 'Civilian')
+    if role == 'PlatformOwner' or role not in INVITE_JOIN_ROLES:
+        return invite, community, 'invalid_role'
+    if not getattr(invite, 'active', True):
+        return invite, community, 'revoked'
+    if invite.expires_at and datetime.utcnow() > invite.expires_at:
+        return invite, community, 'expired'
+    if invite.max_uses is not None and int(invite.uses or 0) >= int(invite.max_uses):
+        return invite, community, 'maxed'
+    if not _community_is_joinable(community):
+        return invite, community, 'community_unavailable'
+    return invite, community, None
+
+
+def _audit_invite_event(action, community_id=None, invite=None, result='success', assigned_role=None, details=None):
+    safe_details = dict(details or {})
+    if assigned_role:
+        safe_details['assigned_role'] = assigned_role
+    if invite:
+        safe_details['invite_id'] = getattr(invite, 'id', None)
+        safe_details['invite_code'] = getattr(invite, 'invite_code', None)
+    safe_details['request_id'] = getattr(g, 'request_id', None)
+    db.session.add(AuditLog(
+        log_id=f'audit-{uuid.uuid4().hex}',
+        community_id=community_id or getattr(invite, 'community_id', None),
+        actor=str(session.get('user_id') or ''),
+        actor_role=session.get('community_role') or session.get('current_role') or session.get('role') or session.get('platform_role'),
+        action=f'invite.{action}.{result}',
+        record_type='community_invite',
+        record_id=str(getattr(invite, 'id', '') or safe_details.get('invite_code') or ''),
+        after_state=json.dumps(safe_details),
+        ip_address=getattr(g, 'client_ip', request.remote_addr),
+    ))
+
+
+def _set_joined_community_session(user, community, membership):
+    session['community_id'] = community.community_id
+    session['community_slug'] = community.slug
+    session['community_role'] = membership.role
+    session['active_community_id'] = community.community_id
+    session['selected_community_id'] = community.community_id
+    session['selected_community_slug'] = community.slug
+    session['current_role'] = membership.role
+    session['current_department'] = membership.department
+    if hasattr(user, 'community_id'):
+        try:
+            user.community_id = community.community_id
+        except Exception:
+            pass
+    session.modified = True
+
+
+@app.route('/api/invites/<invite_code>', methods=['GET'])
+def public_invite_lookup(invite_code):
+    invite, community, reason = _validate_invite_for_join(invite_code, lock=False)
+    if reason:
+        if invite or _invite_code_input(invite_code):
+            _audit_invite_event('view_failed', getattr(community, 'community_id', None), invite, result='failed', details={'reason': reason, 'invite_code': _invite_code_input(invite_code)})
+            db.session.commit()
+        return jsonify({'success': False, 'error': PUBLIC_INVITE_ERROR}), 404
+
+    _audit_invite_event('viewed', community.community_id, invite, details={'role': invite.role})
+    db.session.commit()
+    return jsonify({'success': True, 'invite': _public_invite_payload(invite, community)})
+
+
+@app.route('/api/invites/<invite_code>/join', methods=['POST'])
+@require_auth
+def join_invite(invite_code):
+    user_id = session.get('user_id')
+    user = User.query.get(user_id) if user_id else None
+    if not user or not getattr(user, 'active', True):
+        return jsonify({'success': False, 'error': 'Authentication required'}), 401
+
+    try:
+        invite, community, reason = _validate_invite_for_join(invite_code, lock=True)
+        if reason:
+            _audit_invite_event('join_failed', getattr(community, 'community_id', None), invite, result='failed', details={'reason': reason, 'invite_code': _invite_code_input(invite_code)})
+            db.session.commit()
+            return jsonify({'success': False, 'error': PUBLIC_INVITE_ERROR}), 400
+
+        role = normalize_community_role(invite.role or 'Civilian')
+        existing = CommunityMember.query.filter_by(user_id=user.id, community_id=community.community_id).first()
+        if existing:
+            existing.status = 'Active'
+            # Do not silently escalate/demote an existing membership. Preserve the current tenant role.
+            existing.updated_at = datetime.utcnow()
+            membership = existing
+            message = 'Already a member of this community'
+            increment_usage = False
+        else:
+            membership = CommunityMember(
+                community_id=community.community_id,
+                user_id=user.id,
+                role=role,
+                department=invite.department,
+                status='Active',
+            )
+            db.session.add(membership)
+            message = 'Joined community successfully'
+            increment_usage = True
+
+        if increment_usage:
+            invite.uses = int(invite.uses or 0) + 1
+            if invite.max_uses is not None and invite.uses >= invite.max_uses:
+                invite.active = False
+
+        _set_joined_community_session(user, community, membership)
+        _audit_invite_event('joined', community.community_id, invite, assigned_role=membership.role, details={'existing_member': bool(existing), 'uses': invite.uses})
+        db.session.commit()
+
+        redirect_url = f'/c/{community.slug}/'
+        return jsonify({
+            'success': True,
+            'message': message,
+            'community': {
+                'community_id': community.community_id,
+                'name': community.name,
+                'slug': community.slug,
+            },
+            'role': membership.role,
+            'redirect': redirect_url,
+        })
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('Invite join failed request_id=%s', getattr(g, 'request_id', None))
+        return jsonify({'success': False, 'error': 'Unable to join community right now'}), 500
 
 
 def _community_admin_generate_invite_code(length=10):
@@ -7312,8 +7498,12 @@ def community_admin_invite_create():
         return error, status
     data = _community_admin_body()
     role = normalize_community_role(data.get('role') or 'Civilian')
-    if role == 'PlatformOwner' or role not in COMMUNITY_SUPPORTED_ROLES:
+    if role == 'PlatformOwner' or role not in INVITE_JOIN_ROLES:
         return jsonify({'success': False, 'error': 'Invalid community role'}), 400
+    acting_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
+    can_create_admin_invite = is_platform_owner() or community.owner_user_id == current_user.id or acting_role in {'CommunityOwner', 'Owner'}
+    if role in INVITE_ADMIN_LEVEL_ROLES and not can_create_admin_invite:
+        return jsonify({'success': False, 'error': 'Only CommunityOwner or PlatformOwner can create admin-level invites'}), 403
     max_uses = data.get('max_uses', 1)
     try:
         max_uses = None if max_uses in (None, '', 0, '0') else max(1, int(max_uses))
@@ -7337,7 +7527,10 @@ def community_admin_invite_create():
     db.session.add(invite)
     _community_admin_audit(community.community_id, 'invite_created', details={'role': role, 'max_uses': max_uses, 'expires_at': expires_at.isoformat() if expires_at else None})
     db.session.commit()
-    return jsonify({'success': True, 'invite': invite.to_dict()})
+    invite_payload = invite.to_dict()
+    invite_payload['code'] = invite.invite_code
+    invite_payload['invite_link'] = f'https://gtavcad.app/join?code={invite.invite_code}'
+    return jsonify({'success': True, 'invite': invite_payload})
 
 
 @app.route('/api/community-admin/invites/<int:invite_id>/revoke', methods=['POST'])
