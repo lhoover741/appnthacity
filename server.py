@@ -8290,7 +8290,7 @@ def cad_ai_status():
     if not current_role_allows_police_cad():
         return jsonify({'success': False, 'error': 'Police CAD access required'}), 403
     cfg = get_ai_config()
-    return jsonify({'success': True, 'ai_enabled': cfg['enabled'], 'provider': cfg['provider'], 'model': cfg['model'], 'configured': cfg['configured']})
+    return jsonify({'success': True, 'ai_enabled': cfg['enabled'], 'provider': cfg['provider'], 'model': cfg['model'], 'configured': cfg['configured'], 'has_api_key': cfg['has_api_key']})
 
 
 def _cad_ai_guard(case_id=None):
@@ -8336,8 +8336,18 @@ def _ai_json_route(route_type, system_prompt, user_prompt, input_meta):
     if provider_err:
         _log_ai_generation(route_type, False, input_meta, error_message=provider_err)
         return jsonify({'success': False, 'error': 'AI provider request failed'}), 502
-    _log_ai_generation(route_type, True, input_meta, output_summary=json.dumps(out)[:1200], tokens_used=(usage or {}).get('total_tokens'))
+    _log_ai_generation(route_type, True, {**(input_meta or {}), 'provider': data.get('provider'), 'model': data.get('model'), 'user_id': session.get('user_id')}, output_summary=json.dumps(out)[:1200], tokens_used=(usage or {}).get('total_tokens'))
     return out, data
+
+
+def _default_ai_system_rules(extra=''):
+    base = (
+        "Do not invent evidence, clip/bodycam links, officer names, suspect statements, or facts. "
+        "Do not decide guilt. Charge outputs are suggestions only unless already supplied as official charges. "
+        "Preserve provided facts exactly. Flag conflicts and missing court-sensitive details. "
+        "Do not claim to have reviewed links/clips/screenshots. Use professional GTA RP law-enforcement tone."
+    )
+    return f"{base} {extra}".strip()
 
 
 @app.route('/api/cad/ai/generate-911-call', methods=['POST'])
@@ -8515,3 +8525,96 @@ def cad_ai_incident_from_notes():
         'charges': len(serialized['charges']), 'warrants': len(serialized['warrants']), 'bolos': len(serialized['bolos']),
         'evidence': len(serialized['evidence']), 'arrests': len(serialized['arrests']), 'traffic_stops': len(serialized['traffic_stops'])
     }})
+
+
+@app.route('/api/cad/ai/arrest-report', methods=['POST'])
+def cad_ai_arrest_report():
+    payload = request.get_json(silent=True) or {}
+    guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
+    if err:
+        return err
+    ai_result = _ai_json_route(
+        'arrest_report',
+        _default_ai_system_rules("Include who/what/when/where/why/how when provided."),
+        f"Return JSON keys: arrest_narrative, probable_cause, charges_summary, evidence_summary, jail_fine_explanation, miranda_checklist, transport_booking_notes, missing_info. Input: {json.dumps(payload)}",
+        payload,
+    )
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    return jsonify({'success': True, 'report': ai_result[0]})
+
+
+@app.route('/api/cad/ai/use-of-force-report', methods=['POST'])
+def cad_ai_uof_report():
+    payload = request.get_json(silent=True) or {}
+    guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
+    if err:
+        return err
+    ai_result = _ai_json_route(
+        'use_of_force_report',
+        _default_ai_system_rules("Do not justify force beyond supplied facts; flag weak documentation."),
+        f"Return JSON keys: narrative, justification_summary, de_escalation_notes, medical_aid_notes, policy_court_risk_checklist, missing_info. Input: {json.dumps(payload)}",
+        payload,
+    )
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    return jsonify({'success': True, 'report': ai_result[0]})
+
+
+@app.route('/api/cad/ai/court-summary', methods=['POST'])
+def cad_ai_court_summary():
+    payload = request.get_json(silent=True) or {}
+    case_id = (payload.get('case_id') or '').strip()
+    if not case_id:
+        return jsonify({'success': False, 'error': 'case_id is required'}), 400
+    guard, err = _cad_ai_guard(case_id=case_id)
+    if err:
+        return err
+    case_obj = guard.get('case')
+    if not case_obj:
+        return jsonify({'success': False, 'error': 'Case not found'}), 404
+    case_data = {'case_id': case_obj.case_id, 'title': case_obj.title, 'type': case_obj.case_type, 'location': case_obj.location, 'report_notes': case_obj.report_notes}
+    ai_result = _ai_json_route(
+        'court_summary',
+        _default_ai_system_rules("Court packet summary is draft-only and must be reviewed by staff."),
+        f"Return JSON keys: court_ready_summary, charges_table_summary, evidence_list, officer_narrative, witness_summary, arrest_warrant_summary, use_of_force_summary, prosecution_notes, defense_risk_notes, missing_documentation_checklist. Case input: {json.dumps(case_data)}",
+        {'case_id': case_id},
+    )
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    return jsonify({'success': True, 'summary': ai_result[0], 'review_required': True})
+
+
+@app.route('/api/cad/ai/evidence-summary', methods=['POST'])
+def cad_ai_evidence_summary():
+    payload = request.get_json(silent=True) or {}
+    guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
+    if err:
+        return err
+    ai_result = _ai_json_route(
+        'evidence_summary',
+        _default_ai_system_rules("Summarize descriptions/metadata only."),
+        f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Input: {json.dumps(payload)}",
+        payload,
+    )
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    return jsonify({'success': True, **ai_result[0]})
+
+
+@app.route('/api/cad/ai/charge-suggestions', methods=['POST'])
+def cad_ai_charge_suggestions():
+    payload = request.get_json(silent=True) or {}
+    guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
+    if err:
+        return err
+    ai_result = _ai_json_route(
+        'charge_suggestions',
+        _default_ai_system_rules("Suggestions only; never auto-apply charges."),
+        f"Return JSON keys: suggestions, warnings. Each suggestion must include charge, penal_code, severity, reason, confidence, source='suggested'. Input: {json.dumps(payload)}",
+        payload,
+    )
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out = ai_result[0]
+    return jsonify({'success': True, 'suggestions': out.get('suggestions', []), 'warnings': out.get('warnings', [])})
