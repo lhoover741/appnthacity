@@ -604,27 +604,37 @@ def join_with_invite():
     if not invite_code:
         return jsonify({'error': 'invite_code required'}), 400
 
-    # Find invite
-    invite = CommunityInvite.query.filter_by(invite_code=invite_code).first()
-    if not invite:
-        return jsonify({'error': 'Invalid invite code'}), 404
-
-    # Check if valid
-    if not invite.is_valid():
-        return jsonify({'error': 'Invite code is no longer valid'}), 410
+    # Find and validate invite without trusting any selected tenant context.
+    invite = CommunityInvite.query.filter(CommunityInvite.invite_code.ilike(invite_code)).with_for_update().first()
+    if not invite or not invite.is_valid() or invite.role == 'PlatformOwner':
+        return jsonify({'success': False, 'error': 'Invite is invalid, expired, revoked, or no longer available'}), 400
 
     community_id = invite.community_id
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community or (community.status or '').lower() != 'active':
+        return jsonify({'success': False, 'error': 'Invite is invalid, expired, revoked, or no longer available'}), 400
 
-    # Check if user already a member
+    # Check if user already a member. Do not duplicate or silently alter role.
     existing = CommunityMember.query.filter_by(
         user_id=user_id,
         community_id=community_id
     ).first()
 
     if existing:
+        existing.status = 'Active'
+        set_selected_community_session(community, existing)
+        session['community_id'] = community.community_id
+        session['community_slug'] = community.slug
+        session['community_role'] = existing.role
+        session.modified = True
+        db.session.commit()
         return jsonify({
-            'error': 'You are already a member of this community'
-        }), 409
+            'success': True,
+            'message': 'Already a member of this community',
+            'community': community.to_dict(),
+            'membership': existing.to_dict(),
+            'redirect': f'/c/{community.slug}/',
+        }), 200
 
     # Create membership
     try:
@@ -643,10 +653,11 @@ def join_with_invite():
             invite.active = False
         db.session.commit()
 
-        community = Community.query.filter_by(community_id=community_id).first()
-        if community:
-            set_selected_community_session(community, membership)
-
+        set_selected_community_session(community, membership)
+        session['community_id'] = community.community_id
+        session['community_slug'] = community.slug
+        session['community_role'] = membership.role
+        session.modified = True
 
         logger.info(
             f'✅ User {user_id} joined community {community_id} via invite'
@@ -654,9 +665,11 @@ def join_with_invite():
 
         return jsonify({
             'success': True,
-            'message': f'Joined community: {community.name}',
+            'message': 'Joined community successfully',
             'community': community.to_dict(),
             'membership': membership.to_dict(),
+            'role': membership.role,
+            'redirect': f'/c/{community.slug}/',
         }), 201
 
     except Exception as e:

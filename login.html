@@ -27,6 +27,21 @@
 <footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Create or Join a Community.</p></div></footer>
 <script src="/assets/js/main.js"></script>
 <script>
+const pendingInviteKey = 'gtavcad_pending_invite_code';
+const loginInvite = new URLSearchParams(window.location.search).get('invite') || new URLSearchParams(window.location.search).get('code');
+if (loginInvite) { sessionStorage.setItem(pendingInviteKey, loginInvite.toUpperCase()); localStorage.setItem(pendingInviteKey, loginInvite.toUpperCase()); }
+async function joinPendingInviteAfterAuth() {
+  const code = (sessionStorage.getItem(pendingInviteKey) || localStorage.getItem(pendingInviteKey) || '').trim().toUpperCase();
+  if (!code) return null;
+  const res = await fetch(`/api/invites/${encodeURIComponent(code)}/join`, {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:'{}'});
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.success) {
+    sessionStorage.removeItem(pendingInviteKey);
+    localStorage.removeItem(pendingInviteKey);
+    return data.redirect || (data.community?.slug ? `/c/${data.community.slug}/` : null);
+  }
+  return null;
+}
 document.getElementById('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const status = document.getElementById('login-status');
@@ -50,8 +65,9 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
       button.textContent = 'Login';
       return;
     }
-    status.textContent = 'Login successful. Redirecting…';
-    window.location.href = data.redirect || data.redirect_url || '/community-setup';
+    status.textContent = 'Login successful. Checking invite…';
+    const inviteRedirect = await joinPendingInviteAfterAuth();
+    window.location.href = inviteRedirect || data.redirect || data.redirect_url || '/community-setup';
   } catch (err) {
     status.textContent = 'Internal authentication error. Please try again.';
     button.disabled = false;
