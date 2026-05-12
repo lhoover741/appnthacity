@@ -8564,11 +8564,15 @@ def cad_ai_uof_report():
 @app.route('/api/cad/ai/court-summary', methods=['POST'])
 def cad_ai_court_summary():
     payload = request.get_json(silent=True) or {}
-    case_id = payload.get('case_id')
+    case_id = (payload.get('case_id') or '').strip()
+    if not case_id:
+        return jsonify({'success': False, 'error': 'case_id is required'}), 400
     guard, err = _cad_ai_guard(case_id=case_id)
     if err:
         return err
-    case_obj = guard['case']
+    case_obj = guard.get('case')
+    if not case_obj:
+        return jsonify({'success': False, 'error': 'Case not found'}), 404
     case_data = {'case_id': case_obj.case_id, 'title': case_obj.title, 'type': case_obj.case_type, 'location': case_obj.location, 'report_notes': case_obj.report_notes}
     ai_result = _ai_json_route(
         'court_summary',
