@@ -76,6 +76,7 @@ class Civilian(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     civilian_id = db.Column(db.String(64), unique=True, nullable=False)
     community_id = db.Column(db.String(64), nullable=True)  # Will be backfilled with nthacityrp
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
     # ONLY fields visible on Civilian Registration form
     first_name = db.Column(db.String(255), nullable=False)

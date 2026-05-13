@@ -824,6 +824,17 @@ def internal_error(error):
     }), 500
 
 
+
+@app.route('/c/<slug>/civilian-dashboard', methods=['GET'])
+def tenant_civilian_dashboard_page(slug):
+    return send_from_directory('.', 'civilian-dashboard.html')
+
+
+@app.route('/civilian-dashboard', methods=['GET'])
+def civilian_dashboard_page():
+    return send_from_directory('.', 'civilian-dashboard.html')
+
+
 @app.errorhandler(404)
 def not_found_error(error):
     """Return JSON 404s only for API requests; let frontend paths render HTML."""
@@ -1006,6 +1017,9 @@ def ensure_arrest_automation_schema():
             'report_notes': 'TEXT',
             'created_by': 'VARCHAR(255)',
             'assigned_to': 'VARCHAR(255)',
+        },
+        'civilians': {
+            'user_id': 'INTEGER',
         },
         'evidence': {
             'evidence_type': 'VARCHAR(128)',
@@ -2062,6 +2076,282 @@ def _civilian_search_query(query, name=None, dob=None, community_id=None):
         db_query = db_query.filter(sqlalchemy.or_(*filters))
 
     return db_query
+
+
+# ---------------------------------------------------------------------------
+# Civilian Dashboard (civilian-safe, owner-scoped portal)
+# ---------------------------------------------------------------------------
+
+CIVILIAN_UNPAID_STATUSES = {'issued', 'unpaid', 'pending', 'open', 'contested'}
+
+
+def _require_civilian_dashboard_context():
+    user_id = session.get('user_id')
+    if not isinstance(user_id, int):
+        return None, None, (jsonify({'success': False, 'error': 'Authentication required'}), 401)
+    community = resolve_active_community()
+    if not community or not community.get('community_id'):
+        return None, None, (jsonify({'success': False, 'error': 'Community context required'}), 400)
+    return user_id, community, None
+
+
+def _civilian_dashboard_profile(civilian, community):
+    return {
+        'id': civilian.civilian_id,
+        'civilian_id': civilian.civilian_id,
+        'name': _civilian_full_name(civilian),
+        'date_of_birth': civilian.date_of_birth.isoformat() if civilian.date_of_birth else '',
+        'phone': civilian.phone_number or '',
+        'address': civilian.address or '',
+        'occupation': civilian.occupation or '',
+        'license_status': civilian.driver_license_status or 'Valid',
+        'created_at': civilian.created_at.isoformat() if civilian.created_at else None,
+        'community_name': community.get('name') or '',
+    }
+
+
+def _civilian_dashboard_profiles(civilians, community):
+    return [_civilian_dashboard_profile(c, community) for c in civilians]
+
+
+def _civilian_exact_name(civilian):
+    return _normalize_name(_civilian_full_name(civilian))
+
+
+def _dashboard_vehicle_rows(civilian, community_id):
+    rows = scoped_query(Vehicle, community_id).filter_by(owner_civilian_id=civilian.civilian_id).order_by(Vehicle.created_at.desc()).all()
+    vehicles = [{
+        'plate': v.plate or '',
+        'make': v.make or '',
+        'model': v.model or '',
+        'color': v.color or '',
+        'registration_status': v.registration_status or 'Valid',
+        'insurance_status': v.insurance_status or 'Valid',
+        'created_at': v.created_at.isoformat() if v.created_at else None,
+    } for v in rows]
+    if civilian.plate_number and not any((v.get('plate') or '').lower() == civilian.plate_number.lower() for v in vehicles):
+        vehicles.insert(0, {
+            'plate': civilian.plate_number or '',
+            'make': civilian.vehicle_make or '',
+            'model': civilian.vehicle_model or '',
+            'color': civilian.vehicle_color or '',
+            'registration_status': 'Valid',
+            'insurance_status': civilian.insurance_status or 'Valid',
+            'created_at': civilian.created_at.isoformat() if civilian.created_at else None,
+        })
+    return vehicles
+
+
+def _dashboard_license_rows(civilian, community_id):
+    full_name = _civilian_exact_name(civilian)
+    licenses = []
+    if full_name:
+        rows = scoped_query(License, community_id).filter(func.lower(License.owner_name) == full_name).order_by(License.created_at.desc()).all()
+        licenses = [{
+            'license_type': l.license_type or '',
+            'status': l.status or 'Valid',
+            'expiration': l.expiry_date or '',
+            'restrictions': '',
+            'issued_date': l.issued_date or '',
+        } for l in rows]
+    built_ins = [
+        ('Driver License', civilian.driver_license_status or 'Valid'),
+        ('Firearm License', civilian.firearm_license_status or 'None'),
+        ('Business License', civilian.business_license_status or 'None'),
+    ]
+    for license_type, status in built_ins:
+        if status and status.lower() != 'none' and not any((l.get('license_type') or '').lower() == license_type.lower() for l in licenses):
+            licenses.append({'license_type': license_type, 'status': status, 'expiration': '', 'restrictions': '', 'issued_date': ''})
+    return licenses
+
+
+def _dashboard_citation_rows(civilian, community_id):
+    return [{
+        'citation_number': c.citation_id,
+        'violation': c.violation or '',
+        'amount': c.fine_amount,
+        'fine': c.fine_amount,
+        'status': c.status or 'Issued',
+        'issued_date': c.created_at.isoformat() if c.created_at else None,
+        'court_required': False,
+    } for c in scoped_query(Citation, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(Citation.created_at.desc()).all()]
+
+
+def _dashboard_fine_rows(citations):
+    return [{
+        'fine_number': c.get('citation_number') or '',
+        'citation_number': c.get('citation_number') or '',
+        'amount': c.get('amount'),
+        'due_date': '',
+        'status': c.get('status') or 'Issued',
+        'linked_citation': c.get('citation_number') or '',
+    } for c in citations if c.get('amount') not in (None, '')]
+
+
+def _dashboard_arrest_rows(civilian, community_id):
+    return [{
+        'arrest_date': a.created_at.isoformat() if a.created_at else None,
+        'charges': a.charges or '',
+        'disposition': a.status or 'Active',
+        'status': a.status or 'Active',
+        'jail_time': a.penalty or '',
+        'fine': '',
+        'public_notes': '',
+    } for a in scoped_query(Arrest, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(Arrest.created_at.desc()).all()]
+
+
+def _dashboard_jail_rows(civilian, community_id):
+    bookings = [{
+        'booking_id': j.booking_id,
+        'arrest_id': j.arrest_id or '',
+        'booking_date': j.created_at.isoformat() if j.created_at else None,
+        'charges': j.charges or '',
+        'status': j.status or 'Booked',
+        'jail_time': j.sentence_length or '',
+        'fine': PENDING_FINE if j.sentence_length == PENDING_SENTENCE else (j.bond_amount if j.bond_amount is not None else ''),
+        'release_date': j.release_date.isoformat() if j.release_date else None,
+    } for j in scoped_query(JailBooking, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(JailBooking.created_at.desc()).all()]
+    inmates = [{
+        'booking_id': i.inmate_id,
+        'arrest_id': i.arrest_id or '',
+        'booking_date': i.booked_at.isoformat() if i.booked_at else None,
+        'charges': i.charges or '',
+        'status': i.status or 'In Custody',
+        'jail_time': i.penalty or '',
+        'fine': '',
+        'release_date': i.released_at.isoformat() if i.released_at else None,
+    } for i in scoped_query(Inmate, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(Inmate.booked_at.desc()).all()]
+    return bookings + inmates
+
+
+def _is_served_warrant_for_civilian(warrant):
+    status_values = (
+        str(getattr(warrant, 'status', '') or '').strip().lower(),
+        str(getattr(warrant, 'warrant_status', '') or '').strip().lower(),
+    )
+    return any(status == 'served' for status in status_values)
+
+
+def _dashboard_served_warrant_rows(civilian, community_id):
+    warrants = scoped_query(Warrant, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(Warrant.created_at.desc()).all()
+    return [{
+        'warrant_number': _warrant_value(w, 'warrant_number', 'warrant_id'),
+        'warrant_type': _warrant_value(w, 'warrant_type', default='Arrest Warrant') or 'Arrest Warrant',
+        'status': 'Served',
+        'served_date': w.updated_at.isoformat() if getattr(w, 'updated_at', None) else None,
+        'charges_or_basis': _warrant_value(w, 'charges_or_basis', 'warrant_charges'),
+        'court_case_number': _warrant_value(w, 'court_case_number'),
+        'issuing_agency': _warrant_value(w, 'issuing_agency', 'warrant_issuer'),
+        'created_at': w.created_at.isoformat() if w.created_at else None,
+    } for w in warrants if _is_served_warrant_for_civilian(w)]
+
+
+def _dashboard_court_rows(civilian, community_id):
+    hearings = [{
+        'hearing_date': h.scheduled_at or '',
+        'courtroom': '',
+        'case_number': h.hearing_id,
+        'status': h.status or 'Scheduled',
+        'outcome': h.outcome or '',
+        'hearing_type': _display_hearing_type(h.hearing_type),
+    } for h in scoped_query(Hearing, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(Hearing.created_at.desc()).all()]
+    case_rows = [{
+        'hearing_date': cf.court_date.isoformat() if cf.court_date else '',
+        'courtroom': '',
+        'case_number': cf.case_number or cf.case_id,
+        'status': cf.status or 'open',
+        'outcome': cf.outcome or '',
+        'hearing_type': cf.case_type or 'Court',
+    } for cf in scoped_query(CaseFile, community_id).filter_by(defendant_civilian_id=civilian.civilian_id).filter(CaseFile.court_date.isnot(None)).order_by(CaseFile.court_date.desc()).all()]
+    return hearings + case_rows
+
+
+def _dashboard_complaint_rows(civilian, community_id, user):
+    identifiers = {_normalize_name(getattr(user, 'username', '') or ''), _normalize_name(getattr(user, 'email', '') or '')}
+    identifiers.discard('')
+    if not identifiers:
+        return []
+    rows = scoped_query(Complaint, community_id).filter(func.lower(Complaint.complaint_discord).in_(identifiers)).order_by(Complaint.submitted_at.desc()).all()
+    return [{
+        'complaint_id': c.complaint_id,
+        'category': c.complaint_type or '',
+        'status': c.status or 'Open',
+        'submitted_date': c.submitted_at.isoformat() if c.submitted_at else None,
+    } for c in rows]
+
+
+def _is_upcoming_court(row):
+    status = str(row.get('status') or '').strip().lower()
+    return status in {'scheduled', 'pending', 'open'}
+
+
+@app.route('/api/civilian/dashboard', methods=['GET'])
+@require_auth
+def civilian_dashboard_api():
+    user_id, community, error = _require_civilian_dashboard_context()
+    if error:
+        return error
+    community_id = community['community_id']
+    selected_id = (request.args.get('civilian_id') or '').strip()
+    owned_query = scoped_query(Civilian, community_id).filter_by(user_id=user_id)
+    profiles = owned_query.order_by(Civilian.created_at.desc()).all()
+    if selected_id:
+        civilian = owned_query.filter_by(civilian_id=selected_id).first()
+        if not civilian:
+            return jsonify({'success': False, 'error': 'Civilian profile not found'}), 404
+    else:
+        civilian = profiles[0] if len(profiles) == 1 else None
+
+    if not civilian:
+        return jsonify({
+            'success': True,
+            'civilian': None,
+            'profiles': _civilian_dashboard_profiles(profiles, community),
+            'vehicles': [],
+            'licenses': [],
+            'citations': [],
+            'fines': [],
+            'arrests': [],
+            'jail_history': [],
+            'served_warrants': [],
+            'court_dates': [],
+            'complaints': [],
+            'summary': {'open_fines': 0, 'served_warrants': 0, 'unpaid_tickets': 0, 'upcoming_court_dates': 0},
+        })
+
+    user = User.query.get(user_id)
+    vehicles = _dashboard_vehicle_rows(civilian, community_id)
+    licenses = _dashboard_license_rows(civilian, community_id)
+    citations = _dashboard_citation_rows(civilian, community_id)
+    fines = _dashboard_fine_rows(citations)
+    arrests = _dashboard_arrest_rows(civilian, community_id)
+    jail_history = _dashboard_jail_rows(civilian, community_id)
+    served_warrants = _dashboard_served_warrant_rows(civilian, community_id)
+    court_dates = _dashboard_court_rows(civilian, community_id)
+    complaints = _dashboard_complaint_rows(civilian, community_id, user) if user else []
+    unpaid_tickets = sum(1 for c in citations if str(c.get('status') or '').strip().lower() in CIVILIAN_UNPAID_STATUSES)
+    open_fines = sum(1 for f in fines if str(f.get('status') or '').strip().lower() in CIVILIAN_UNPAID_STATUSES)
+
+    return jsonify({
+        'success': True,
+        'civilian': _civilian_dashboard_profile(civilian, community),
+        'profiles': _civilian_dashboard_profiles(profiles, community),
+        'vehicles': vehicles,
+        'licenses': licenses,
+        'citations': citations,
+        'fines': fines,
+        'arrests': arrests,
+        'jail_history': jail_history,
+        'served_warrants': served_warrants,
+        'court_dates': court_dates,
+        'complaints': complaints,
+        'summary': {
+            'open_fines': open_fines,
+            'served_warrants': len(served_warrants),
+            'unpaid_tickets': unpaid_tickets,
+            'upcoming_court_dates': sum(1 for row in court_dates if _is_upcoming_court(row)),
+        }
+    })
 
 
 def _civilian_name_filter(value):
@@ -5237,8 +5527,12 @@ def create_civilian():
         if not mapped['first_name'] or not mapped['last_name']:
             return jsonify({'success': False, 'error': 'firstName and lastName are required'}), 400
 
+        current_user_id = session.get('user_id')
+        if not isinstance(current_user_id, int):
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+
         civilian_id = f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
-        civilian = Civilian(community_id=community_id, civilian_id=civilian_id, **mapped)
+        civilian = Civilian(community_id=community_id, user_id=current_user_id, civilian_id=civilian_id, **mapped)
 
         db.session.add(civilian)
         db.session.commit()
@@ -5246,9 +5540,14 @@ def create_civilian():
         logger.info('Civilian insert success: civilian_id=%s name="%s %s" plate="%s"',
                     civilian.civilian_id, civilian.first_name, civilian.last_name, civilian.plate_number or '')
 
+        dashboard_url = f"/c/{community.get('slug')}/civilian-dashboard?civilian_id={civilian.civilian_id}" if community.get('slug') else f"/civilian-dashboard?civilian_id={civilian.civilian_id}"
         return jsonify({
             'success': True,
             'civilian_id': civilian.civilian_id,
+            'id': civilian.civilian_id,
+            'name': _civilian_full_name(civilian),
+            'community_slug': community.get('slug'),
+            'dashboard_url': dashboard_url,
             'civilian': _civilian_response(civilian),
         }), 201
 
