@@ -478,7 +478,7 @@ def socket_join_community(data):
         logger.exception(f'Websocket join failed: {e}')
         emit('socket:error', {'error': 'Unable to join room right now'})
 
-from community_service import community_context_middleware, get_current_community_id, scoped_query, resolve_active_community
+from community_service import community_context_middleware, get_current_community_id, scoped_query, resolve_active_community, resolve_community_slug_from_path
 from community_routes import register_community_routes
 
 @app.before_request
@@ -2606,6 +2606,7 @@ def user_session():
             'community_slug': community_slug,
             'community_role': community_role,
             'requires_community_setup': requires_community_setup,
+            'impersonation_active': bool(session.get('impersonating_community_id')),
             'can_access_police_cad': user_can_access_police_cad(owner, community_role, user=user, membership=membership),
         },
         'redirect': redirect_target,
@@ -6865,12 +6866,8 @@ def platform_admin_page():
 @app.route('/community-admin')
 @require_auth
 def community_admin_page():
-    try:
-        current_user, community, membership, error, status = require_community_admin()
-    except NameError:
-        current_user, community, membership, error, status = None, None, None, None, None
-    if error:
-        return frontend_page('community-admin-forbidden.html'), 403
+    # The page shell must render even when a PlatformOwner still needs to pick a
+    # community; the API will return the specific auth/context state.
     return frontend_page('community-admin.html')
 
 
@@ -7292,6 +7289,14 @@ def platform_admin_reset_password(user_id):
     return jsonify({'success': True})
 
 
+def _select_platform_admin_community(community, action='community_select'):
+    session['selected_community_id'] = community.community_id
+    session['selected_community_slug'] = community.slug
+    session.modified = True
+    log_platform_admin(action, tenant=community.community_id, details={'result': 'success'})
+    db.session.commit()
+
+
 @app.route('/api/platform-admin/communities/<community_id>/open', methods=['POST'])
 def platform_admin_open_community(community_id):
     auth_error = require_platform_owner()
@@ -7301,9 +7306,20 @@ def platform_admin_open_community(community_id):
     if not community:
         return jsonify({'success': False, 'error': 'Community not found'}), 404
     redirect_url = f"/c/{community.slug}/"
-    log_platform_admin('community_open', tenant=community_id, details={'result': 'success'})
-    db.session.commit()
-    return jsonify({'success': True, 'redirect': redirect_url, 'community': community.to_dict()})
+    _select_platform_admin_community(community, 'community_open')
+    return jsonify({'success': True, 'redirect': redirect_url, 'redirect_url': redirect_url, 'community': community.to_dict()})
+
+
+@app.route('/api/platform-admin/communities/<community_id>/select', methods=['POST'])
+def platform_admin_select_community(community_id):
+    auth_error = require_platform_owner()
+    if auth_error:
+        return auth_error
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community not found'}), 404
+    _select_platform_admin_community(community, 'community_select')
+    return jsonify({'success': True, 'redirect_url': '/community-admin', 'redirect': '/community-admin', 'community': community.to_dict()})
 
 
 @app.route('/api/platform-admin/communities/<community_id>/suspend', methods=['POST'])
@@ -7387,13 +7403,16 @@ def platform_admin_impersonate_community(community_id):
     community = Community.query.filter_by(community_id=community_id).first()
     if not community:
         return jsonify({'success': False, 'error': 'Community not found'}), 404
-    session['impersonating_community_id'] = community_id
+    session['impersonating_community_id'] = community.community_id
     session['impersonating_community_slug'] = community.slug
+    session['selected_community_id'] = community.community_id
+    session['selected_community_slug'] = community.slug
     session['impersonation_active'] = True
     session['original_user_id'] = session.get('user_id')
+    session.modified = True
     log_platform_admin('community_impersonate', tenant=community_id, details={'result': 'success'})
     db.session.commit()
-    return jsonify({'success': True, 'redirect': f"/c/{community.slug}/", 'impersonation_active': True})
+    return jsonify({'success': True, 'redirect_url': '/community-admin', 'redirect': '/community-admin', 'impersonation_active': True})
 
 
 @app.route('/api/platform-admin/impersonation/exit', methods=['POST'])
@@ -7407,7 +7426,7 @@ def platform_admin_exit_impersonation():
     session.pop('original_user_id', None)
     log_platform_admin('community_impersonation_exit', tenant='*', details={'result': 'success'})
     db.session.commit()
-    return jsonify({'success': True, 'redirect': '/admin'})
+    return jsonify({'success': True, 'redirect_url': '/admin', 'redirect': '/admin'})
 
 
 def _platform_admin_self_block(user_id, action_name):
@@ -7519,8 +7538,8 @@ def community_admin_json_exception(error):
         logger.exception('Community admin endpoint failed request_id=%s path=%s', getattr(g, 'request_id', None), request.path)
         code = getattr(error, 'code', 500) or 500
         if code >= 500:
-            return jsonify({'success': False, 'error': 'Community admin request failed'}), 500
-        return jsonify({'success': False, 'error': getattr(error, 'description', 'Community admin request failed')}), code
+            return jsonify({'success': False, 'error': 'Unable to load community admin data'}), 500
+        return jsonify({'success': False, 'error': getattr(error, 'description', 'Unable to load community admin data')}), code
     raise error
 
 COMMUNITY_ADMIN_ROLES = {'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'}
@@ -7798,70 +7817,134 @@ def _community_admin_requested_community_id():
     return community_id or None
 
 
+def _community_admin_available_communities():
+    return [c.to_dict() for c in Community.query.order_by(Community.name.asc()).all()]
+
+
+def _community_admin_context_error(message, status, reason, current_user=None, community=None, membership=None, extra=None):
+    logger.warning(
+        'community_admin_context route=%s user_id=%s is_platform_owner=%s '
+        'session_selected_community_id=%s session_selected_community_slug=%s '
+        'session_impersonating_community_id=%s session_impersonating_community_slug=%s '
+        'resolved_community_id=%s resolved_slug=%s failure_reason=%s',
+        request.path,
+        session.get('user_id'),
+        is_platform_owner(),
+        session.get('selected_community_id'),
+        session.get('selected_community_slug'),
+        session.get('impersonating_community_id'),
+        session.get('impersonating_community_slug'),
+        getattr(community, 'community_id', None),
+        getattr(community, 'slug', None),
+        reason,
+    )
+    payload = {'success': False, 'error': message}
+    if extra:
+        payload.update(extra)
+    return current_user, community, membership, jsonify(payload), status
+
+
+def _community_admin_find_community(value=None, slug=None):
+    if slug:
+        community = Community.query.filter_by(slug=slug).first()
+        if community:
+            return community
+    if value:
+        return Community.query.filter_by(community_id=value).first()
+    return None
+
+
 def _community_admin_resolve_context(require_selected=True):
     user_id = session.get('user_id')
     if not user_id:
-        return None, None, None, jsonify({'success': False, 'error': 'Authentication required'}), 401
+        return _community_admin_context_error('Authentication required', 401, 'unauthenticated')
     current_user = getattr(g, 'current_user', None) or User.query.get(user_id)
     if not current_user:
-        return None, None, None, jsonify({'success': False, 'error': 'Authentication required'}), 401
+        return _community_admin_context_error('Authentication required', 401, 'user_not_found')
 
-    requested_id = _community_admin_requested_community_id()
     owner = is_platform_owner()
-    route_context_id = getattr(g, 'community_id', None) if request.path.startswith('/c/') else None
-    candidates = [
-        requested_id,
-        route_context_id,
-        session.get('impersonating_community_id') if owner else None,
-        getattr(g, 'community_id', None),
-        session.get('selected_community_id'),
-        session.get('active_community_id'),
-    ]
+    data = _community_admin_body() if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') else {}
+    query_id = (request.args.get('community_id') or data.get('community_id') or '').strip()
+    query_slug = (request.args.get('slug') or request.args.get('community_slug') or data.get('slug') or data.get('community_slug') or '').strip()
+    route_slug = resolve_community_slug_from_path()
+    route_community = _community_admin_find_community(slug=route_slug) if route_slug else None
 
-    community = None
-    for community_id in candidates:
-        if community_id:
-            community = Community.query.filter_by(community_id=community_id).first()
-            if community:
-                break
+    candidates = []
+    if owner:
+        candidates.extend([
+            ('query', _community_admin_find_community(query_id, query_slug)),
+            ('impersonating_id', _community_admin_find_community(session.get('impersonating_community_id'))),
+            ('impersonating_slug', _community_admin_find_community(slug=session.get('impersonating_community_slug'))),
+            ('selected_id', _community_admin_find_community(session.get('selected_community_id'))),
+            ('selected_slug', _community_admin_find_community(slug=session.get('selected_community_slug'))),
+            ('session_id', _community_admin_find_community(session.get('community_id'))),
+            ('session_slug', _community_admin_find_community(slug=session.get('community_slug'))),
+            ('route', route_community),
+        ])
+    else:
+        candidates.extend([
+            ('route', route_community),
+            ('query', _community_admin_find_community(query_id, query_slug)),
+            ('selected_id', _community_admin_find_community(session.get('selected_community_id'))),
+            ('selected_slug', _community_admin_find_community(slug=session.get('selected_community_slug'))),
+            ('session_id', _community_admin_find_community(session.get('community_id'))),
+            ('session_slug', _community_admin_find_community(slug=session.get('community_slug'))),
+        ])
 
+    community = next((candidate for _source, candidate in candidates if candidate), None)
     membership = None
     if community:
         membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community.community_id, status='Active').first()
 
-    if owner and not community:
-        community = Community.query.order_by(Community.created_at.asc()).first()
-        if community:
-            membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community.community_id, status='Active').first()
+    if not owner and community and not membership and getattr(community, 'owner_user_id', None) != user_id:
+        return _community_admin_context_error('Community admin access required', 403, 'not_community_member', current_user, community, membership)
+
+    if not owner and not community:
+        active_memberships = CommunityMember.query.filter_by(user_id=user_id, status='Active').all()
+        if len(active_memberships) == 1:
+            membership = active_memberships[0]
+            community = Community.query.filter_by(community_id=membership.community_id).first()
+        else:
+            return _community_admin_context_error(
+                'Community context required', 400, 'missing_context', current_user, None, None,
+                {'requires_community_selection': True}
+            )
+
+    if owner and not community and require_selected:
+        return _community_admin_context_error(
+            'Community context required', 400, 'missing_context', current_user, None, None,
+            {'requires_community_selection': True, 'communities': _community_admin_available_communities()}
+        )
 
     if not owner:
-        if requested_id and (not community or community.community_id != requested_id):
-            return current_user, None, None, jsonify({'success': False, 'error': 'Community admin access required'}), 403
-        if not community:
-            admin_membership = CommunityMember.query.filter(
-                CommunityMember.user_id == user_id,
-                CommunityMember.status == 'Active',
-                CommunityMember.role.in_(list(COMMUNITY_ADMIN_ROLES)),
-            ).first()
-            if admin_membership:
-                community = Community.query.filter_by(community_id=admin_membership.community_id).first()
-                membership = admin_membership
-        if not community:
-            return current_user, None, None, jsonify({'success': False, 'error': 'Community admin access required'}), 403
-        if community.owner_user_id != user_id and not (membership and normalize_community_role(membership.role) in COMMUNITY_ADMIN_ROLES):
-            return current_user, community, membership, jsonify({'success': False, 'error': 'Community admin access required'}), 403
-        if requested_id and requested_id != community.community_id:
-            return current_user, community, membership, jsonify({'success': False, 'error': 'Community admin access required'}), 403
-
-    if not community and require_selected:
-        return current_user, None, None, jsonify({'success': False, 'error': 'No community selected'}), 400
+        if query_id or query_slug:
+            requested = _community_admin_find_community(query_id, query_slug)
+            if not requested or not community or requested.community_id != community.community_id:
+                return _community_admin_context_error('Community admin access required', 403, 'requested_community_not_allowed', current_user, community, membership)
+        if community and community.owner_user_id != user_id and not (membership and normalize_community_role(membership.role) in COMMUNITY_ADMIN_ROLES):
+            return _community_admin_context_error('Community admin access required', 403, 'missing_admin_permission', current_user, community, membership)
 
     if community:
+        logger.info(
+            'community_admin_context route=%s user_id=%s is_platform_owner=%s '
+            'session_selected_community_id=%s session_selected_community_slug=%s '
+            'session_impersonating_community_id=%s session_impersonating_community_slug=%s '
+            'resolved_community_id=%s resolved_slug=%s failure_reason=%s',
+            request.path,
+            user_id,
+            owner,
+            session.get('selected_community_id'),
+            session.get('selected_community_slug'),
+            session.get('impersonating_community_id'),
+            session.get('impersonating_community_slug'),
+            community.community_id,
+            community.slug,
+            None,
+        )
         session['selected_community_id'] = community.community_id
         session['selected_community_slug'] = community.slug
         session.modified = True
     return current_user, community, membership, None, None
-
 
 def require_community_admin():
     current_user, community, membership, error, status = _community_admin_resolve_context()
@@ -8030,6 +8113,7 @@ def community_admin_overview():
             'id': current_user.id,
             'username': current_user.username,
             'role': current_user.role,
+            'platform_role': getattr(current_user, 'platform_role', None) or session.get('platform_role'),
             'community_role': current_role,
             'is_platform_owner': is_platform_owner(),
         },
@@ -8047,8 +8131,9 @@ def community_admin_overview():
         'invites': invites,
         'activity': activity,
         'cad_permissions': permissions,
+        'settings': _community_admin_settings_dict(community),
         'warnings': warnings,
-        'available_communities': [c.to_dict() for c in Community.query.order_by(Community.name.asc()).all()] if is_platform_owner() else [],
+        'available_communities': _community_admin_available_communities() if is_platform_owner() else [],
     }
     payload['overview'] = payload
     return jsonify(payload)

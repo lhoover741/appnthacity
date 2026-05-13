@@ -139,14 +139,17 @@ function enforceCadRoleVisibility() {
         <div class="card notice-card">
           <h1>Police CAD access required</h1>
           <p>Regular civilian accounts can use civilian registry, DMV, businesses, applications, complaints, and public rules. Police CAD tools require Owner, Admin, Police, EMS, Dispatch, DOJ, Staff, or approved LEO access.</p>
+          <p>Signed in as <strong>${escapeHtml(window.GTAVCAD_CURRENT_USER?.username || window.GTAVCAD_CONTEXT?.username || 'authenticated user')}</strong>.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="/c/${CURRENT_COMMUNITY_SLUG}/">Return to Community Home</a>
+            <button type="button" class="button button-secondary" data-auth-logout>Logout</button>
             <a class="button button-secondary" href="dmv.html">DMV</a>
             <a class="button button-secondary" href="businesses.html">Businesses</a>
           </div>
         </div>
       </section>`;
   }
+  bindAuthenticatedControls();
   return false;
 }
 
@@ -154,6 +157,35 @@ window.canAccessOfficerCad = canAccessOfficerCad;
 window.isCadAdminBypass = isCadAdminBypass;
 window.enforceCadRoleVisibility = enforceCadRoleVisibility;
 
+async function gtavcadLogout() {
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+  ['gtavcad_context', 'GTAVCAD_CONTEXT', 'selected_community', 'selected_community_id', 'impersonating_community', 'impersonating_community_id'].forEach((key) => {
+    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
+  });
+  window.location.href = '/login';
+}
+
+async function gtavcadExitImpersonation() {
+  await fetch('/api/platform-admin/impersonation/exit', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => null);
+  window.location.href = '/admin';
+}
+
+function bindAuthenticatedControls() {
+  document.querySelectorAll('[data-auth-logout]').forEach((button) => {
+    if (button.dataset.boundLogout === 'true') return;
+    button.dataset.boundLogout = 'true';
+    button.addEventListener('click', gtavcadLogout);
+  });
+  document.querySelectorAll('[data-exit-impersonation]').forEach((button) => {
+    if (button.dataset.boundExitImpersonation === 'true') return;
+    button.dataset.boundExitImpersonation = 'true';
+    button.addEventListener('click', gtavcadExitImpersonation);
+  });
+}
+
+window.gtavcadLogout = gtavcadLogout;
+window.gtavcadExitImpersonation = gtavcadExitImpersonation;
 
 if (CURRENT_COMMUNITY_SLUG && window.fetch) {
   const nativeFetch = window.fetch.bind(window);
@@ -224,20 +256,29 @@ async function applyCommunityBranding() {
   });
 
   try {
-    const res = await fetch('/api/communities/context');
+    const res = await fetch('/api/communities/context', { credentials: 'include' });
     const data = await res.json();
     if (!res.ok || !data.success) return null;
     const community = data.community || {};
     const membership = data.membership || null;
     window.GTAVCAD_CONTEXT = {
       platformName: data.platform?.name || PLATFORM_CONTEXT.name,
+      community_id: community.community_id || '',
+      community_slug: community.slug || CURRENT_COMMUNITY_SLUG,
+      community_name: community.name || '',
+      cad_name: community.cad_name || community.name || '',
       communityName: community.name || '',
       communitySlug: community.slug || CURRENT_COMMUNITY_SLUG,
       cadName: community.cad_name || community.name || '',
-      role: membership?.role || '',
+      username: data.user?.username || '',
+      role: membership?.role || data.user?.community_role || data.user?.platform_role || data.user?.role || '',
+      platform_role: data.user?.platform_role || '',
+      community_role: data.user?.community_role || membership?.role || '',
       department: membership?.department || '',
       inviteCode: data.invite_code || '',
       can_access_police_cad: data.user?.can_access_police_cad === true,
+      is_platform_owner: data.user?.is_platform_owner === true,
+      impersonation_active: data.user?.impersonation_active === true,
       colors: {
         primary: community.primary_color || '#ff2d2d',
         secondary: community.secondary_color || '#8b0000',
@@ -266,9 +307,12 @@ async function applyCommunityBranding() {
     const communityCtxCad = document.querySelector('[data-context-cad]');
     if (communityCtxCad) communityCtxCad.textContent = window.GTAVCAD_CONTEXT.cadName || 'CAD';
     const communityCtxRole = document.querySelector('[data-context-role]');
-    if (communityCtxRole) communityCtxRole.textContent = membership ? window.GTAVCAD_CONTEXT.role : 'No membership';
+    if (communityCtxRole) communityCtxRole.textContent = window.GTAVCAD_CONTEXT.community_role || window.GTAVCAD_CONTEXT.platform_role || window.GTAVCAD_CONTEXT.role || (membership ? membership.role : 'No membership');
     const usernameEl = document.querySelector('[data-context-username]');
     if (usernameEl) usernameEl.textContent = data.user?.username || 'Unknown';
+    document.querySelectorAll('[data-cad-access-badge]').forEach((el) => { el.textContent = (data.user?.can_access_police_cad === true) ? 'CAD ACCESS' : 'CAD LOCKED'; });
+    document.querySelectorAll('[data-exit-impersonation]').forEach((el) => { el.classList.toggle('hidden', data.user?.impersonation_active !== true); });
+    bindAuthenticatedControls();
     const communityRoleEl = document.querySelector('[data-context-community-role]');
     if (communityRoleEl) communityRoleEl.textContent = membership?.role || 'Member';
     const communityCtxInvite = document.querySelector('[data-context-invite]');
@@ -387,8 +431,7 @@ async function refreshAuthNavigation() {
       link.href = '#logout';
       link.addEventListener('click', async (event) => {
         event.preventDefault();
-        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-        window.location.href = '/login';
+        await gtavcadLogout();
       }, { once: true });
     });
   } catch (error) {
@@ -396,6 +439,7 @@ async function refreshAuthNavigation() {
   }
 }
 
+bindAuthenticatedControls();
 refreshAuthNavigation();
 
 // Shared frontend data model

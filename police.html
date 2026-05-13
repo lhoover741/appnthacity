@@ -27,12 +27,18 @@
   </header>
 
   <section class="container" style="padding-top:12px;">
-    <div class="card" data-tenant-header style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
-      <strong>GTAVCAD</strong>
-      <span>Community: <strong data-context-community>Loading…</strong></span>
-      <span>CAD: <strong data-context-cad>Loading…</strong></span>
-      <span>Role: <strong data-context-role>Loading…</strong></span>
-      <span>Invite: <strong data-context-invite>Loading…</strong></span>
+    <div class="card" data-cad-auth-header data-tenant-header style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+      <div style="display:grid;gap:4px;">
+        <strong><span data-context-cad>GTAVCAD</span></strong>
+        <span data-context-community>Loading community…</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <span><strong data-context-username>Signed in</strong> · <span data-context-role>Loading role…</span></span>
+        <span class="badge" data-cad-access-badge>CAD ACCESS</span>
+        <button type="button" class="button button-secondary hidden" data-exit-impersonation>Exit Impersonation</button>
+        <a class="button button-ghost" data-community-link="index" href="#">Return to Community Home</a>
+        <button type="button" class="button button-primary" data-auth-logout>Logout</button>
+      </div>
     </div>
   </section>
 

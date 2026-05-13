@@ -527,6 +527,7 @@ def get_current_community_context():
         'success': True,
         'platform': {'name': 'GTAVCAD', 'domain': 'gtavcad.app'},
         'community': {
+            'community_id': community.community_id,
             'name': community.name,
             'slug': community.slug,
             'cad_name': community.cad_name,
@@ -545,6 +546,7 @@ def get_current_community_context():
             'platform_role': session.get('platform_role'),
             'community_role': membership.role if membership else None,
             'is_platform_owner': bool(session.get('is_platform_owner')),
+            'impersonation_active': bool(session.get('impersonating_community_id')),
             'can_access_police_cad': can_access_police_cad(session.get('platform_role'), membership.role if membership else None, user=User.query.get(user_id) if user_id else None, membership=membership),
         },
         'invite_code': invite.invite_code,
