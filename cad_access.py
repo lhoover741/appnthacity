@@ -111,7 +111,8 @@ def evaluate_police_cad_access(user=None, role=None, membership=None, session_va
     is_owner = platform_owner_override(user=user, session_values=session_values)
     explicit_permission = get_explicit_police_cad_permission(user, membership)
     role_allowed = role_allows_police_cad(normalized_role)
-    final = bool(is_owner or role_allowed or explicit_permission)
+    explicit_permission_effective = bool(explicit_permission and role_allowed)
+    final = bool(is_owner or role_allowed or explicit_permission_effective)
     return {
         "user_id": _read_attr(user, "id", session_values.get("user_id")),
         "community_id": _read_attr(membership, "community_id", session_values.get("community_id") or session_values.get("selected_community_id")),
@@ -120,6 +121,7 @@ def evaluate_police_cad_access(user=None, role=None, membership=None, session_va
         "platform_role": platform_role,
         "is_platform_owner": bool(is_owner),
         "explicit_permission": bool(explicit_permission),
+        "explicit_permission_effective": bool(explicit_permission_effective),
         "role_allowed": bool(role_allowed),
         "final_can_access_police_cad": final,
     }
