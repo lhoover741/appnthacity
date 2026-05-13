@@ -1050,18 +1050,28 @@ function renderEvidenceTable() {
     return;
   }
 
+  const safeEvidenceUrl = (value) => {
+    try {
+      const parsed = new URL(String(value || ''), window.location.origin);
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    } catch (error) {
+      return '';
+    }
+  };
+
   const html = evidence.map(item => {
-    const storageClass = item.storageStatus ? `badge-${item.storageStatus.toLowerCase().replace(' ', '-')}` : 'badge-secondary';
+    const storageClass = item.storageStatus ? `badge-${String(item.storageStatus).toLowerCase().replace(/[^a-z0-9-]+/g, '-')}` : 'badge-secondary';
+    const evidenceUrl = safeEvidenceUrl(item.link);
     return `
       <tr>
-        <td>${item.id}</td>
-        <td>${item.caseNumber}</td>
-        <td>${item.officer}</td>
-        <td>${item.type}</td>
-        <td>${item.description}</td>
-        <td>${item.link ? `<a href="${item.link}" target="_blank">View Evidence</a>` : 'None'}</td>
-        <td><span class="badge ${storageClass}">${item.storageStatus || 'Unknown'}</span></td>
-        <td>${formatDate(item.createdAt)}</td>
+        <td>${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.caseNumber)}</td>
+        <td>${escapeHtml(item.officer)}</td>
+        <td>${escapeHtml(item.type)}</td>
+        <td>${escapeHtml(item.description)}</td>
+        <td>${evidenceUrl ? `<a href="${escapeAttr(evidenceUrl)}" target="_blank" rel="noopener noreferrer">View Evidence</a>` : 'None'}</td>
+        <td><span class="badge ${escapeAttr(storageClass)}">${escapeHtml(item.storageStatus || 'Unknown')}</span></td>
+        <td>${escapeHtml(formatDate(item.createdAt))}</td>
       </tr>
     `;
   }).join('');
