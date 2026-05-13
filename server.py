@@ -41,7 +41,6 @@ from platform_config import (
     PLATFORM_DOMAIN,
     PLATFORM_TAGLINE,
     PLATFORM_CTA,
-    DEFAULT_COMMUNITY_ID,
     DEFAULT_COMMUNITY_NAME,
     DEFAULT_COMMUNITY_SLUG,
     DEFAULT_COMMUNITY_CAD_NAME,
@@ -155,11 +154,14 @@ def _session_hydrate_user(user):
     platform_role = (_user_field(user, 'platform_role', None) or role).strip() or role
 
     owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
-    is_owner_by_email = bool(owner_email and (email or '').strip().lower() == owner_email)
-    is_platform_owner = role == 'PlatformOwner' or platform_role == 'PlatformOwner' or is_owner_by_email
+    email_matches_owner_env = bool(owner_email and (email or '').strip().lower() == owner_email)
+    is_platform_owner = role == 'PlatformOwner' or platform_role == 'PlatformOwner'
 
-    if is_platform_owner:
-        platform_role = 'PlatformOwner'
+    if email_matches_owner_env and not is_platform_owner:
+        logger.warning(
+            "Platform owner email matched but persisted role is not PlatformOwner user_id=%s",
+            user_id,
+        )
 
     session['user_id'] = user_id
     session['username'] = username
@@ -374,12 +376,44 @@ limiter = Limiter(
 # Initialize cache
 cache.init_app(app)
 
+
+def _parse_socketio_allowed_origins():
+    """Return a Socket.IO CORS allowlist without production wildcards."""
+    env_name = (os.environ.get('FLASK_ENV') or os.environ.get('APP_ENV') or '').strip().lower()
+    is_production = env_name == 'production'
+    configured = os.environ.get('SOCKETIO_ALLOWED_ORIGINS')
+    production_defaults = ['https://gtavcad.app', 'https://www.gtavcad.app']
+    development_defaults = [
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ]
+    raw_origins = configured.split(',') if configured else (production_defaults if is_production else development_defaults)
+    origins = []
+    seen = set()
+    for raw_origin in raw_origins:
+        origin = (raw_origin or '').strip().rstrip('/')
+        if not origin:
+            continue
+        if origin == '*':
+            logger.warning('Ignoring wildcard Socket.IO CORS origin')
+            continue
+        if origin not in seen:
+            origins.append(origin)
+            seen.add(origin)
+    if not origins:
+        origins = production_defaults if is_production else development_defaults
+    logger.info('Socket.IO CORS allowlist configured count=%s origins=%s', len(origins), origins)
+    return origins
+
+
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",
+    cors_allowed_origins=_parse_socketio_allowed_origins(),
     async_mode=os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet'),
     ping_interval=25,
     ping_timeout=60,
@@ -6897,8 +6931,9 @@ def serve_static(path):
         'join.html': 'join.html',
     }
     if path in legacy_tenant_pages:
-        target = f'/c/{DEFAULT_COMMUNITY_SLUG}/{legacy_tenant_pages[path]}'
-        return redirect(target, code=302)
+        # Legacy root CAD pages no longer select a default tenant. Route users to
+        # the community picker so stale links cannot force the wrong community.
+        return redirect('/communities', code=302)
 
     parts = path.strip('/').split('/') if path else []
     if len(parts) >= 3 and parts[0] == 'c' and parts[2] in {'assets', 'static'}:
@@ -6963,8 +6998,6 @@ def is_platform_owner():
 
 
 def require_platform_owner():
-    if session.get('is_platform_owner') is True:
-        return None
     if is_platform_owner():
         return None
     return jsonify({'success': False, 'error': 'PlatformOwner required'}), 403
