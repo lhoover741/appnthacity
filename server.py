@@ -43,6 +43,9 @@ from evidence_storage import (
     LINK_ONLY_DISABLED_MESSAGE, get_storage_config, validate_upload,
     relative_storage_path, save_local_file, resolve_local_path,
 )
+from warrant_pdf import (
+    TYPE_PREFIXES, WARRANT_TYPES, build_warrant_pdf, safe_warrant_pdf_filename,
+)
 from platform_config import (
     PLATFORM_NAME,
     PLATFORM_DOMAIN,
@@ -894,6 +897,45 @@ def ensure_arrest_automation_schema():
             'created_at': 'TIMESTAMP',
             'updated_at': 'TIMESTAMP',
         },
+        'warrants': {
+            'warrant_id': 'VARCHAR(64)',
+            'community_id': 'VARCHAR(64)',
+            'civilian_id': 'VARCHAR(64)',
+            'warrant_name': 'VARCHAR(255)',
+            'warrant_charges': 'TEXT',
+            'warrant_issuer': 'VARCHAR(255)',
+            'warrant_notes': 'TEXT',
+            'warrant_status': 'VARCHAR(64)',
+            'justification': 'TEXT',
+            'warrant_type': "VARCHAR(64) DEFAULT 'Arrest Warrant'",
+            'warrant_number': 'VARCHAR(64)',
+            'judge_or_authority': 'VARCHAR(255)',
+            'issuing_agency': 'VARCHAR(255)',
+            'subject_name': 'VARCHAR(255)',
+            'subject_dob': 'VARCHAR(64)',
+            'subject_address': 'TEXT',
+            'charges_or_basis': 'TEXT',
+            'probable_cause': 'TEXT',
+            'search_location': 'TEXT',
+            'items_to_seize': 'TEXT',
+            'court_case_number': 'VARCHAR(128)',
+            'bench_failure_reason': 'TEXT',
+            'administrative_basis': 'TEXT',
+            'inspection_scope': 'TEXT',
+            'originating_jurisdiction': 'VARCHAR(255)',
+            'extradition_location': 'VARCHAR(255)',
+            'fugitive_last_known_location': 'TEXT',
+            'alias_names': 'TEXT',
+            'execution_instructions': 'TEXT',
+            'expiration_date': 'VARCHAR(64)',
+            'status': 'VARCHAR(64)',
+            'created_by_user_id': 'INTEGER',
+            'approved_by_user_id': 'INTEGER',
+            'pdf_attachment_id': 'VARCHAR(64)',
+            'pdf_generated_at': 'TIMESTAMP',
+            'created_at': 'TIMESTAMP',
+            'updated_at': 'TIMESTAMP',
+        },
         'arrests': {
             'arrest_id': 'VARCHAR(64)',
             'civilian_id': 'VARCHAR(64)',
@@ -1703,19 +1745,75 @@ def license_to_dict(l):
         'notes': l.notes or '',
     }
 
-  
+
+def _warrant_value(w, primary, legacy=None, default=''):
+    value = getattr(w, primary, None)
+    if value in (None, '') and legacy:
+        value = getattr(w, legacy, None)
+    return default if value in (None, '') else value
+
+
+def _warrant_status(w):
+    return _warrant_value(w, 'status', 'warrant_status', 'Active') or 'Active'
+
+
+def _warrant_pdf_download_url(w):
+    if getattr(w, 'pdf_attachment_id', None):
+        return f'/api/cad/warrants/{w.warrant_id}/download-pdf'
+    return None
+
+
 def warrant_to_dict(w):
-    return {
+    warrant_type = _warrant_value(w, 'warrant_type', default='Arrest Warrant') or 'Arrest Warrant'
+    warrant_number = _warrant_value(w, 'warrant_number', 'warrant_id')
+    subject_name = _warrant_value(w, 'subject_name', 'warrant_name')
+    charges_or_basis = _warrant_value(w, 'charges_or_basis', 'warrant_charges')
+    probable_cause = _warrant_value(w, 'probable_cause', 'justification') or _warrant_value(w, 'warrant_notes')
+    status = _warrant_status(w)
+    payload = {
         'id': w.warrant_id,
-        'warrantName': w.warrant_name or '',
-        'warrantCharges': w.warrant_charges or '',
-        'warrantIssuer': w.warrant_issuer or '',
-        'warrantNotes': w.warrant_notes or '',
-        'warrantStatus': w.warrant_status or 'Active',
-        'expirationDate': w.expiration_date or '',
-        'justification': w.justification or '',
-        'createdAt': w.created_at.isoformat() if w.created_at else None,
+        'warrant_id': w.warrant_id,
+        'warrant_number': warrant_number,
+        'warrant_type': warrant_type,
+        'subject_name': subject_name,
+        'subject_dob': _warrant_value(w, 'subject_dob'),
+        'subject_address': _warrant_value(w, 'subject_address'),
+        'charges_or_basis': charges_or_basis,
+        'probable_cause': probable_cause,
+        'issuing_agency': _warrant_value(w, 'issuing_agency', 'warrant_issuer'),
+        'judge_or_authority': _warrant_value(w, 'judge_or_authority'),
+        'search_location': _warrant_value(w, 'search_location'),
+        'items_to_seize': _warrant_value(w, 'items_to_seize'),
+        'court_case_number': _warrant_value(w, 'court_case_number'),
+        'bench_failure_reason': _warrant_value(w, 'bench_failure_reason'),
+        'administrative_basis': _warrant_value(w, 'administrative_basis'),
+        'inspection_scope': _warrant_value(w, 'inspection_scope'),
+        'originating_jurisdiction': _warrant_value(w, 'originating_jurisdiction'),
+        'extradition_location': _warrant_value(w, 'extradition_location'),
+        'fugitive_last_known_location': _warrant_value(w, 'fugitive_last_known_location'),
+        'alias_names': _warrant_value(w, 'alias_names'),
+        'execution_instructions': _warrant_value(w, 'execution_instructions'),
+        'expiration_date': _warrant_value(w, 'expiration_date'),
+        'status': status,
+        'pdf_generated_at': w.pdf_generated_at.isoformat() if getattr(w, 'pdf_generated_at', None) else None,
+        'pdf_download_url': _warrant_pdf_download_url(w),
+        'created_at': w.created_at.isoformat() if w.created_at else None,
+        'updated_at': w.updated_at.isoformat() if getattr(w, 'updated_at', None) else None,
+        # Legacy frontend aliases.
+        'warrantName': subject_name,
+        'warrantCharges': charges_or_basis,
+        'warrantIssuer': _warrant_value(w, 'issuing_agency', 'warrant_issuer'),
+        'warrantNotes': probable_cause,
+        'warrantStatus': status,
+        'expirationDate': _warrant_value(w, 'expiration_date'),
+        'justification': _warrant_value(w, 'justification') or probable_cause,
+        'suspectName': subject_name,
+        'charges': charges_or_basis,
+        'issuer': _warrant_value(w, 'issuing_agency', 'warrant_issuer'),
+        'expiration': _warrant_value(w, 'expiration_date'),
+        'notes': probable_cause,
     }
+    return payload
 
 
 def arrest_to_dict(a):
@@ -2061,20 +2159,26 @@ def _upsert_license(data):
 
 
 def _upsert_warrant(data):
-    w_id = data.get('id') or f"WRT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
     community_id = get_current_community_id()
+    payload = _normalize_warrant_payload(data) if 'WARRANT_FIELD_MAP' in globals() else {}
+    w_id = data.get('id') or data.get('warrant_id') or data.get('warrant_number') or f"WRT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
     obj = scoped_query(Warrant, community_id).filter_by(warrant_id=w_id).first()
     if obj is None:
-        obj = Warrant(community_id=community_id, warrant_id=w_id)
+        obj = Warrant(community_id=community_id, warrant_id=w_id, created_by_user_id=session.get('user_id'), created_at=datetime.utcnow())
         db.session.add(obj)
-    obj.warrant_name    = data.get('warrantName', '')
-    obj.warrant_charges = data.get('warrantCharges', '')
-    obj.warrant_issuer  = data.get('warrantIssuer', '')
-    obj.warrant_notes   = data.get('warrantNotes', '')
-    obj.warrant_status  = data.get('warrantStatus', 'Active')
-    obj.expiration_date = data.get('expirationDate', '')
-    obj.justification   = data.get('justification', '')
-    obj.updated_at      = datetime.utcnow()
+    if payload:
+        if not payload.get('warrant_number'):
+            payload['warrant_number'] = getattr(obj, 'warrant_number', None) or generate_warrant_number(community_id, payload.get('warrant_type') or 'Arrest Warrant')
+        _apply_warrant_payload(obj, payload)
+    else:
+        obj.warrant_name    = data.get('warrantName', '')
+        obj.warrant_charges = data.get('warrantCharges', '')
+        obj.warrant_issuer  = data.get('warrantIssuer', '')
+        obj.warrant_notes   = data.get('warrantNotes', '')
+        obj.warrant_status  = data.get('warrantStatus', 'Active')
+        obj.expiration_date = data.get('expirationDate', '')
+        obj.justification   = data.get('justification', '')
+        obj.updated_at      = datetime.utcnow()
 
 
 def _upsert_arrest(data):
@@ -5491,20 +5595,20 @@ def get_all_vehicles():
 def create_vehicle():
     """Create a new vehicle registration in DMV."""
     data = request.get_json(silent=True) or {}
-    
+
     # Field mapping: frontend camelCase -> database snake_case
     plate = (data.get('plateau Number') or data.get('plateNumber') or data.get('plate') or '').strip()
     if not plate:
         return jsonify({'success': False, 'error': 'plate number is required'}), 400
-    
+
     # Check for duplicates
     existing = scoped_query(Vehicle).filter_by(plate=plate).first()
     if existing:
         return jsonify({'success': False, 'error': f'Vehicle with plate {plate} already exists'}), 409
-    
+
     try:
         owner_civilian_id = data.get('ownerCivilianId') or data.get('owner_civilian_id') or ''
-        vehicle = Vehicle(community_id=community_id, 
+        vehicle = Vehicle(community_id=community_id,
             vehicle_id=f"VEH-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}",
             owner_civilian_id=owner_civilian_id,
             plate=plate,
@@ -5519,7 +5623,7 @@ def create_vehicle():
         )
         db.session.add(vehicle)
         db.session.commit()
-        
+
         from cad_helpers import log_audit
         log_audit('dmv', 'create_vehicle', 'Vehicle', vehicle.vehicle_id)
         logger.info(f'Vehicle registered: {plate} owner={vehicle.owner_name}')
@@ -5539,12 +5643,12 @@ def create_vehicle():
 def update_vehicle(plate):
     """Update an existing vehicle registration."""
     data = request.get_json(silent=True) or {}
-    
+
     try:
         vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
         if not vehicle:
             return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
-        
+
         # Update mappable fields from frontend -> database
         if 'vehicleMake' in data or 'make' in data:
             vehicle.make = (data.get('vehicleMake') or data.get('make') or '').strip()
@@ -5562,10 +5666,10 @@ def update_vehicle(plate):
             vehicle.notes = data.get('notes', '')
         if 'vin' in data:
             vehicle.vin = data.get('vin', '')
-        
+
         vehicle.updated_at = datetime.utcnow()
         db.session.commit()
-        
+
         logger.info(f'Vehicle updated: {plate}')
         return jsonify({'success': True, 'vehicle': vehicle_to_dict(vehicle)})
     except Exception as e:
@@ -5582,10 +5686,10 @@ def delete_vehicle(plate):
         vehicle = scoped_query(Vehicle).filter_by(plate=plate).first()
         if not vehicle:
             return jsonify({'success': False, 'error': 'Vehicle not found'}), 404
-        
+
         db.session.delete(vehicle)
         db.session.commit()
-        
+
         logger.info(f'Vehicle deleted: {plate}')
         return jsonify({'success': True, 'message': 'Vehicle deleted'})
     except Exception as e:
@@ -5615,19 +5719,19 @@ def get_all_licenses():
 def create_license():
     """Create a new driver license in DMV."""
     data = request.get_json(silent=True) or {}
-    
+
     # Field mapping: frontend camelCase -> database snake_case
     owner_name = (data.get('licenseName') or data.get('ownerName') or data.get('owner_name') or '').strip()
     if not owner_name:
         return jsonify({'success': False, 'error': 'owner name is required'}), 400
-    
+
     license_type = (data.get('licenseClass') or data.get('licenseType') or data.get('license_type') or '').strip()
     if not license_type:
         return jsonify({'success': False, 'error': 'license class/type is required'}), 400
-    
+
     try:
         license_id = f"LIC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
-        license_obj = License(community_id=community_id, 
+        license_obj = License(community_id=community_id,
             license_id=license_id,
             owner_name=owner_name,
             license_type=license_type,
@@ -5638,7 +5742,7 @@ def create_license():
         )
         db.session.add(license_obj)
         db.session.commit()
-        
+
         from cad_helpers import log_audit
         log_audit('dmv', 'create_license', 'License', license_id)
         logger.info(f'License issued: {license_id} to {owner_name} class={license_type}')
@@ -5658,12 +5762,12 @@ def create_license():
 def update_license_route(license_id):
     """Update an existing driver license."""
     data = request.get_json(silent=True) or {}
-    
+
     try:
         license_obj = scoped_query(License).filter_by(license_id=license_id).first()
         if not license_obj:
             return jsonify({'success': False, 'error': 'License not found'}), 404
-        
+
         # Update mappable fields
         if 'ownerName' in data or 'licenseName' in data or 'owner_name' in data:
             val = data.get('ownerName') or data.get('licenseName') or data.get('owner_name')
@@ -5681,10 +5785,10 @@ def update_license_route(license_id):
             license_obj.notes = data.get('notes', '')
         if 'restrictions' in data:
             license_obj.notes = data.get('restrictions', '')
-        
+
         license_obj.updated_at = datetime.utcnow()
         db.session.commit()
-        
+
         logger.info(f'License updated: {license_id}')
         return jsonify({'success': True, 'license': license_to_dict(license_obj)})
     except Exception as e:
@@ -5701,10 +5805,10 @@ def delete_license_route(license_id):
         license_obj = scoped_query(License).filter_by(license_id=license_id).first()
         if not license_obj:
             return jsonify({'success': False, 'error': 'License not found'}), 404
-        
+
         db.session.delete(license_obj)
         db.session.commit()
-        
+
         logger.info(f'License deleted: {license_id}')
         return jsonify({'success': True, 'message': 'License deleted'})
     except Exception as e:
@@ -5750,11 +5854,11 @@ def get_all_businesses():
 def create_business():
     """Create a new business registration."""
     data = request.get_json(silent=True) or {}
-    
+
     business_name = (data.get('businessName') or data.get('business_name') or '').strip()
     if not business_name:
         return jsonify({'success': False, 'error': 'business_name is required'}), 400
-    
+
     try:
         business_id = f"BIZ-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
         business = Business(
@@ -5771,16 +5875,16 @@ def create_business():
         )
         db.session.add(business)
         db.session.commit()
-        
+
         logger.info(f'Business registered: {business_id} name={business_name} type={business.business_type}')
-        
+
         # Log audit trail
         try:
             from cad_helpers import log_audit
             log_audit('business', 'create', 'Business', business_id)
         except:
             pass
-        
+
         return jsonify({
             'success': True,
             'business_id': business_id,
@@ -5799,7 +5903,7 @@ def get_business(business_id):
         business = scoped_query(Business).filter_by(business_id=business_id).first()
         if not business:
             return jsonify({'success': False, 'error': 'Business not found'}), 404
-        
+
         return jsonify({'success': True, 'business': business_to_dict(business)})
     except Exception as e:
         logger.error(f'Failed to get business: {e}')
@@ -5810,12 +5914,12 @@ def get_business(business_id):
 def update_business(business_id):
     """Update an existing business."""
     data = request.get_json(silent=True) or {}
-    
+
     try:
         business = scoped_query(Business).filter_by(business_id=business_id).first()
         if not business:
             return jsonify({'success': False, 'error': 'Business not found'}), 404
-        
+
         # Update fields if provided
         if 'businessName' in data or 'business_name' in data:
             val = data.get('businessName') or data.get('business_name')
@@ -5846,10 +5950,10 @@ def update_business(business_id):
             val = data.get('ownerCivilianId') or data.get('owner_civilian_id')
             if val:
                 business.owner_civilian_id = val.strip()
-        
+
         business.updated_at = datetime.utcnow()
         db.session.commit()
-        
+
         logger.info(f'Business updated: {business_id}')
         return jsonify({'success': True, 'business': business_to_dict(business)})
     except Exception as e:
@@ -5865,10 +5969,10 @@ def delete_business(business_id):
         business = scoped_query(Business).filter_by(business_id=business_id).first()
         if not business:
             return jsonify({'success': False, 'error': 'Business not found'}), 404
-        
+
         db.session.delete(business)
         db.session.commit()
-        
+
         logger.info(f'Business deleted: {business_id}')
         return jsonify({'success': True, 'message': 'Business deleted'})
     except Exception as e:
@@ -6625,16 +6729,25 @@ def cad_case_create_warrant(case_id):
     if not case:
         return _cad_json_error('Case not found', 404)
     data = request.get_json(silent=True) or {}
+    generated_warrant_number = data.get('warrant_number') or data.get('warrant_id') or generate_warrant_number(community_id, data.get('warrant_type') or 'Arrest Warrant')
     warrant = Warrant(
         community_id=community_id,
-        warrant_id=data.get('warrant_id') or f"WAR-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}",
+        warrant_id=data.get('warrant_id') or generated_warrant_number,
+        warrant_number=generated_warrant_number,
+        warrant_type=data.get('warrant_type') or 'Arrest Warrant',
         civilian_id=data.get('civilian_id') or (case.defendant_civilian_id or (_split_csv(case.involved_civilians)[0] if _split_csv(case.involved_civilians) else '')),
         warrant_name=data.get('warrant_name') or case.title or _case_public_id(case),
         warrant_charges=data.get('warrant_charges') or case.charges or '',
         warrant_issuer=data.get('warrant_issuer') or _actor_name(),
         warrant_notes=data.get('warrant_notes') or case.report_notes or '',
         warrant_status=data.get('warrant_status') or 'Active',
-        justification=data.get('justification') or f"Probable cause linked to case {_case_public_id(case)}.",
+        status=data.get('status') or data.get('warrant_status') or 'Active',
+        subject_name=data.get('subject_name') or data.get('warrant_name') or case.title or _case_public_id(case),
+        charges_or_basis=data.get('charges_or_basis') or data.get('warrant_charges') or case.charges or '',
+        probable_cause=data.get('probable_cause') or data.get('justification') or f"Probable cause linked to case {_case_public_id(case)}.",
+        issuing_agency=data.get('issuing_agency') or data.get('warrant_issuer') or _actor_name(),
+        created_by_user_id=session.get('user_id'),
+        justification=data.get('justification') or data.get('probable_cause') or f"Probable cause linked to case {_case_public_id(case)}.",
         created_at=datetime.utcnow(),
     )
     db.session.add(warrant)
@@ -8999,6 +9112,321 @@ def _safe_external_evidence_url(value):
     if parsed.scheme.lower() not in {'http', 'https'} or not parsed.netloc or parsed.username or parsed.password:
         return None
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, parsed.query, parsed.fragment))
+
+
+WARRANT_FIELD_MAP = {
+    'warrant_type': ('warrant_type', 'warrantType'),
+    'warrant_number': ('warrant_number', 'warrantNumber'),
+    'judge_or_authority': ('judge_or_authority', 'judgeOrAuthority'),
+    'issuing_agency': ('issuing_agency', 'issuingAgency', 'warrantIssuer', 'issuer'),
+    'subject_name': ('subject_name', 'subjectName', 'warrantName', 'suspectName'),
+    'subject_dob': ('subject_dob', 'subjectDob'),
+    'subject_address': ('subject_address', 'subjectAddress'),
+    'charges_or_basis': ('charges_or_basis', 'chargesOrBasis', 'warrantCharges', 'charges'),
+    'probable_cause': ('probable_cause', 'probableCause', 'warrantNotes', 'justification', 'notes'),
+    'search_location': ('search_location', 'searchLocation'),
+    'items_to_seize': ('items_to_seize', 'itemsToSeize'),
+    'court_case_number': ('court_case_number', 'courtCaseNumber'),
+    'bench_failure_reason': ('bench_failure_reason', 'benchFailureReason'),
+    'administrative_basis': ('administrative_basis', 'administrativeBasis'),
+    'inspection_scope': ('inspection_scope', 'inspectionScope'),
+    'originating_jurisdiction': ('originating_jurisdiction', 'originatingJurisdiction'),
+    'extradition_location': ('extradition_location', 'extraditionLocation'),
+    'fugitive_last_known_location': ('fugitive_last_known_location', 'fugitiveLastKnownLocation'),
+    'alias_names': ('alias_names', 'aliasNames'),
+    'execution_instructions': ('execution_instructions', 'executionInstructions'),
+    'expiration_date': ('expiration_date', 'expirationDate', 'warrantExpiration', 'expiration'),
+    'status': ('status', 'warrantStatus'),
+}
+
+WARRANT_REQUIRED_BY_TYPE = {
+    'Arrest Warrant': ('subject_name', 'charges_or_basis', 'probable_cause'),
+    'Search Warrant': ('search_location', 'items_to_seize', 'probable_cause', 'judge_or_authority'),
+    'Bench Warrant': ('subject_name', 'court_case_number', 'bench_failure_reason', 'judge_or_authority'),
+    'Administrative Warrant': ('subject_name', 'administrative_basis', 'issuing_agency', 'inspection_scope'),
+    'Extradition Warrant': ('subject_name', 'originating_jurisdiction', 'extradition_location', 'charges_or_basis'),
+    'Fugitive Warrant': ('subject_name', 'charges_or_basis', 'fugitive_last_known_location'),
+    'Alias Warrant': ('alias_names', 'charges_or_basis', 'probable_cause'),
+}
+
+
+def _payload_get(data, *keys, default=''):
+    for key in keys:
+        value = data.get(key) if isinstance(data, dict) else None
+        if value not in (None, ''):
+            return str(value).strip()
+    return default
+
+
+def _normalize_warrant_payload(data):
+    payload = {}
+    for field, keys in WARRANT_FIELD_MAP.items():
+        payload[field] = _payload_get(data, *keys)
+    payload['warrant_type'] = payload.get('warrant_type') or 'Arrest Warrant'
+    payload['status'] = payload.get('status') or 'Active'
+    if not payload.get('issuing_agency'):
+        payload['issuing_agency'] = _actor_name()
+    return payload
+
+
+def _validate_warrant_payload(payload):
+    errors = []
+    warrant_type = payload.get('warrant_type') or 'Arrest Warrant'
+    if warrant_type not in WARRANT_TYPES:
+        errors.append(f'warrant_type must be one of: {", ".join(WARRANT_TYPES)}')
+        return errors
+    if not payload.get('expiration_date'):
+        errors.append('expiration_date is required')
+    for field in WARRANT_REQUIRED_BY_TYPE.get(warrant_type, ()):
+        if not payload.get(field):
+            errors.append(f'{field} is required for {warrant_type}')
+    if warrant_type == 'Administrative Warrant' and not payload.get('subject_name'):
+        errors.append('subject_name or entity name is required for Administrative Warrant')
+    return errors
+
+
+def generate_warrant_number(community_id, warrant_type):
+    prefix = TYPE_PREFIXES.get(warrant_type, 'WAR')
+    date_part = datetime.utcnow().strftime('%Y%m%d')
+    for _ in range(25):
+        suffix = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
+        candidate = f'{prefix}-{date_part}-{suffix}'
+        exists = scoped_query(Warrant, community_id).filter_by(warrant_number=candidate).first()
+        if not exists:
+            return candidate
+    return f'{prefix}-{date_part}-{secrets.token_hex(4).upper()}'
+
+
+def _ensure_warrant_identity(warrant, community_id):
+    if not getattr(warrant, 'warrant_type', None):
+        warrant.warrant_type = 'Arrest Warrant'
+    if not getattr(warrant, 'warrant_number', None):
+        warrant.warrant_number = generate_warrant_number(community_id, warrant.warrant_type or 'Arrest Warrant')
+    if not getattr(warrant, 'status', None):
+        warrant.status = getattr(warrant, 'warrant_status', None) or 'Active'
+    return warrant
+
+
+def _find_warrant_for_cad(community_id, warrant_id):
+    warrant = scoped_query(Warrant, community_id).filter(
+        or_(Warrant.warrant_id == warrant_id, Warrant.warrant_number == warrant_id)
+    ).first()
+    if warrant:
+        _ensure_warrant_identity(warrant, community_id)
+    return warrant
+
+
+def _apply_warrant_payload(warrant, payload):
+    for field, value in payload.items():
+        if field == 'warrant_number' and not value:
+            continue
+        if hasattr(warrant, field):
+            setattr(warrant, field, value or None)
+    warrant.warrant_name = payload.get('subject_name') or warrant.warrant_name or ''
+    warrant.warrant_charges = payload.get('charges_or_basis') or warrant.warrant_charges or ''
+    warrant.warrant_issuer = payload.get('issuing_agency') or warrant.warrant_issuer or ''
+    warrant.warrant_notes = payload.get('probable_cause') or warrant.warrant_notes or ''
+    warrant.justification = payload.get('probable_cause') or warrant.justification or ''
+    warrant.warrant_status = payload.get('status') or warrant.warrant_status or 'Active'
+    warrant.updated_at = datetime.utcnow()
+
+
+@app.route('/api/cad/warrants', methods=['GET'])
+def cad_warrants_list():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    warrants = scoped_query(Warrant, community_id).order_by(Warrant.created_at.desc()).all()
+    changed = False
+    for warrant in warrants:
+        before = (getattr(warrant, 'warrant_type', None), getattr(warrant, 'warrant_number', None), getattr(warrant, 'status', None))
+        _ensure_warrant_identity(warrant, community_id)
+        changed = changed or before != (warrant.warrant_type, warrant.warrant_number, warrant.status)
+    if changed:
+        db.session.commit()
+    return jsonify({'success': True, 'warrants': [warrant_to_dict(w) for w in warrants]})
+
+
+@app.route('/api/cad/warrants', methods=['POST'])
+def cad_warrants_create():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    payload = _normalize_warrant_payload(data)
+    errors = _validate_warrant_payload(payload)
+    if errors:
+        return jsonify({'success': False, 'error': 'Warrant validation failed', 'details': {'errors': errors}, 'request_id': getattr(g, 'request_id', None)}), 400
+    warrant_type = payload['warrant_type']
+    warrant_number = payload.get('warrant_number') or generate_warrant_number(community_id, warrant_type)
+    while scoped_query(Warrant, community_id).filter_by(warrant_number=warrant_number).first():
+        warrant_number = generate_warrant_number(community_id, warrant_type)
+    warrant_id = _payload_get(data, 'warrant_id', 'id') or warrant_number
+    if Warrant.query.filter_by(warrant_id=warrant_id).first():
+        warrant_id = f'{warrant_number}-{secrets.token_hex(2).upper()}'
+    warrant = Warrant(
+        community_id=community_id,
+        warrant_id=warrant_id,
+        warrant_number=warrant_number,
+        warrant_type=warrant_type,
+        created_by_user_id=session.get('user_id'),
+        created_at=datetime.utcnow(),
+    )
+    _apply_warrant_payload(warrant, payload)
+    db.session.add(warrant)
+    _cad_audit('warrant_created', community_id, warrant.warrant_id, {'warrant_id': warrant.warrant_id, 'warrant_number': warrant.warrant_number, 'warrant_type': warrant.warrant_type})
+    db.session.commit()
+    return jsonify({'success': True, 'warrant': warrant_to_dict(warrant)}), 201
+
+
+@app.route('/api/cad/warrants/<warrant_id>', methods=['GET'])
+def cad_warrant_detail(warrant_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    warrant = _find_warrant_for_cad(community_id, warrant_id)
+    if not warrant:
+        return _cad_json_error('Warrant not found', 404)
+    db.session.commit()
+    return jsonify({'success': True, 'warrant': warrant_to_dict(warrant)})
+
+
+@app.route('/api/cad/warrants/<warrant_id>/status', methods=['POST'])
+def cad_warrant_status(warrant_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    warrant = _find_warrant_for_cad(community_id, warrant_id)
+    if not warrant:
+        return _cad_json_error('Warrant not found', 404)
+    data = request.get_json(silent=True) or {}
+    new_status = _payload_get(data, 'status', 'warrantStatus')
+    if not new_status:
+        return _cad_json_error('status is required', 400)
+    warrant.status = new_status
+    warrant.warrant_status = new_status
+    warrant.updated_at = datetime.utcnow()
+    _cad_audit('warrant_status_updated', community_id, warrant.warrant_id, {'warrant_id': warrant.warrant_id, 'status': new_status})
+    db.session.commit()
+    return jsonify({'success': True, 'warrant': warrant_to_dict(warrant)})
+
+
+def _write_pdf_bytes_to_local_storage(pdf_bytes, relative_path):
+    path, error = resolve_local_path(relative_path)
+    if error:
+        return None, error
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(pdf_bytes)
+    return path, None
+
+
+def _community_display_names(community_id):
+    community = Community.query.filter_by(community_id=community_id).first()
+    if not community:
+        return community_id, DEFAULT_COMMUNITY_CAD_NAME
+    community_name = getattr(community, 'name', None) or getattr(community, 'community_name', None) or community_id
+    cad_name = getattr(community, 'cad_name', None) or getattr(community, 'display_name', None) or DEFAULT_COMMUNITY_CAD_NAME
+    return community_name, cad_name
+
+
+@app.route('/api/cad/warrants/<warrant_id>/generate-pdf', methods=['POST'])
+def cad_warrant_generate_pdf(warrant_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    storage_cfg = get_storage_config()
+    storage_root = storage_cfg.get('root')
+    if (
+        storage_cfg.get('mode') != 'local_volume'
+        or not storage_cfg.get('direct_uploads_enabled')
+        or not storage_root
+        or not os.path.isdir(os.path.expanduser(storage_root))
+    ):
+        return _cad_json_error('Direct PDF storage is not configured. Enable local evidence storage to generate warrant PDFs.', 400)
+    warrant = _find_warrant_for_cad(community_id, warrant_id)
+    if not warrant:
+        return _cad_json_error('Warrant not found', 404)
+    _ensure_warrant_identity(warrant, community_id)
+    community_name, cad_name = _community_display_names(community_id)
+    creator = _safe_user_summary(warrant.created_by_user_id or session.get('user_id')).get('username') or _actor_name()
+    approver = _safe_user_summary(warrant.approved_by_user_id).get('username') if warrant.approved_by_user_id else ''
+    try:
+        pdf_bytes = build_warrant_pdf(warrant, community_name=community_name, cad_name=cad_name, created_by=creator, approved_by=approver)
+    except RuntimeError as exc:
+        return _cad_json_error(str(exc), 500)
+    filename = safe_warrant_pdf_filename(warrant.warrant_number, warrant.warrant_type)
+    attachment_id = f"ATT-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}"
+    stored_leaf = f'{secrets.token_hex(12)}_{filename}'
+    rel_path = relative_storage_path(community_id, 'warrant', warrant.warrant_id, attachment_id, stored_leaf)
+    _, save_error = _write_pdf_bytes_to_local_storage(pdf_bytes, rel_path)
+    if save_error:
+        return _cad_json_error('Warrant PDF could not be stored securely', 500)
+    description = f'Generated {warrant.warrant_type} PDF for warrant {warrant.warrant_number}'
+    attachment = EvidenceAttachment(
+        attachment_id=attachment_id,
+        community_id=community_id,
+        warrant_id=warrant.warrant_id,
+        uploaded_by_user_id=session.get('user_id'),
+        original_filename=filename,
+        stored_filename=stored_leaf,
+        file_type='Warrant PDF',
+        mime_type='application/pdf',
+        file_size=len(pdf_bytes),
+        storage_mode='local_volume',
+        storage_path=rel_path,
+        description=description,
+        category='Warrant PDF',
+        review_status='Generated',
+        is_deleted=False,
+        created_at=datetime.utcnow(),
+    )
+    evidence = Evidence(
+        evidence_id=f"EVD-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}",
+        community_id=community_id,
+        evidence_type='Warrant PDF',
+        evidence_description=description,
+        collected_by=_actor_name(),
+        officer=_actor_name(),
+        storage_status='Generated',
+        chain_of_custody=f'Generated from warrant {warrant.warrant_number}; attachment {attachment_id}',
+        status='Active',
+        created_at=datetime.utcnow(),
+    )
+    warrant.pdf_attachment_id = attachment.attachment_id
+    warrant.pdf_generated_at = datetime.utcnow()
+    warrant.updated_at = datetime.utcnow()
+    db.session.add(attachment)
+    db.session.add(evidence)
+    _cad_audit('warrant_pdf_generated', community_id, warrant.warrant_id, {'warrant_id': warrant.warrant_id, 'attachment_id': attachment.attachment_id})
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'warrant_id': warrant.warrant_id,
+        'warrant_number': warrant.warrant_number,
+        'attachment_id': attachment.attachment_id,
+        'pdf_generated_at': warrant.pdf_generated_at.isoformat() if warrant.pdf_generated_at else None,
+        'download_url': _warrant_pdf_download_url(warrant),
+        'message': 'Added to evidence log',
+    })
+
+
+@app.route('/api/cad/warrants/<warrant_id>/download-pdf', methods=['GET'])
+def cad_warrant_download_pdf(warrant_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    warrant = _find_warrant_for_cad(community_id, warrant_id)
+    if not warrant or not warrant.pdf_attachment_id:
+        return _cad_json_error('Warrant PDF not found', 404)
+    attachment = scoped_query(EvidenceAttachment, community_id).filter_by(attachment_id=warrant.pdf_attachment_id, is_deleted=False).first()
+    if not attachment or attachment.storage_mode != 'local_volume' or attachment.warrant_id != warrant.warrant_id:
+        return _cad_json_error('Warrant PDF not found', 404)
+    path, path_error = resolve_local_path(attachment.storage_path)
+    if path_error or not path.exists() or not path.is_file():
+        return _cad_json_error('Warrant PDF not found', 404)
+    _cad_audit('warrant_pdf_downloaded', community_id, warrant.warrant_id, {'warrant_id': warrant.warrant_id, 'attachment_id': attachment.attachment_id})
+    db.session.commit()
+    return send_file(path, as_attachment=True, download_name=attachment.original_filename or 'warrant.pdf', mimetype='application/pdf', conditional=True)
 
 
 @app.route('/api/cad/evidence/attachments/config', methods=['GET'])

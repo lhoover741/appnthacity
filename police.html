@@ -259,19 +259,21 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>Warrant ID</th>
-                    <th>Suspect</th>
-                    <th>Charges</th>
-                    <th>Issued By</th>
+                    <th>Warrant #</th>
+                    <th>Type</th>
+                    <th>Subject/Target</th>
+                    <th>Charges/Basis</th>
+                    <th>Issuing Agency</th>
+                    <th>Judge/Authority</th>
                     <th>Expiration</th>
                     <th>Status</th>
-                    <th>Notes</th>
+                    <th>PDF</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="warrants-tbody">
                   <tr>
-                    <td colspan="8" class="empty-row">No active warrants found.</td>
+                    <td colspan="10" class="empty-row">No active warrants found.</td>
                   </tr>
                 </tbody>
               </table>
@@ -299,7 +301,7 @@
                 </thead>
                 <tbody id="arrests-tbody">
                   <tr>
-                    <td colspan="8" class="empty-row">No arrest records have been filed locally yet.</td>
+                    <td colspan="10" class="empty-row">No arrest records have been filed locally yet.</td>
                   </tr>
                 </tbody>
               </table>
@@ -357,7 +359,7 @@
                 </thead>
                 <tbody id="evidence-tbody">
                   <tr>
-                    <td colspan="8" class="empty-row">No evidence submitted yet.</td>
+                    <td colspan="10" class="empty-row">No evidence submitted yet.</td>
                   </tr>
                 </tbody>
               </table>
@@ -519,11 +521,26 @@
         <article class="card form-card">
           <h3>Add Warrant</h3>
           <form id="warrant-form" class="system-form">
-            <label><span>Suspect name</span><input name="warrantName" type="text" required /></label>
-            <label><span>Charges</span><input name="warrantCharges" type="text" required /></label>
-            <label><span>Issued by</span><input name="warrantIssuer" type="text" required /></label>
-            <label><span>Expiration</span><input name="warrantExpiration" id="warrantExpiration" type="date" required /></label>
-            <label><span>Status</span><select name="warrantStatus" id="warrantStatus" required><option value="">Select</option><option>Active</option><option>Suspended</option><option>Cleared</option></select></label>
+            <label><span>Warrant Type</span><select name="warrant_type" id="warrantType" required><option>Arrest Warrant</option><option>Search Warrant</option><option>Bench Warrant</option><option>Administrative Warrant</option><option>Extradition Warrant</option><option>Fugitive Warrant</option><option>Alias Warrant</option></select></label>
+            <label><span>Subject / target name</span><input name="subject_name" type="text" required /></label>
+            <label><span>Subject DOB</span><input name="subject_dob" type="date" /></label>
+            <label><span>Subject address</span><input name="subject_address" type="text" /></label>
+            <label><span>Charges / basis</span><input name="charges_or_basis" type="text" required /></label>
+            <label><span>Issuing agency</span><input name="issuing_agency" type="text" required /></label>
+            <label><span>Judge / authority</span><input name="judge_or_authority" type="text" /></label>
+            <label><span>Expiration</span><input name="expiration_date" id="warrantExpiration" type="date" required /></label>
+            <label><span>Status</span><select name="status" id="warrantStatus" required><option value="">Select</option><option>Active</option><option>Suspended</option><option>Cleared</option><option>Served</option><option>Expired</option><option>Withdrawn</option></select></label>
+            <label class="warrant-type-field" data-warrant-types="Search Warrant"><span>Search location</span><input name="search_location" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Search Warrant"><span>Items to seize</span><input name="items_to_seize" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Bench Warrant"><span>Court case number</span><input name="court_case_number" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Bench Warrant"><span>Bench failure reason</span><input name="bench_failure_reason" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Administrative Warrant"><span>Administrative basis</span><input name="administrative_basis" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Administrative Warrant"><span>Inspection scope</span><input name="inspection_scope" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Extradition Warrant"><span>Originating jurisdiction</span><input name="originating_jurisdiction" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Extradition Warrant"><span>Extradition location</span><input name="extradition_location" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Fugitive Warrant"><span>Last known location</span><input name="fugitive_last_known_location" type="text" /></label>
+            <label class="warrant-type-field" data-warrant-types="Alias Warrant"><span>Alias names</span><input name="alias_names" type="text" /></label>
+            <label><span>Execution instructions</span><input name="execution_instructions" type="text" /></label>
             <label class="full-width">
               <span style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                 Warrant Justification / Notes
@@ -531,7 +548,7 @@
                   <span id="ai-warrant-icon">✦</span> AI Generate
                 </button>
               </span>
-              <textarea name="warrantNotes" id="warrantNotes" rows="4" placeholder="Probable cause, circumstances, and supporting evidence for this warrant…"></textarea>
+              <textarea name="probable_cause" id="warrantNotes" rows="4" placeholder="Probable cause, circumstances, and supporting evidence for this warrant…"></textarea>
             </label>
             <div id="ai-warrant-status" style="font-size:0.82rem;margin-top:-8px;margin-bottom:4px;display:none;"></div>
             <button class="button button-primary" type="submit">Create Warrant</button>
@@ -1650,9 +1667,9 @@
       const statusSelect = document.getElementById('warrantStatus');
       const btnIcon = document.getElementById('ai-warrant-icon');
 
-      const warrantName = form.querySelector('[name="warrantName"]').value.trim();
-      const warrantCharges = form.querySelector('[name="warrantCharges"]').value.trim();
-      const warrantIssuer = form.querySelector('[name="warrantIssuer"]').value.trim();
+      const warrantName = form.querySelector('[name="subject_name"]').value.trim();
+      const warrantCharges = form.querySelector('[name="charges_or_basis"]').value.trim();
+      const warrantIssuer = form.querySelector('[name="issuing_agency"]').value.trim();
 
       if (!warrantName || !warrantCharges) {
         statusEl.style.display = 'block';

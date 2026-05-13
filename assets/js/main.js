@@ -710,12 +710,20 @@ async function addEvidence(record, formElement = null) {
   return record;
 }
 
-function addWarrant(record) {
-  record.id = generateId('wrn');
-  record.createdAt = new Date().toISOString();
-  GTAVCADData.warrants.push(record);
-  saveData();
-  return record;
+async function addWarrant(record) {
+  const res = await fetch('/api/cad/warrants', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(record),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    const details = data.details && Array.isArray(data.details.errors) ? `: ${data.details.errors.join(', ')}` : '';
+    throw new Error(`${data.error || 'Warrant save failed'}${details}`);
+  }
+  await loadData();
+  return data.warrant;
 }
 
 function addIncident(record) {
@@ -1019,49 +1027,58 @@ function renderWarrantsTable(filter = 'active') {
   const tbody = document.getElementById('warrants-tbody');
   if (!tbody) return;
 
-  let warrants = GTAVCADData.warrants;
+  let warrants = GTAVCADData.warrants || [];
 
   switch (filter) {
-    case 'active':
-      warrants = warrants.filter(w => w.status === 'Active');
-      break;
-    case 'served':
-      warrants = warrants.filter(w => w.status === 'Served');
-      break;
-    case 'expired':
-      warrants = warrants.filter(w => w.status === 'Expired');
-      break;
-    case 'withdrawn':
-      warrants = warrants.filter(w => w.status === 'Withdrawn');
-      break;
-    case 'all':
-      // Show all
-      break;
+    case 'active': warrants = warrants.filter(w => (w.status || w.warrantStatus) === 'Active'); break;
+    case 'served': warrants = warrants.filter(w => (w.status || w.warrantStatus) === 'Served'); break;
+    case 'expired': warrants = warrants.filter(w => (w.status || w.warrantStatus) === 'Expired'); break;
+    case 'withdrawn': warrants = warrants.filter(w => (w.status || w.warrantStatus) === 'Withdrawn'); break;
+    case 'all': break;
   }
 
   if (warrants.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-row">No ${filter} warrants found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-row">No ${escapeHtml(filter)} warrants found.</td></tr>`;
     return;
   }
 
-  const html = warrants.map(warrant => `
-    <tr>
-      <td>${warrant.id}</td>
-      <td>${warrant.suspectName}</td>
-      <td>${warrant.charges}</td>
-      <td>${warrant.issuer}</td>
-      <td>${warrant.expiration}</td>
-      <td><span class="badge badge-${warrant.status === 'Active' ? 'warning' : 'secondary'}">${warrant.status}</span></td>
-      <td>${warrant.notes || 'None'}</td>
-      <td class="table-actions">
-        ${warrant.status === 'Active' ? `
-          <button class="button button-success" onclick="updateWarrantStatus('${warrant.id}', 'Served')">Served</button>
-          <button class="button button-warning" onclick="updateWarrantStatus('${warrant.id}', 'Expired')">Expired</button>
-          <button class="button button-secondary" onclick="updateWarrantStatus('${warrant.id}', 'Withdrawn')">Withdraw</button>
-        ` : warrant.status}
-      </td>
-    </tr>
-  `).join('');
+  const html = warrants.map(warrant => {
+    const id = warrant.warrant_id || warrant.id;
+    const number = warrant.warrant_number || id;
+    const type = warrant.warrant_type || 'Arrest Warrant';
+    const subject = warrant.subject_name || warrant.suspectName || warrant.warrantName || '—';
+    const basis = warrant.charges_or_basis || warrant.charges || warrant.warrantCharges || '—';
+    const agency = warrant.issuing_agency || warrant.issuer || warrant.warrantIssuer || '—';
+    const authority = warrant.judge_or_authority || '—';
+    const expiration = warrant.expiration_date || warrant.expiration || warrant.expirationDate || '—';
+    const status = warrant.status || warrant.warrantStatus || 'Active';
+    const downloadUrl = warrant.pdf_download_url || '';
+    const pdfStatus = warrant.pdf_generated_at ? '<span class="badge badge-success">Generated</span>' : '<span class="badge badge-secondary">Not generated</span>';
+    const downloadButton = downloadUrl ? `<a class="button button-secondary" href="${escapeAttr(downloadUrl)}">Download PDF</a>` : '';
+    return `
+      <tr>
+        <td>${escapeHtml(number)}</td>
+        <td>${escapeHtml(type)}</td>
+        <td>${escapeHtml(subject)}</td>
+        <td>${escapeHtml(basis)}</td>
+        <td>${escapeHtml(agency)}</td>
+        <td>${escapeHtml(authority)}</td>
+        <td>${escapeHtml(expiration)}</td>
+        <td><span class="badge badge-${status === 'Active' ? 'warning' : 'secondary'}">${escapeHtml(status)}</span></td>
+        <td>${pdfStatus}</td>
+        <td class="table-actions">
+          <button class="button button-ghost" onclick="viewWarrant('${escapeAttr(id)}')">View</button>
+          ${status === 'Active' ? `
+            <button class="button button-success" onclick="updateWarrantStatus('${escapeAttr(id)}', 'Served')">Served</button>
+            <button class="button button-warning" onclick="updateWarrantStatus('${escapeAttr(id)}', 'Expired')">Expired</button>
+            <button class="button button-secondary" onclick="updateWarrantStatus('${escapeAttr(id)}', 'Withdrawn')">Withdraw</button>
+          ` : ''}
+          <button class="button button-primary" onclick="generateWarrantPdf('${escapeAttr(id)}')">Generate PDF</button>
+          ${downloadButton}
+        </td>
+      </tr>
+    `;
+  }).join('');
 
   tbody.innerHTML = html;
 }
@@ -1276,17 +1293,56 @@ function updateCallStatus(callId, newStatus) {
 }
 
 // Update warrant status
-function updateWarrantStatus(warrantId, newStatus) {
-  const warrant = GTAVCADData.warrants.find(w => w.id === warrantId);
-  if (warrant) {
-    warrant.status = newStatus;
-    saveData();
+async function updateWarrantStatus(warrantId, newStatus) {
+  try {
+    const res = await fetch(`/api/cad/warrants/${encodeURIComponent(warrantId)}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ status: newStatus }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Warrant status update failed');
+    await loadData();
     updateDashboard();
     renderWarrantsTable();
     addActivity('Warrant Update', `Warrant ${warrantId} marked as ${newStatus}`);
     showToast(`Warrant ${warrantId} marked as ${newStatus}`, 'success');
+  } catch (err) {
+    showToast(err.message || 'Warrant status update failed', 'error');
   }
 }
+
+function viewWarrant(warrantId) {
+  const warrant = (GTAVCADData.warrants || []).find(w => (w.warrant_id || w.id) === warrantId);
+  if (!warrant) return showToast('Warrant not found', 'error');
+  const details = [
+    `Warrant: ${warrant.warrant_number || warrantId}`,
+    `Type: ${warrant.warrant_type || 'Arrest Warrant'}`,
+    `Subject: ${warrant.subject_name || warrant.suspectName || warrant.warrantName || '—'}`,
+    `Basis: ${warrant.charges_or_basis || warrant.charges || warrant.warrantCharges || '—'}`,
+    `Probable Cause: ${warrant.probable_cause || warrant.notes || warrant.warrantNotes || '—'}`
+  ].join('\n');
+  alert(details);
+}
+
+async function generateWarrantPdf(warrantId) {
+  try {
+    const res = await fetch(`/api/cad/warrants/${encodeURIComponent(warrantId)}/generate-pdf`, { method: 'POST', credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Warrant PDF generation failed');
+    await loadData();
+    renderWarrantsTable();
+    if (typeof renderEvidenceTable === 'function') renderEvidenceTable();
+    showToast('Warrant PDF generated. Added to evidence log.', 'success');
+  } catch (err) {
+    showToast(err.message || 'Warrant PDF generation failed', 'error');
+  }
+}
+
+window.updateWarrantStatus = updateWarrantStatus;
+window.viewWarrant = viewWarrant;
+window.generateWarrantPdf = generateWarrantPdf;
 
 // Update officer status
 async function updateOfficerStatus(officerId, newStatus) {
@@ -1581,18 +1637,44 @@ function handleEvidenceForm() {
   });
 }
 
+function updateWarrantTypeFields() {
+  const form = document.getElementById('warrant-form');
+  if (!form) return;
+  const selectedType = form.querySelector('[name="warrant_type"]')?.value || 'Arrest Warrant';
+  form.querySelectorAll('.warrant-type-field').forEach((field) => {
+    const allowed = (field.dataset.warrantTypes || '').split(',').map(v => v.trim());
+    const visible = allowed.includes(selectedType);
+    field.style.display = visible ? '' : 'none';
+    field.querySelectorAll('input, textarea, select').forEach(input => { if (!visible) input.value = ''; });
+  });
+}
+
 function handleWarrantForm() {
   const form = document.getElementById('warrant-form');
   if (!form) return;
-  form.addEventListener('submit', (event) => {
+  form.querySelector('[name="warrant_type"]')?.addEventListener('change', updateWarrantTypeFields);
+  updateWarrantTypeFields();
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    addWarrant(data);
-    updateDashboard();
-    renderWarrantsTable();
-    addActivity('Warrant', `Warrant issued for ${data.suspectName} - ${data.charges}`);
-    showToast('Warrant added successfully', 'success');
-    form.reset();
+    const submitButton = form.querySelector('button[type="submit"]');
+    try {
+      if (submitButton) submitButton.disabled = true;
+      showFormMessage(form, 'Creating warrant…', 'info');
+      const data = getFormData(form);
+      const warrant = await addWarrant(data);
+      updateDashboard();
+      renderWarrantsTable();
+      addActivity('Warrant', `Warrant issued for ${warrant.subject_name || data.subject_name} - ${warrant.charges_or_basis || data.charges_or_basis}`);
+      showToast('Warrant added successfully', 'success');
+      showFormMessage(form, `Warrant ${warrant.warrant_number || warrant.id} created successfully.`, 'success');
+      form.reset();
+      updateWarrantTypeFields();
+    } catch (err) {
+      showToast(err.message || 'Warrant save failed', 'error');
+      showFormMessage(form, err.message || 'Warrant save failed', 'error');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
   });
 }
 
