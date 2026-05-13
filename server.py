@@ -4112,6 +4112,35 @@ WARRANT_AI_LEGACY_ALIASES = {
     'warrantStatus': 'status',
 }
 
+WARRANT_AI_STATUSES = {
+    'Active',
+    'Suspended',
+    'Cleared',
+    'Served',
+    'Expired',
+    'Withdrawn',
+}
+
+
+def _warrant_ai_default_expiration_date():
+    return (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+
+
+def _warrant_ai_valid_iso_date(value):
+    value = _clean_warrant_ai_text(value, max_len=32)
+    if not value:
+        return ''
+    try:
+        parsed = datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        return ''
+    return parsed.strftime('%Y-%m-%d')
+
+
+def _warrant_ai_valid_enum(value, valid_values, default):
+    candidate = _clean_warrant_ai_text(value, max_len=80)
+    return candidate if candidate in valid_values else default
+
 
 def _clean_warrant_ai_text(value, max_len=1600):
     if value is None:
@@ -4131,10 +4160,18 @@ def _normalize_warrant_ai_payload(data):
             normalized[canonical] = alias_value
         if alias_value:
             normalized[alias] = alias_value
-    if not normalized.get('warrant_type'):
-        normalized['warrant_type'] = 'Arrest Warrant'
-    if normalized.get('warrant_type') not in WARRANT_TYPES:
-        normalized['warrant_type'] = 'Arrest Warrant'
+    normalized['warrant_type'] = _warrant_ai_valid_enum(
+        normalized.get('warrant_type'),
+        WARRANT_TYPES,
+        'Arrest Warrant',
+    )
+    normalized['status'] = _warrant_ai_valid_enum(
+        normalized.get('status'),
+        WARRANT_AI_STATUSES,
+        'Active',
+    )
+    if normalized.get('expiration_date'):
+        normalized['expiration_date'] = _warrant_ai_valid_iso_date(normalized.get('expiration_date')) or _warrant_ai_default_expiration_date()
     return normalized
 
 
@@ -4146,30 +4183,30 @@ def _warrant_ai_backfill_values(form_values):
     judge = form_values.get('judge_or_authority') or 'San Andreas court authority'
     address = form_values.get('subject_address') or 'a location associated with the subject in Los Santos'
     search_location = form_values.get('search_location') or address or 'the listed Los Santos location associated with the subject'
-    expires = form_values.get('expiration_date') or (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+    expires = _warrant_ai_valid_iso_date(form_values.get('expiration_date')) or _warrant_ai_default_expiration_date()
 
     common = {
         'warrant_type': warrant_type,
-        'subject_name': subject if subject != 'the named subject' else '',
-        'subject_dob': form_values.get('subject_dob', ''),
-        'subject_address': form_values.get('subject_address', ''),
+        'subject_name': subject if subject != 'the named subject' else 'Unknown Subject',
+        'subject_dob': _warrant_ai_valid_iso_date(form_values.get('subject_dob')) or '1990-01-01',
+        'subject_address': form_values.get('subject_address') or 'Unknown Los Santos address',
         'charges_or_basis': charges,
         'issuing_agency': agency,
         'judge_or_authority': judge,
         'probable_cause': form_values.get('probable_cause', ''),
-        'search_location': form_values.get('search_location', ''),
-        'items_to_seize': form_values.get('items_to_seize', ''),
-        'court_case_number': form_values.get('court_case_number', ''),
-        'bench_failure_reason': form_values.get('bench_failure_reason', ''),
-        'administrative_basis': form_values.get('administrative_basis', ''),
-        'inspection_scope': form_values.get('inspection_scope', ''),
-        'originating_jurisdiction': form_values.get('originating_jurisdiction', ''),
-        'extradition_location': form_values.get('extradition_location', ''),
-        'fugitive_last_known_location': form_values.get('fugitive_last_known_location', ''),
-        'alias_names': form_values.get('alias_names', ''),
+        'search_location': form_values.get('search_location') or search_location,
+        'items_to_seize': form_values.get('items_to_seize') or 'evidence related to the listed offense',
+        'court_case_number': form_values.get('court_case_number') or f'SA-CR-{datetime.now().strftime("%Y%m%d")}-{random.randint(100, 999)}',
+        'bench_failure_reason': form_values.get('bench_failure_reason') or 'Failure to appear for a scheduled court proceeding or violation of a court-ordered condition after notice was provided.',
+        'administrative_basis': form_values.get('administrative_basis') or f'Administrative enforcement inspection requested by {agency} for documented compliance concerns.',
+        'inspection_scope': form_values.get('inspection_scope') or 'Inspect only premises, records, equipment, or areas tied to the administrative compliance basis.',
+        'originating_jurisdiction': form_values.get('originating_jurisdiction') or 'San Andreas originating jurisdiction',
+        'extradition_location': form_values.get('extradition_location') or 'Los Santos / San Andreas custody transfer point',
+        'fugitive_last_known_location': form_values.get('fugitive_last_known_location') or 'last known in the Los Santos area',
+        'alias_names': form_values.get('alias_names') or (f'{subject} / unknown alias identifiers' if subject != 'the named subject' else 'Unknown aliases used to conceal identity'),
         'execution_instructions': form_values.get('execution_instructions', ''),
         'expiration_date': expires,
-        'status': form_values.get('status') or 'Active',
+        'status': _warrant_ai_valid_enum(form_values.get('status'), WARRANT_AI_STATUSES, 'Active'),
         'summary': '',
     }
 
@@ -4236,10 +4273,9 @@ def _merge_warrant_ai_output(form_values, ai_json):
         if form_values.get(field):
             merged[field] = form_values[field]
 
-    if not merged.get('status'):
-        merged['status'] = 'Active'
-    if not merged.get('expiration_date'):
-        merged['expiration_date'] = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+    merged['warrant_type'] = _warrant_ai_valid_enum(merged.get('warrant_type'), WARRANT_TYPES, 'Arrest Warrant')
+    merged['status'] = _warrant_ai_valid_enum(merged.get('status'), WARRANT_AI_STATUSES, 'Active')
+    merged['expiration_date'] = _warrant_ai_valid_iso_date(merged.get('expiration_date')) or _warrant_ai_default_expiration_date()
 
     # Re-run deterministic type-specific backfill after preserving user facts so required
     # type-specific blanks are filled even when the AI omits them.
@@ -4247,6 +4283,10 @@ def _merge_warrant_ai_output(form_values, ai_json):
     for field, value in backfilled.items():
         if not merged.get(field) and value:
             merged[field] = value
+
+    merged['warrant_type'] = _warrant_ai_valid_enum(merged.get('warrant_type'), WARRANT_TYPES, 'Arrest Warrant')
+    merged['status'] = _warrant_ai_valid_enum(merged.get('status'), WARRANT_AI_STATUSES, 'Active')
+    merged['expiration_date'] = _warrant_ai_valid_iso_date(merged.get('expiration_date')) or _warrant_ai_default_expiration_date()
 
     merged['warrantName'] = merged.get('subject_name', '')
     merged['warrantCharges'] = merged.get('charges_or_basis', '')
@@ -4302,7 +4342,7 @@ Type-specific completion rules:
 - Fugitive Warrant: fugitive_last_known_location must be filled; charges_or_basis must be clear; probable_cause must support fugitive status; execution_instructions should mention caution and contacting the issuing agency.
 - Alias Warrant: alias_names must be filled; probable_cause must include identity/alias reasoning; charges_or_basis must be clear; execution_instructions should mention identity verification.
 
-If expiration_date is blank, use {(datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')}. If status is blank, use Active. Keep probable_cause specific, court-reviewable, and based on the supplied fields."""
+Validate enums before returning JSON: warrant_type must be one of {', '.join(WARRANT_TYPES)} and status must be one of {', '.join(sorted(WARRANT_AI_STATUSES))}. If expiration_date is blank or cannot be expressed as a real YYYY-MM-DD date, use {_warrant_ai_default_expiration_date()}. Never return relative dates such as '30 days from now'. Keep probable_cause specific, court-reviewable, and based on the supplied fields."""
 
     try:
         payload = json.dumps({
