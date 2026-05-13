@@ -40,6 +40,30 @@ function createSafeElement(tagName, text = '', className = '') {
   return el;
 }
 
+function safeEvidenceHref(value, { allowInternalDownload = false } = {}) {
+  const raw = String(value ?? '').trim();
+  if (!raw || /[\u0000-\u001F\u007F]/.test(raw)) return '';
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    if (allowInternalDownload && parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/cad/evidence/attachments/') && parsed.pathname.endsWith('/download')) {
+      return `${parsed.pathname}${parsed.search}`;
+    }
+    if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.username === '' && parsed.password === '') {
+      return parsed.href;
+    }
+  } catch (err) {
+    return '';
+  }
+  return '';
+}
+
+function evidenceLinkAction(url, label = 'Open Link', className = '') {
+  const safeHref = safeEvidenceHref(url);
+  if (!safeHref) return 'Unsafe link blocked';
+  const classAttr = className ? ` class="${escapeAttr(className)}"` : '';
+  return `<a${classAttr} href="${escapeAttr(safeHref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+}
+
 function sanitizeHTML(html) {
   const template = document.createElement('template');
   NATIVE_INNERHTML_DESCRIPTOR.set.call(template, String(html ?? ''));
@@ -1078,9 +1102,10 @@ function renderEvidenceTable() {
 
   const html = evidence.map(item => {
     if (item.recordKind === 'attachment') {
-      const openAction = item.download_url
-        ? `<a class="button button-secondary" href="${escapeAttr(item.download_url)}">Download</a>`
-        : (item.external_url ? `<a class="button button-secondary" href="${escapeAttr(item.external_url)}" target="_blank" rel="noopener noreferrer">Open Link</a>` : 'None');
+      const safeDownload = safeEvidenceHref(item.download_url, { allowInternalDownload: true });
+      const openAction = safeDownload
+        ? `<a class="button button-secondary" href="${escapeAttr(safeDownload)}">Download</a>`
+        : (item.external_url ? evidenceLinkAction(item.external_url, 'Open Link', 'button button-secondary') : 'None');
       const action = `${openAction} <button class="button button-ghost" type="button" onclick="deleteEvidenceAttachment('${escapeAttr(item.attachment_id)}')">Delete</button>`;
       const size = item.file_size ? `${Math.round(item.file_size / 1024)} KB` : '—';
       return `
@@ -1104,7 +1129,7 @@ function renderEvidenceTable() {
         <td>${escapeHtml(item.officer || item.evidenceOfficer)}</td>
         <td>${escapeHtml(item.type || item.evidenceType)}</td>
         <td>${escapeHtml(item.description || item.evidenceDescription)}</td>
-        <td>${item.link || item.evidenceLink ? `<a href="${escapeAttr(item.link || item.evidenceLink)}" target="_blank" rel="noopener noreferrer">View Evidence</a>` : 'None'}</td>
+        <td>${item.link || item.evidenceLink ? evidenceLinkAction(item.link || item.evidenceLink, 'View Evidence') : 'None'}</td>
         <td><span class="badge ${escapeAttr(storageClass)}">${escapeHtml(item.storageStatus || 'Unknown')}</span></td>
         <td>${formatDate(item.createdAt)}</td>
       </tr>
