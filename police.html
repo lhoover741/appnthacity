@@ -1659,6 +1659,7 @@
     });
 
     /* ── AI WARRANT ── */
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
     const WARRANT_TYPE_OPTIONS = [
       'Arrest Warrant',
       'Search Warrant',
@@ -1792,6 +1793,17 @@
       input.dispatchEvent(new Event('change', { bubbles: true }));
 
       return String(input.value || '').trim() === nextValue;
+=======
+    function fillWarrantField(name, value, options = {}) {
+      const overwrite = options.overwrite === true;
+      const input = document.querySelector(`#warrant-form [name="${name}"]`);
+      if (!input || value === undefined || value === null || String(value).trim() === '') return false;
+      if (!overwrite && String(input.value || '').trim() !== '') return false;
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+>>>>>>> main
     }
 
     document.getElementById('ai-warrant-btn').addEventListener('click', async function () {
@@ -1846,6 +1858,7 @@
         });
         const json = await res.json();
         if (json.success) {
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
           const filledFields = [];
           const skippedFields = [];
           const rejectedFields = [];
@@ -1899,6 +1912,42 @@
             const rejectedText = rejectedFields.length ? ` Rejected by browser validation: ${rejectedFields.join(', ')}.` : '';
             statusEl.textContent = `✓ Auto-filled required warrant fields.${filledText}${rejectedText} User-entered values were preserved; review before submitting.`;
           }
+=======
+          const filled = [];
+          const fieldLabels = {
+            warrant_type: 'warrant type',
+            subject_name: 'subject name',
+            subject_dob: 'subject DOB',
+            subject_address: 'subject address',
+            charges_or_basis: 'charges / basis',
+            issuing_agency: 'issuing agency',
+            judge_or_authority: 'judge / authority',
+            probable_cause: 'probable cause',
+            search_location: 'search location',
+            items_to_seize: 'items to seize',
+            court_case_number: 'court case number',
+            bench_failure_reason: 'bench failure reason',
+            administrative_basis: 'administrative basis',
+            inspection_scope: 'inspection scope',
+            originating_jurisdiction: 'originating jurisdiction',
+            extradition_location: 'extradition location',
+            fugitive_last_known_location: 'last known location',
+            alias_names: 'alias names',
+            execution_instructions: 'execution instructions',
+            expiration_date: 'expiration date',
+            status: 'status'
+          };
+
+          warrantFields.forEach((name) => {
+            const value = json[name] ?? (name === 'probable_cause' ? json.justification : undefined) ?? (name === 'expiration_date' ? json.suggestedExpiration : undefined) ?? (name === 'status' ? json.suggestedStatus : undefined);
+            if (fillWarrantField(name, value)) filled.push(fieldLabels[name] || name);
+          });
+
+          statusEl.style.color = '#4caf82';
+          statusEl.textContent = filled.length
+            ? `✓ Auto-filled blank fields: ${filled.join(', ')} — user-entered values were preserved. Review before submitting.`
+            : '✓ AI draft complete. Existing user-entered values were preserved; no blank fields needed updating.';
+>>>>>>> main
         } else {
           statusEl.style.color = 'var(--accent)';
           statusEl.textContent = json.error || 'Generation failed. Try again.';

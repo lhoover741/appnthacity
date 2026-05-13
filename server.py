@@ -4112,6 +4112,7 @@ WARRANT_AI_LEGACY_ALIASES = {
     'warrantStatus': 'status',
 }
 
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
 WARRANT_AI_TYPE_OPTIONS = [
     'Arrest Warrant',
     'Search Warrant',
@@ -4162,6 +4163,8 @@ WARRANT_AI_STATUS_ALIASES = {
     'withdraw': 'Withdrawn',
 }
 
+=======
+>>>>>>> main
 
 def _clean_warrant_ai_text(value, max_len=1600):
     if value is None:
@@ -4170,6 +4173,7 @@ def _clean_warrant_ai_text(value, max_len=1600):
     return cleaned[:max_len]
 
 
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
 def _normalize_warrant_ai_type(value, fallback='Arrest Warrant'):
     raw_value = _clean_warrant_ai_text(value)
     fallback_value = fallback if fallback in WARRANT_AI_TYPE_OPTIONS else 'Arrest Warrant'
@@ -4186,6 +4190,8 @@ def _normalize_warrant_ai_status(value, fallback='Active'):
     return WARRANT_AI_STATUS_ALIASES.get(raw_value.lower(), fallback_value)
 
 
+=======
+>>>>>>> main
 def _normalize_warrant_ai_payload(data):
     """Copy only text warrant form fields into the AI context."""
     normalized = {}
@@ -4197,13 +4203,24 @@ def _normalize_warrant_ai_payload(data):
             normalized[canonical] = alias_value
         if alias_value:
             normalized[alias] = alias_value
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
     normalized['warrant_type'] = _normalize_warrant_ai_type(normalized.get('warrant_type'), 'Arrest Warrant')
     normalized['status'] = _normalize_warrant_ai_status(normalized.get('status'), 'Active') if normalized.get('status') else ''
+=======
+    if not normalized.get('warrant_type'):
+        normalized['warrant_type'] = 'Arrest Warrant'
+    if normalized.get('warrant_type') not in WARRANT_TYPES:
+        normalized['warrant_type'] = 'Arrest Warrant'
+>>>>>>> main
     return normalized
 
 
 def _warrant_ai_backfill_values(form_values):
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
     warrant_type = _normalize_warrant_ai_type(form_values.get('warrant_type'), 'Arrest Warrant')
+=======
+    warrant_type = form_values.get('warrant_type') or 'Arrest Warrant'
+>>>>>>> main
     subject = form_values.get('subject_name') or 'the named subject'
     charges = form_values.get('charges_or_basis') or 'pending criminal violations under San Andreas law'
     agency = form_values.get('issuing_agency') or 'LSPD'
@@ -4233,7 +4250,11 @@ def _warrant_ai_backfill_values(form_values):
         'alias_names': form_values.get('alias_names', ''),
         'execution_instructions': form_values.get('execution_instructions', ''),
         'expiration_date': expires,
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
         'status': _normalize_warrant_ai_status(form_values.get('status'), 'Active'),
+=======
+        'status': form_values.get('status') or 'Active',
+>>>>>>> main
         'summary': '',
     }
 
@@ -4300,10 +4321,15 @@ def _merge_warrant_ai_output(form_values, ai_json):
         if form_values.get(field):
             merged[field] = form_values[field]
 
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
     type_fallback = form_values.get('warrant_type') or 'Arrest Warrant'
     status_fallback = form_values.get('status') or 'Active'
     merged['warrant_type'] = _normalize_warrant_ai_type(merged.get('warrant_type'), type_fallback)
     merged['status'] = _normalize_warrant_ai_status(merged.get('status'), status_fallback)
+=======
+    if not merged.get('status'):
+        merged['status'] = 'Active'
+>>>>>>> main
     if not merged.get('expiration_date'):
         merged['expiration_date'] = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
 
@@ -4358,6 +4384,7 @@ Return ONLY one valid JSON object with these exact canonical keys plus the legac
 {json.dumps(expected_json, ensure_ascii=False, indent=2)}
 
 Also include legacy aliases: warrantName, warrantCharges, warrantIssuer, warrantNotes, warrantExpiration, warrantStatus.
+<<<<<<< codex/fix-warrant-ai-autofill-behavior-to0jvl
 
 Type-specific completion rules:
 - Search Warrant: search_location and items_to_seize must not be blank; probable_cause must explain why the search is justified; execution_instructions should mention safe execution, officer safety, and evidence preservation.
@@ -4368,6 +4395,18 @@ Type-specific completion rules:
 - Fugitive Warrant: fugitive_last_known_location must be filled; charges_or_basis must be clear; probable_cause must support fugitive status; execution_instructions should mention caution and contacting the issuing agency.
 - Alias Warrant: alias_names must be filled; probable_cause must include identity/alias reasoning; charges_or_basis must be clear; execution_instructions should mention identity verification.
 
+=======
+
+Type-specific completion rules:
+- Search Warrant: search_location and items_to_seize must not be blank; probable_cause must explain why the search is justified; execution_instructions should mention safe execution, officer safety, and evidence preservation.
+- Arrest Warrant: charges_or_basis must be clear; probable_cause must describe facts supporting arrest; execution_instructions should describe arrest/service instructions.
+- Bench Warrant: court_case_number must be generated if blank; bench_failure_reason must explain failure to appear or court violation; judge_or_authority should be filled if blank; execution_instructions should mention court processing.
+- Administrative Warrant: administrative_basis and inspection_scope must be filled; issuing_agency should be preserved or filled; execution_instructions should describe inspection scope.
+- Extradition Warrant: originating_jurisdiction and extradition_location must be filled; charges_or_basis must be clear; execution_instructions should mention custody transfer.
+- Fugitive Warrant: fugitive_last_known_location must be filled; charges_or_basis must be clear; probable_cause must support fugitive status; execution_instructions should mention caution and contacting the issuing agency.
+- Alias Warrant: alias_names must be filled; probable_cause must include identity/alias reasoning; charges_or_basis must be clear; execution_instructions should mention identity verification.
+
+>>>>>>> main
 If expiration_date is blank, use {(datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')}. If status is blank, use Active. Keep probable_cause specific, court-reviewable, and based on the supplied fields."""
 
     try:
