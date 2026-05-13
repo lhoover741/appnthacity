@@ -1662,12 +1662,28 @@
     function fillWarrantField(name, value, options = {}) {
       const overwrite = options.overwrite === true;
       const input = document.querySelector(`#warrant-form [name="${name}"]`);
-      if (!input || value === undefined || value === null || String(value).trim() === '') return false;
+      if (!input || value === undefined || value === null) return false;
+
+      const nextValue = String(value).trim();
+      if (nextValue === '') return false;
       if (!overwrite && String(input.value || '').trim() !== '') return false;
-      input.value = value;
+
+      let expectedValue = nextValue;
+      if (input.tagName === 'SELECT') {
+        const matchingOption = Array.from(input.options).find((option) => option.value === nextValue || option.textContent.trim() === nextValue);
+        if (!matchingOption) return false;
+        expectedValue = matchingOption.value;
+        input.value = expectedValue;
+      } else if (input.type === 'date') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(nextValue)) return false;
+        input.value = nextValue;
+      } else {
+        input.value = nextValue;
+      }
+
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      return input.value === expectedValue;
     }
 
     document.getElementById('ai-warrant-btn').addEventListener('click', async function () {
