@@ -120,6 +120,7 @@ const CURRENT_COMMUNITY_SLUG = getCommunitySlugFromPath();
 
 const CAD_ACCESS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'LEO', 'Dispatch', 'Dispatcher', 'EMS', 'DOJ', 'Staff'];
 const CAD_ADMIN_BYPASS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'];
+const COMMUNITY_ADMIN_ACCESS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'];
 
 function normalizeRole(role) {
   return String(role || '').trim();
@@ -225,14 +226,55 @@ if (CURRENT_COMMUNITY_SLUG && window.fetch) {
     if (url && url.startsWith('/api/')) {
       const separator = url.includes('?') ? '&' : '?';
       url = `${url}${separator}community_slug=${encodeURIComponent(CURRENT_COMMUNITY_SLUG)}`;
+      const mergedInit = { credentials: 'include', ...(init || {}) };
       if (typeof input === 'string') {
         input = url;
       } else {
         input = new Request(url, input);
       }
+      return nativeFetch(input, mergedInit);
     }
     return nativeFetch(input, init);
   };
+}
+
+
+function userCanManageCommunity(user = {}) {
+  if (user.can_manage_community === true || user.is_community_admin === true) return true;
+  const roles = [user.platform_role, user.community_role, user.role].map(normalizeRole);
+  return roles.some((role) => COMMUNITY_ADMIN_ACCESS_ROLES.includes(role));
+}
+
+function ensureTenantAuthNav(user = {}) {
+  if (!CURRENT_COMMUNITY_SLUG) return;
+  document.querySelectorAll('.global-nav').forEach((nav) => {
+    let admin = nav.querySelector('[data-admin-access-link]');
+    if (userCanManageCommunity(user)) {
+      if (!admin) {
+        admin = document.createElement('a');
+        admin.dataset.adminAccessLink = 'true';
+        admin.className = 'button button-secondary';
+        admin.textContent = 'Admin Access';
+        nav.appendChild(admin);
+      }
+      const qs = CURRENT_COMMUNITY_SLUG ? `?community_slug=${encodeURIComponent(CURRENT_COMMUNITY_SLUG)}` : '';
+      admin.href = user.is_platform_owner && !CURRENT_COMMUNITY_SLUG ? '/admin' : `/community-admin${qs}`;
+      admin.hidden = false;
+    } else if (admin) {
+      admin.hidden = true;
+    }
+
+    let logout = nav.querySelector('[data-auth-logout]');
+    if (!logout) {
+      logout = document.createElement('button');
+      logout.type = 'button';
+      logout.className = 'button button-primary';
+      logout.dataset.authLogout = 'true';
+      nav.appendChild(logout);
+    }
+    logout.textContent = user.username ? `Logout (${user.username})` : 'Logout';
+  });
+  bindAuthenticatedControls();
 }
 
 async function applyCommunityBranding() {
@@ -317,6 +359,7 @@ async function applyCommunityBranding() {
       }
     };
     window.GTAVCAD_CURRENT_USER = data.user || window.GTAVCAD_CURRENT_USER || null;
+    ensureTenantAuthNav(data.user || {});
 
     document.title = `${window.GTAVCAD_CONTEXT.cadName || window.GTAVCAD_CONTEXT.communityName} | ${window.GTAVCAD_CONTEXT.platformName}`;
     document.documentElement.style.setProperty('--accent', window.GTAVCAD_CONTEXT.colors.primary);
@@ -420,6 +463,7 @@ async function refreshAuthNavigation() {
     const data = await res.json();
     if (!data.success) return;
     window.GTAVCAD_CURRENT_USER = data.user || window.GTAVCAD_CURRENT_USER || null;
+    ensureTenantAuthNav(data.user || {});
     document.querySelectorAll('a[href="/login"]').forEach((link) => {
       link.textContent = `Logout (${data.user.username})`;
       link.href = '#logout';
@@ -646,9 +690,16 @@ async function addEvidence(record, formElement = null) {
     if (!payload.get('description') && payload.get('evidenceDescription')) payload.set('description', payload.get('evidenceDescription'));
     if (!payload.get('category') && payload.get('evidenceType')) payload.set('category', payload.get('evidenceType'));
     if (!payload.get('external_url') && payload.get('evidenceLink')) payload.set('external_url', payload.get('evidenceLink'));
-    const res = await fetch('/api/cad/evidence/attachments', { method: 'POST', body: payload });
+    if (!payload.get('case_id') && !payload.get('evidence_id') && !payload.get('arrest_id') && !payload.get('warrant_id') && !payload.get('court_packet_id')) {
+      console.info('No case selected. GTAVCAD will create a new case record for this evidence.');
+    }
+    const res = await fetch('/api/cad/evidence/attachments', { method: 'POST', credentials: 'include', body: payload });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'Evidence attachment save failed');
+    if (data.case_number) {
+      data.attachment.generated_case_number = data.case_number;
+      window.dispatchEvent(new CustomEvent('gtavcad:evidence-case-generated', { detail: { case_number: data.case_number, evidence_id: data.evidence_id } }));
+    }
     await loadData();
     return data.attachment;
   }
@@ -1512,12 +1563,13 @@ function handleEvidenceForm() {
     if (submitButton) submitButton.disabled = true;
     showFormMessage(form, 'Saving evidence attachment…', 'info');
     try {
-      await addEvidence(data, form);
+      const attachment = await addEvidence(data, form);
       updateDashboard();
       renderEvidenceTable();
-      addActivity('Evidence', `Evidence submitted for case ${data.caseNumber || data.case_id}`);
+      const resolvedCase = attachment?.generated_case_number || attachment?.case_id || data.caseNumber || data.case_id || 'auto-generated case';
+      addActivity('Evidence', `Evidence submitted for case ${resolvedCase}`);
       showToast('Evidence attachment submitted successfully', 'success');
-      showFormMessage(form, 'Evidence attachment submitted successfully', 'success');
+      showFormMessage(form, `Evidence attachment submitted successfully${resolvedCase ? ` for case ${resolvedCase}` : ''}`, 'success');
       form.reset();
     } catch (err) {
       const message = err.message || 'Evidence attachment save failed';

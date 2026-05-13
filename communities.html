@@ -27,6 +27,12 @@
   <footer class="site-footer"><div class="container footer-grid"><p>&copy; <span class="current-year"></span> GTAVCAD.</p><p>Communities are tenant-scoped and isolated.</p></div></footer>
   <script src="/assets/js/main.js"></script>
   <script>
+  function canManageCommunity(row, sessionUser) {
+    if (row.can_manage_community === true || sessionUser?.is_platform_owner === true) return true;
+    const role = row.membership?.role || '';
+    return ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'].includes(role);
+  }
+
   async function loadCommunitiesPage() {
     const status = document.getElementById('communities-status');
     const list = document.getElementById('communities-list');
@@ -46,8 +52,10 @@
         return;
       }
       const sessionData = await sessionRes.json();
-      if (sessionData?.user?.is_platform_owner) { window.location.href = '/admin'; return; }
-      const communities = sessionData.communities || [];
+      const communitiesRes = await fetch('/api/communities', { credentials: 'include' });
+      const communitiesData = await communitiesRes.json();
+      if (!communitiesRes.ok || !communitiesData.success) throw new Error(communitiesData.error || 'Unable to load communities');
+      const communities = communitiesData.communities || [];
       if (!communities.length) {
         status.textContent = 'No communities found for your account.';
         onboarding.hidden = false;
@@ -55,22 +63,33 @@
       }
       status.textContent = `Found ${communities.length} communit${communities.length === 1 ? 'y' : 'ies'}.`;
       list.replaceChildren();
-      communities.forEach(({community, membership}) => {
+      communities.forEach((row) => {
+        const { community, membership } = row;
         const card = document.createElement('article');
         card.className = 'card feature-card';
         const title = document.createElement('h3');
         title.textContent = community.name || 'Community';
         const meta = document.createElement('p');
-        meta.textContent = `${community.cad_name || 'Community CAD'} · Role: ${membership.role || 'Member'}`;
-        const link = document.createElement('a');
-        link.className = 'card-link';
-        link.href = `/c/${encodeURIComponent(community.slug)}`;
-        link.textContent = 'Enter CAD';
-        card.append(title, meta, link);
+        meta.textContent = `${community.cad_name || 'Community CAD'} · Slug: ${community.slug || '—'} · Role: ${membership?.role || 'Member'} · Status: ${membership?.status || community.status || 'Active'}`;
+        const actions = document.createElement('div');
+        actions.className = 'hero-actions';
+        const open = document.createElement('a');
+        open.className = 'button button-primary';
+        open.href = `/c/${encodeURIComponent(community.slug)}/`;
+        open.textContent = 'Open';
+        actions.appendChild(open);
+        if (canManageCommunity(row, sessionData.user)) {
+          const manage = document.createElement('a');
+          manage.className = 'button button-secondary';
+          manage.href = `/community-admin?community_slug=${encodeURIComponent(community.slug)}`;
+          manage.textContent = 'Manage';
+          actions.appendChild(manage);
+        }
+        card.append(title, meta, actions);
         list.appendChild(card);
       });
     } catch (error) {
-      status.textContent = 'Unable to load communities right now.';
+      status.textContent = error.message || 'Unable to load communities right now.';
       console.warn(error);
     }
   }

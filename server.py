@@ -1892,11 +1892,11 @@ def _civilian_response(c):
     return base
 
 
-def _civilian_search_query(query, name=None, dob=None):
+def _civilian_search_query(query, name=None, dob=None, community_id=None):
     q = (query or '').strip()
     name = (name or '').strip()
     dob = (dob or '').strip()
-    db_query = scoped_query(Civilian)
+    db_query = scoped_query(Civilian, community_id)
 
     if name:
         db_query = db_query.filter(_civilian_name_filter(name))
@@ -2787,6 +2787,7 @@ def user_session():
     community_id = _user_field(user, 'community_id', None) or (membership.community_id if membership else None)
     community_slug = (community.slug if community else None) or session.get('selected_community_slug')
     community_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
+    can_manage_community = bool(owner or community_role in COMMUNITY_ADMIN_ROLES or (community and community.owner_user_id == user.id))
     requires_community_setup = False if owner else not bool(community_id)
     redirect_target = get_post_login_redirect(owner, community_slug, requires_community_setup)
     logger.info("Auth session check has_user_id=true user_id=%s authenticated=true is_platform_owner=%s", user_id, owner)
@@ -2805,6 +2806,8 @@ def user_session():
             'community_role': community_role,
             'requires_community_setup': requires_community_setup,
             'impersonation_active': bool(session.get('impersonating_community_id')),
+            'can_manage_community': can_manage_community,
+            'is_community_admin': can_manage_community,
             'can_access_police_cad': user_can_access_police_cad(owner, community_role, user=user, membership=membership),
         },
         'redirect': redirect_target,
@@ -4242,6 +4245,9 @@ def get_officer_sessions():
     denied = require_police_cad_access()
     if denied:
         return denied
+    community_id = get_current_community_id()
+    if not community_id:
+        return jsonify({'success': False, 'error': 'Community context required'}), 400
     try:
         ensure_officer_sessions_schema()
         sessions = scoped_query(OfficerSession).all()
@@ -4826,6 +4832,10 @@ def ai_civilian_assist():
 def create_civilian():
     """Persist a Civilian Registration payload directly to PostgreSQL."""
     try:
+        community = resolve_active_community()
+        if not community:
+            return jsonify({'success': False, 'error': 'Community context required'}), 400
+        community_id = community['community_id']
         data = request.get_json(silent=True) or {}
         mapped = _civilian_from_payload(data)
 
@@ -4859,10 +4869,13 @@ def get_civilians():
     q = request.args.get('q', '').strip()
     name = request.args.get('name', '').strip()
     dob = request.args.get('dob', '').strip()
+    community = resolve_active_community()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community context required'}), 400
 
     try:
         logger.info('Civilian lookup query: q="%s" name="%s" dob="%s"', q, name, dob)
-        civilians = (_civilian_search_query(q, name=name, dob=dob)
+        civilians = (_civilian_search_query(q, name=name, dob=dob, community_id=community['community_id'])
                      .order_by(Civilian.created_at.desc())
                      .limit(100)
                      .all())
@@ -4884,10 +4897,13 @@ def search_civilians():
 
     if not query and not name and not dob:
         return jsonify({'success': False, 'error': 'Query required'}), 400
+    community = resolve_active_community()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community context required'}), 400
 
     try:
         logger.info('Civilian lookup query: q="%s" name="%s" dob="%s"', query, name, dob)
-        civilians = _civilian_search_query(query, name=name, dob=dob).order_by(Civilian.created_at.desc()).limit(50).all()
+        civilians = _civilian_search_query(query, name=name, dob=dob, community_id=community['community_id']).order_by(Civilian.created_at.desc()).limit(50).all()
         result = [_civilian_response(c) for c in civilians]
         logger.info('Civilian lookup result count: %s', len(result))
         return jsonify({'success': True, 'results': result, 'civilians': result, 'total': len(result)})
@@ -4902,6 +4918,9 @@ def cad_search():
     denied = require_police_cad_access()
     if denied:
         return denied
+    community_id = get_current_community_id()
+    if not community_id:
+        return jsonify({'success': False, 'error': 'Community context required'}), 400
     try:
         data = request.get_json(silent=True) or {}
         query_type = data.get('type', 'all')
@@ -4913,18 +4932,18 @@ def cad_search():
         logger.info('Civilian lookup query: cad_type="%s" query="%s"', query_type, query_value)
 
         if query_type == 'name':
-            civilians = _civilian_search_query('', name=query_value).all()
+            civilians = _civilian_search_query('', name=query_value, community_id=community_id).all()
         elif query_type == 'dob':
-            civilians = _civilian_search_query('', dob=query_value).all()
+            civilians = _civilian_search_query('', dob=query_value, community_id=community_id).all()
         elif query_type in ('plate', 'phone', 'civilian_id'):
             column = {
                 'plate': Civilian.plate_number,
                 'phone': Civilian.phone_number,
                 'civilian_id': Civilian.civilian_id,
             }[query_type]
-            civilians = scoped_query(Civilian).filter(column.ilike(f'%{query_value}%')).order_by(Civilian.created_at.desc()).limit(50).all()
+            civilians = scoped_query(Civilian, community_id).filter(column.ilike(f'%{query_value}%')).order_by(Civilian.created_at.desc()).limit(50).all()
         elif query_type == 'all':
-            civilians = _civilian_search_query(query_value).order_by(Civilian.created_at.desc()).limit(50).all()
+            civilians = _civilian_search_query(query_value, community_id=community_id).order_by(Civilian.created_at.desc()).limit(50).all()
         else:
             return jsonify({'success': False, 'error': 'Invalid search type'}), 400
 
@@ -4998,12 +5017,12 @@ def ai_generate_narrative():
 
 @app.route('/api/cad/civilian/<civilian_id>', methods=['GET'])
 def get_cad_civilian(civilian_id):
-    denied = require_police_cad_access()
-    if denied:
-        return denied
+    community_id, error = _require_cad_community()
+    if error:
+        return error
     """Get civilian details for CAD."""
     try:
-        civilian = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
+        civilian = scoped_query(Civilian, community_id).filter_by(civilian_id=civilian_id).first()
 
         if not civilian:
             return jsonify({'success': False, 'error': 'Civilian not found'}), 404
@@ -5020,12 +5039,12 @@ def get_cad_civilian(civilian_id):
 
 @app.route('/api/cad/civilians', methods=['GET'])
 def get_all_cad_civilians():
-    denied = require_police_cad_access()
-    if denied:
-        return denied
+    community_id, error = _require_cad_community()
+    if error:
+        return error
     """Get all civilians for CAD list."""
     try:
-        civilians = scoped_query(Civilian).order_by(Civilian.created_at.desc()).all()
+        civilians = scoped_query(Civilian, community_id).order_by(Civilian.created_at.desc()).all()
 
         results = [_civilian_response(c) for c in civilians]
 
@@ -5044,7 +5063,10 @@ def get_all_cad_civilians():
 
 @app.route('/api/civilian/<civilian_id>', methods=['GET'])
 def get_civilian(civilian_id):
-    c = scoped_query(Civilian).filter_by(civilian_id=civilian_id).first()
+    community = resolve_active_community()
+    if not community:
+        return jsonify({'success': False, 'error': 'Community context required'}), 400
+    c = scoped_query(Civilian, community['community_id']).filter_by(civilian_id=civilian_id).first()
     if not c:
         return jsonify({'success': False, 'error': 'Civilian not found'}), 404
 
@@ -8348,6 +8370,85 @@ def community_admin_members():
     return jsonify({'success': True, 'members': [_community_admin_member_dict(m, users.get(m.user_id)) for m in members]})
 
 
+@app.route('/api/community-admin/members', methods=['POST'])
+@require_auth
+def community_admin_member_create():
+    current_user, community, acting_membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    data = _community_admin_body()
+    username = (data.get('username') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    temporary_password = data.get('temporary_password') or data.get('password') or ''
+    role = normalize_community_role(data.get('role') or 'Civilian')
+    department = (data.get('department') or '').strip() or None
+    callsign = (data.get('callsign') or data.get('badge') or data.get('badge_call_sign') or '').strip() or None
+    status_value = (data.get('status') or 'Active').strip() or 'Active'
+
+    if not username or len(username) > 255:
+        return jsonify({'success': False, 'error': 'Valid username is required'}), 400
+    if not email or '@' not in email or len(email) > 255:
+        return jsonify({'success': False, 'error': 'Valid email is required'}), 400
+    if role == 'PlatformOwner' or role not in COMMUNITY_SUPPORTED_ROLES:
+        return jsonify({'success': False, 'error': 'Invalid community role'}), 400
+    acting_role = normalize_community_role(getattr(acting_membership, 'role', None)) if acting_membership else None
+    if role == 'CommunityOwner' and not (is_platform_owner() or community.owner_user_id == current_user.id or acting_role == 'CommunityOwner'):
+        return jsonify({'success': False, 'error': 'Only PlatformOwner or CommunityOwner can assign CommunityOwner'}), 403
+    if status_value not in {'Active', 'Inactive', 'Suspended'}:
+        return jsonify({'success': False, 'error': 'Invalid member status'}), 400
+
+    user = User.query.filter(func.lower(User.email) == email).first()
+    created_user = False
+    if user:
+        username_owner = User.query.filter(func.lower(User.username) == username.lower(), User.id != user.id).first()
+        if username_owner:
+            return jsonify({'success': False, 'error': 'Username is already in use'}), 409
+    else:
+        if not validate_password_policy(temporary_password):
+            return jsonify({'success': False, 'error': 'Password does not meet security requirements'}), 400
+        if User.query.filter(func.lower(User.username) == username.lower()).first():
+            return jsonify({'success': False, 'error': 'Username is already in use'}), 409
+        user = User(username=username, email=email, password_hash=hash_password(temporary_password), role='Civilian', active=True)
+        db.session.add(user)
+        db.session.flush()
+        created_user = True
+
+    member = CommunityMember.query.filter_by(community_id=community.community_id, user_id=user.id).first()
+    if not member:
+        member = CommunityMember(
+            community_id=community.community_id,
+            user_id=user.id,
+            role=role,
+            department=department,
+            callsign=callsign,
+            status=status_value,
+            joined_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(member)
+    else:
+        member.role = role
+        member.department = department
+        member.callsign = callsign
+        member.status = status_value
+        member.updated_at = datetime.utcnow()
+
+    if data.get('can_access_police_cad') is not None:
+        perms = _community_admin_cad_permissions(community.community_id)
+        user_perms = perms.get(str(user.id), {})
+        user_perms['can_access_police_cad'] = bool(data.get('can_access_police_cad'))
+        user_perms['department'] = department or ''
+        user_perms['callsign'] = callsign or ''
+        perms[str(user.id)] = user_perms
+        _community_admin_save_cad_permissions(community.community_id, perms)
+        _community_admin_apply_cad_permission_attrs(member)
+
+    _community_admin_audit(community.community_id, 'member_added', target_user_id=user.id, details={'role': role, 'created_user': created_user})
+    invalidate_user_sessions(user.id)
+    db.session.commit()
+    return jsonify({'success': True, 'created_user': created_user, 'member': _community_admin_member_dict(member, user)}), 201
+
+
 @app.route('/api/community-admin/members/<int:user_id>/role', methods=['POST'])
 @require_auth
 def community_admin_member_role(user_id):
@@ -8619,7 +8720,7 @@ def _attachment_parent_values(source):
 
 def _validate_attachment_parents(community_id, parent_values):
     if not parent_values:
-        return None, _cad_json_error('At least one parent CAD record is required', 400)
+        return {}, None
     found = {}
     for field, value in parent_values.items():
         model, attr = EVIDENCE_ATTACHMENT_PARENT_MODELS[field]
@@ -8633,6 +8734,52 @@ def _validate_attachment_parents(community_id, parent_values):
         found[field] = record
     return found, None
 
+
+
+def _auto_create_attachment_parent(community_id, form):
+    case_number = f"CASE-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}"
+    description = (form.get('description') or form.get('evidenceDescription') or '').strip()
+    category = (form.get('category') or form.get('evidenceType') or 'Evidence').strip() or 'Evidence'
+    case = CaseFile(
+        community_id=community_id,
+        case_id=case_number,
+        case_number=case_number,
+        title=f'Auto-generated Evidence Case {case_number}',
+        case_type='incident',
+        status='open',
+        priority='medium',
+        report_notes=description or 'Auto-created for evidence upload without a selected parent case.',
+        created_by=_actor_name(),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    evidence_id = f"EVD-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}"
+    evidence = Evidence(
+        community_id=community_id,
+        evidence_id=evidence_id,
+        case_number=case_number,
+        evidence_type=category,
+        evidence_description=description,
+        collected_by=_actor_name(),
+        officer=_actor_name(),
+        storage_status='Attachment Pending',
+        status='Active',
+        notes='Auto-created parent evidence record for attachment upload.',
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    case.linked_evidence_ids = evidence_id
+    case.evidence_ids = evidence_id
+    db.session.add(case)
+    db.session.add(evidence)
+    _cad_audit('case_auto_created_for_evidence', community_id, case.case_id, {'case_number': case_number, 'evidence_id': evidence_id})
+    return case, evidence, {
+        'case_id': case.case_id,
+        'case_number': case.case_number,
+        'evidence_id': evidence.evidence_id,
+        'court_packet_id': case.case_id,
+        'court_packet_warning': 'Court packet is represented by the generated CAD case in the current schema.',
+    }
 
 def _primary_attachment_parent(parent_values):
     for field in ('case_id', 'evidence_id', 'arrest_id', 'warrant_id', 'court_packet_id'):
@@ -8721,23 +8868,33 @@ def cad_evidence_attachment_create():
         return error
     form = request.form if request.form else (request.get_json(silent=True) or {})
     parent_values = _attachment_parent_values(form)
+    generated_parent = None
     parent_records, parent_error = _validate_attachment_parents(community_id, parent_values)
     if parent_error:
         return parent_error
     for field, record in parent_records.items():
         _, attr = EVIDENCE_ATTACHMENT_PARENT_MODELS[field]
         parent_values[field] = getattr(record, attr)
+    if not parent_values:
+        case, evidence, generated_parent = _auto_create_attachment_parent(community_id, form)
+        parent_values['case_id'] = case.case_id
+        parent_values['evidence_id'] = evidence.evidence_id
+        parent_values['court_packet_id'] = case.case_id
 
     file_obj = request.files.get('file') if request.files else None
     if file_obj is not None and not (getattr(file_obj, 'filename', '') or '').strip():
         file_obj = None
     external_url = (form.get('external_url') or form.get('evidenceLink') or '').strip()
     if not file_obj and not external_url:
+        if generated_parent:
+            db.session.rollback()
         return _cad_json_error('Either file or external_url is required', 400)
 
     if external_url:
         external_url = _safe_external_evidence_url(external_url)
         if not external_url:
+            if generated_parent:
+                db.session.rollback()
             return _cad_json_error('external_url must be a valid http or https URL without embedded credentials or control characters', 400)
 
     storage_cfg = get_storage_config()
@@ -8759,14 +8916,20 @@ def cad_evidence_attachment_create():
 
     if file_obj:
         if storage_cfg.get('mode') != 'local_volume' or not storage_cfg.get('direct_uploads_enabled'):
+            if generated_parent:
+                db.session.rollback()
             return _cad_json_error(LINK_ONLY_DISABLED_MESSAGE, 400)
         meta, validation_error = validate_upload(file_obj)
         if validation_error:
+            if generated_parent:
+                db.session.rollback()
             return _cad_json_error(validation_error, 400)
         parent_type, parent_id = _primary_attachment_parent(parent_values)
         rel_path = relative_storage_path(community_id, parent_type, parent_id, attachment_id, meta['stored_leaf'])
         save_error = save_local_file(file_obj, rel_path)
         if save_error:
+            if generated_parent:
+                db.session.rollback()
             return _cad_json_error('Evidence file could not be stored securely', 500)
         attachment.original_filename = meta['original_filename']
         attachment.stored_filename = meta['stored_leaf']
@@ -8788,7 +8951,13 @@ def cad_evidence_attachment_create():
         'parent_fields': sorted(parent_values.keys()),
     })
     db.session.commit()
-    return jsonify({'success': True, 'attachment': _attachment_to_dict(attachment)}), 201
+    response = {'success': True, 'attachment': _attachment_to_dict(attachment)}
+    if generated_parent:
+        response['generated_parent'] = generated_parent
+        response.update({k: v for k, v in generated_parent.items() if k in {'case_id', 'case_number', 'evidence_id', 'court_packet_id'}})
+        if generated_parent.get('court_packet_warning'):
+            response['warning'] = generated_parent['court_packet_warning']
+    return jsonify(response), 201
 
 
 @app.route('/api/cad/evidence/attachments', methods=['GET'])
