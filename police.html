@@ -1659,56 +1659,246 @@
     });
 
     /* ── AI WARRANT ── */
+    const WARRANT_TYPE_OPTIONS = [
+      'Arrest Warrant',
+      'Search Warrant',
+      'Bench Warrant',
+      'Administrative Warrant',
+      'Extradition Warrant',
+      'Fugitive Warrant',
+      'Alias Warrant'
+    ];
+
+    const WARRANT_STATUS_OPTIONS = [
+      'Active',
+      'Suspended',
+      'Cleared',
+      'Served',
+      'Expired',
+      'Withdrawn'
+    ];
+
+    function normalizeWarrantType(value, fallback = 'Arrest Warrant') {
+      const rawValue = String(value || '').trim();
+      const raw = rawValue.toLowerCase();
+      const safeFallback = WARRANT_TYPE_OPTIONS.includes(fallback) ? fallback : 'Arrest Warrant';
+      const aliases = {
+        'arrest': 'Arrest Warrant',
+        'arrest warrant': 'Arrest Warrant',
+        'search': 'Search Warrant',
+        'search warrant': 'Search Warrant',
+        'bench': 'Bench Warrant',
+        'bench warrant': 'Bench Warrant',
+        'administrative': 'Administrative Warrant',
+        'admin': 'Administrative Warrant',
+        'administrative warrant': 'Administrative Warrant',
+        'extradition': 'Extradition Warrant',
+        'extradition warrant': 'Extradition Warrant',
+        'fugitive': 'Fugitive Warrant',
+        'fugitive warrant': 'Fugitive Warrant',
+        'alias': 'Alias Warrant',
+        'alias warrant': 'Alias Warrant'
+      };
+      if (aliases[raw]) return aliases[raw];
+      if (WARRANT_TYPE_OPTIONS.includes(rawValue)) return rawValue;
+      return safeFallback;
+    }
+
+    function normalizeWarrantStatus(value, fallback = 'Active') {
+      const rawValue = String(value || '').trim();
+      const raw = rawValue.toLowerCase();
+      const safeFallback = WARRANT_STATUS_OPTIONS.includes(fallback) ? fallback : 'Active';
+      const aliases = {
+        'active': 'Active',
+        'open': 'Active',
+        'pending': 'Active',
+        'suspended': 'Suspended',
+        'cleared': 'Cleared',
+        'closed': 'Cleared',
+        'served': 'Served',
+        'expired': 'Expired',
+        'withdrawn': 'Withdrawn',
+        'withdraw': 'Withdrawn'
+      };
+      if (aliases[raw]) return aliases[raw];
+      if (WARRANT_STATUS_OPTIONS.includes(rawValue)) return rawValue;
+      return safeFallback;
+    }
+
+    function normalizeDateForInput(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+
+      const isValidDateParts = (year, month, day) => {
+        const date = new Date(Date.UTC(year, month - 1, day));
+        return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+      };
+      const formatDate = (year, month, day) => {
+        if (!isValidDateParts(year, month, day)) return '';
+        return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      };
+
+      let match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (match) return formatDate(Number(match[1]), Number(match[2]), Number(match[3]));
+
+      match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (match) return formatDate(Number(match[3]), Number(match[1]), Number(match[2]));
+
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) return '';
+      return formatDate(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+    }
+
+    function getRequiredWarrantFields(warrantType) {
+      const common = ['subject_name', 'charges_or_basis', 'issuing_agency', 'expiration_date', 'status', 'probable_cause'];
+      const byType = {
+        'Search Warrant': ['search_location', 'items_to_seize'],
+        'Bench Warrant': ['court_case_number', 'bench_failure_reason', 'judge_or_authority'],
+        'Administrative Warrant': ['administrative_basis', 'inspection_scope'],
+        'Extradition Warrant': ['originating_jurisdiction', 'extradition_location'],
+        'Fugitive Warrant': ['fugitive_last_known_location'],
+        'Alias Warrant': ['alias_names']
+      };
+      return [...common, ...(byType[warrantType] || [])];
+    }
+
+    function fillWarrantField(name, value, options = {}) {
+      const overwrite = options.overwrite === true;
+      const input = document.querySelector(`#warrant-form [name="${name}"]`);
+      if (!input || value === undefined || value === null) return false;
+
+      let nextValue = String(value).trim();
+      if (!nextValue) return false;
+
+      if (name === 'warrant_type') {
+        const currentType = document.querySelector('#warrant-form [name="warrant_type"]')?.value || 'Arrest Warrant';
+        nextValue = normalizeWarrantType(nextValue, currentType);
+      }
+
+      if (name === 'status') {
+        nextValue = normalizeWarrantStatus(nextValue, 'Active');
+      }
+
+      if (name === 'expiration_date' || name === 'subject_dob') {
+        nextValue = normalizeDateForInput(nextValue);
+        if (!nextValue) return false;
+      }
+
+      if (!overwrite && String(input.value || '').trim() !== '') return false;
+
+      input.value = nextValue;
+
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+
+      return String(input.value || '').trim() === nextValue;
+    }
+
     document.getElementById('ai-warrant-btn').addEventListener('click', async function () {
       const form = document.getElementById('warrant-form');
       const statusEl = document.getElementById('ai-warrant-status');
-      const notesEl = document.getElementById('warrantNotes');
-      const expirationEl = document.getElementById('warrantExpiration');
-      const statusSelect = document.getElementById('warrantStatus');
       const btnIcon = document.getElementById('ai-warrant-icon');
-
-      const warrantName = form.querySelector('[name="subject_name"]').value.trim();
-      const warrantCharges = form.querySelector('[name="charges_or_basis"]').value.trim();
-      const warrantIssuer = form.querySelector('[name="issuing_agency"]').value.trim();
-
-      if (!warrantName || !warrantCharges) {
-        statusEl.style.display = 'block';
-        statusEl.style.color = 'var(--accent)';
-        statusEl.textContent = 'Fill in suspect name and charges first.';
-        return;
-      }
+      const warrantFields = [
+        'warrant_type',
+        'subject_name',
+        'subject_dob',
+        'subject_address',
+        'charges_or_basis',
+        'issuing_agency',
+        'judge_or_authority',
+        'probable_cause',
+        'search_location',
+        'items_to_seize',
+        'court_case_number',
+        'bench_failure_reason',
+        'administrative_basis',
+        'inspection_scope',
+        'originating_jurisdiction',
+        'extradition_location',
+        'fugitive_last_known_location',
+        'alias_names',
+        'execution_instructions',
+        'expiration_date',
+        'status'
+      ];
+      const payload = {};
+      warrantFields.forEach((name) => {
+        payload[name] = form.querySelector(`[name="${name}"]`)?.value?.trim() || '';
+      });
+      payload.warrantName = payload.subject_name;
+      payload.warrantCharges = payload.charges_or_basis;
+      payload.warrantIssuer = payload.issuing_agency;
+      payload.warrantNotes = payload.probable_cause;
+      payload.warrantExpiration = payload.expiration_date;
+      payload.warrantStatus = payload.status;
 
       btnIcon.textContent = '⏳';
       this.disabled = true;
       statusEl.style.display = 'block';
       statusEl.style.color = 'var(--muted)';
-      statusEl.textContent = 'Drafting warrant justification…';
+      statusEl.textContent = 'Drafting warrant and filling blank fields…';
 
       try {
         const res = await fetch('/api/ai/warrant', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ warrantName, warrantCharges, warrantIssuer, warrantNotes: notesEl.value.trim() })
+          body: JSON.stringify(payload)
         });
         const json = await res.json();
         if (json.success) {
-          const filled = [];
-          notesEl.value = json.justification;
-          filled.push('justification notes');
+          const filledFields = [];
+          const skippedFields = [];
+          const rejectedFields = [];
+          const fieldLabels = {
+            warrant_type: 'Warrant type',
+            subject_name: 'Subject name',
+            subject_dob: 'Subject DOB',
+            subject_address: 'Subject address',
+            charges_or_basis: 'Charges / basis',
+            issuing_agency: 'Issuing agency',
+            judge_or_authority: 'Judge / authority',
+            probable_cause: 'Probable cause',
+            search_location: 'Search location',
+            items_to_seize: 'Items to seize',
+            court_case_number: 'Court case number',
+            bench_failure_reason: 'Bench failure reason',
+            administrative_basis: 'Administrative basis',
+            inspection_scope: 'Inspection scope',
+            originating_jurisdiction: 'Originating jurisdiction',
+            extradition_location: 'Extradition location',
+            fugitive_last_known_location: 'Last known location',
+            alias_names: 'Alias names',
+            execution_instructions: 'Execution instructions',
+            expiration_date: 'Expiration date',
+            status: 'Status'
+          };
 
-          if (json.suggestedExpiration && !expirationEl.value) {
-            expirationEl.value = json.suggestedExpiration;
-            filled.push('expiration date (30 days)');
-          }
-          if (json.suggestedStatus) {
-            for (let opt of statusSelect.options) {
-              if (opt.value === json.suggestedStatus) { statusSelect.value = json.suggestedStatus; break; }
-            }
-            filled.push('status → Active');
-          }
+          warrantFields.forEach((name) => {
+            const input = form.querySelector(`[name="${name}"]`);
+            const rawValue = json[name] ?? (name === 'probable_cause' ? json.justification : undefined) ?? (name === 'expiration_date' ? json.suggestedExpiration : undefined) ?? (name === 'status' ? json.suggestedStatus : undefined);
+            if (rawValue === undefined || rawValue === null || String(rawValue).trim() === '') return;
+            const wasBlank = String(input?.value || '').trim() === '';
+            const stuck = fillWarrantField(name, rawValue);
+            if (stuck) filledFields.push(fieldLabels[name] || name);
+            else if (wasBlank) rejectedFields.push(fieldLabels[name] || name);
+            else skippedFields.push(fieldLabels[name] || name);
+          });
 
-          statusEl.style.color = '#4caf82';
-          statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')} — review before submitting.`;
+          const activeWarrantType = normalizeWarrantType(form.querySelector('[name="warrant_type"]')?.value, 'Arrest Warrant');
+          const missingRequired = getRequiredWarrantFields(activeWarrantType).filter((name) => {
+            const input = form.querySelector(`[name="${name}"]`);
+            return !String(input?.value || '').trim();
+          }).map((name) => fieldLabels[name] || name);
+
+          if (missingRequired.length) {
+            statusEl.style.color = 'var(--accent)';
+            statusEl.textContent = `AI drafted warrant notes, but some required fields still need review: ${missingRequired.join(', ')}.`;
+          } else {
+            statusEl.style.color = '#4caf82';
+            const filledText = filledFields.length ? ` Filled: ${filledFields.join(', ')}.` : ' No blank fields needed updating.';
+            const rejectedText = rejectedFields.length ? ` Rejected by browser validation: ${rejectedFields.join(', ')}.` : '';
+            statusEl.textContent = `✓ Auto-filled required warrant fields.${filledText}${rejectedText} User-entered values were preserved; review before submitting.`;
+          }
         } else {
           statusEl.style.color = 'var(--accent)';
           statusEl.textContent = json.error || 'Generation failed. Try again.';
