@@ -378,17 +378,35 @@ limiter = Limiter(
 cache.init_app(app)
 
 
+def _warn_invalid_socketio_origin():
+    logger.warning('Skipping invalid Socket.IO origin')
+
+
 def _normalize_socketio_origin(value):
     """Normalize a configured URL/domain to an Engine.IO origin."""
     raw_value = (value or '').strip().rstrip('/')
     if not raw_value:
+        _warn_invalid_socketio_origin()
         return None
     if raw_value == '*':
         return '*'
 
-    url_value = raw_value if raw_value.startswith(('http://', 'https://')) else f'https://{raw_value}'
-    parsed = urlsplit(url_value)
-    if not parsed.scheme or not parsed.netloc:
+    has_supported_scheme = raw_value.lower().startswith(('http://', 'https://'))
+    if '://' in raw_value and not has_supported_scheme:
+        _warn_invalid_socketio_origin()
+        return None
+
+    url_value = raw_value if has_supported_scheme else f'https://{raw_value}'
+    try:
+        parsed = urlsplit(url_value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        _warn_invalid_socketio_origin()
+        return None
+
+    if parsed.scheme.lower() not in {'http', 'https'} or not parsed.netloc or not hostname:
+        _warn_invalid_socketio_origin()
         return None
 
     # Browsers send the Origin header as scheme + host (+ port), without any path,
@@ -423,14 +441,25 @@ def _add_socketio_origin_with_variants(origins, seen, value):
     if not origin or origin == '*':
         return
 
-    _add_unique_socketio_origin(origins, seen, origin)
-
-    parsed = urlsplit(origin)
-    if not _should_add_socketio_www_variant(parsed.hostname):
+    try:
+        parsed = urlsplit(origin)
+        hostname = parsed.hostname
+        port_value = parsed.port
+    except ValueError:
+        _warn_invalid_socketio_origin()
         return
 
-    port = f':{parsed.port}' if parsed.port else ''
-    www_origin = urlunsplit((parsed.scheme, f'www.{parsed.hostname}{port}', '', '', ''))
+    if not hostname:
+        _warn_invalid_socketio_origin()
+        return
+
+    _add_unique_socketio_origin(origins, seen, origin)
+
+    if not _should_add_socketio_www_variant(hostname):
+        return
+
+    port = f':{port_value}' if port_value else ''
+    www_origin = urlunsplit((parsed.scheme, f'www.{hostname}{port}', '', '', ''))
     _add_unique_socketio_origin(origins, seen, www_origin)
 
 
