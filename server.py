@@ -2348,7 +2348,7 @@ def send_application_email(app):
 
         plain = f"""
 GTAVCAD — New Application Submitted
-=======================================
+---------------------------------------
 Application ID: {app['id']}
 Submitted At:   {app['submittedAt']}
 Discord:        {app.get('appDiscord','N/A')}
@@ -2513,7 +2513,7 @@ def send_email_notification(complaint):
 
         plain = f"""
 GTAVCAD — New Complaint Filed
-=================================
+---------------------------------
 Complaint ID:     {complaint['id']}
 Submitted At:     {complaint['submittedAt']}
 Discord Username: {complaint.get('complaintDiscord','N/A')}
@@ -9155,8 +9155,8 @@ _EVIDENCE_AI_METADATA_KEYS = {
     'title', 'name', 'display_name', 'file_name', 'filename', 'original_filename',
     'evidence_type', 'type', 'attachment_type', 'source_type', 'content_type',
     'mime_type', 'size_bytes', 'file_size', 'description', 'evidence_description',
-    'officer', 'uploaded_by', 'created_by', 'created_at', 'updated_at', 'status',
-    'storage_status', 'chain_of_custody', 'notes', 'tags',
+    'officer', 'uploaded_by', 'created_by', 'created_at', 'updated_at', 'upload_time', 'status',
+    'storage_status', 'review_status', 'chain_of_custody', 'notes', 'officer_notes', 'tags',
 }
 _EVIDENCE_AI_URL_KEYS = {'external_url', 'clip_link', 'screenshot_link', 'download_url', 'url', 'link'}
 _EVIDENCE_AI_NESTED_KEYS = {'evidence', 'attachments', 'evidence_attachments', 'items'}
@@ -9187,14 +9187,6 @@ def cad_ai_evidence_summary():
     guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
     if err:
         return err
-<<<<<<< codex/review-gtavcad-evidence-uploads-pr
-    evidence_metadata = _evidence_ai_metadata_only(payload)
-    ai_result = _ai_json_route(
-        'evidence_summary',
-        _default_ai_system_rules("Based on attachment metadata and officer-entered descriptions only. Do not claim to view images, videos, PDFs, downloads, links, or binary file contents."),
-        f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Input metadata: {json.dumps(evidence_metadata)}",
-        evidence_metadata,
-=======
     community_id = guard['community_id']
     attachment_query = scoped_query(EvidenceAttachment, community_id).filter(EvidenceAttachment.is_deleted.is_(False))
     for field in ('case_id', 'evidence_id', 'arrest_id', 'warrant_id', 'court_packet_id'):
@@ -9214,7 +9206,11 @@ def cad_ai_evidence_summary():
             'arrest_id': attachment.arrest_id,
             'warrant_id': attachment.warrant_id,
             'court_packet_id': attachment.court_packet_id,
-            'external_link_available': bool(attachment.external_url),
+            'mime_type': attachment.mime_type,
+            'file_size': attachment.file_size,
+            'review_status': attachment.review_status,
+            'external_url': bool(attachment.external_url),
+            'download_url': bool(_attachment_download_url(attachment)),
         })
     metadata_payload = {
         'officer_notes': payload.get('officer_notes') or payload.get('notes') or '',
@@ -9222,19 +9218,30 @@ def cad_ai_evidence_summary():
         'evidence_id': payload.get('evidence_id'),
         'arrest_id': payload.get('arrest_id'),
         'warrant_id': payload.get('warrant_id'),
+        'court_packet_id': payload.get('court_packet_id'),
         'attachments': attachments,
     }
+    safe_metadata_payload = _evidence_ai_metadata_only(metadata_payload)
     ai_result = _ai_json_route(
-        'evidence_summary',
-        _default_ai_system_rules("Based on the attachment metadata and officer-entered descriptions only. Do not claim you viewed any image, video, PDF, or binary file contents."),
-        f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Start narrative wording with 'Based on the attachment metadata and officer-entered descriptions...' Input metadata only: {json.dumps(metadata_payload)}",
-        {'case_id': payload.get('case_id'), 'attachment_count': len(attachments)},
->>>>>>> main
+        "evidence_summary",
+        _default_ai_system_rules(
+            "Based on the attachment metadata and officer-entered descriptions only. "
+            "Do not claim you viewed any image, video, PDF, download, link, or binary file contents."
+        ),
+        (
+            "Return JSON keys: evidence_summary, chain_of_custody_narrative, "
+            "relevance_to_charges, missing_evidence_checklist, review_notes. "
+            "Start narrative wording with 'Based on the attachment metadata and officer-entered descriptions...' "
+            f"Input metadata only: {json.dumps(safe_metadata_payload)}"
+        ),
+        {
+            "case_id": payload.get("case_id"),
+            "attachment_count": len(attachments),
+        },
     )
     if not ai_result or not isinstance(ai_result[0], dict):
         return ai_result
     return jsonify({'success': True, 'source': 'attachment_metadata_only', **ai_result[0]})
-
 
 @app.route('/api/cad/ai/charge-suggestions', methods=['POST'])
 def cad_ai_charge_suggestions():

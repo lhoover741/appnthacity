@@ -16,9 +16,9 @@ from models import Community, CommunityMember, User
 logger = logging.getLogger(__name__)
 
 
-# ========================================
+# ----------------------------------------
 # Community Context Extraction
-# ========================================
+# ----------------------------------------
 
 def get_current_community_id():
     """
@@ -179,9 +179,9 @@ def community_context_middleware():
             g.current_user = None
 
 
-# ========================================
+# ----------------------------------------
 # Community-Scoped Query Helpers
-# ========================================
+# ----------------------------------------
 
 def scoped_query(model, community_id=None):
     """Return a SQLAlchemy query hard-scoped to one tenant community."""
@@ -218,9 +218,9 @@ def scope_query_to_community(query_obj, model_class, community_id=None):
     return query_obj.filter_by(community_id=community_id)
 
 
-# ========================================
+# ----------------------------------------
 # Decorators
-# ========================================
+# ----------------------------------------
 
 def community_required(f):
     """Decorator ensuring request has valid community context."""
@@ -289,9 +289,9 @@ def community_admin_required(f):
     return decorated_function
 
 
-# ========================================
+# ----------------------------------------
 # Community Helpers
-# ========================================
+# ----------------------------------------
 
 def get_user_communities(user_id):
     """Get all communities a user belongs to."""
@@ -326,9 +326,9 @@ def get_user_role_in_community(user_id, community_id):
     return membership.role if membership else None
 
 
-# ========================================
+# ----------------------------------------
 # Export
-# ========================================
+# ----------------------------------------
 
 __all__ = [
     'get_current_community_id',

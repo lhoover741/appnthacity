@@ -20,9 +20,9 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 **Add After:**
 ```python
-# ========================================
+# ----------------------------------------
 # MULTI-TENANT CONTEXT
-# ========================================
+# ----------------------------------------
 from community_service import community_context_middleware
 from community_routes import register_community_routes
 

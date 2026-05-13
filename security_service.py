@@ -145,9 +145,9 @@ def validate_id(id_str, prefix=None):
     return len(id_str) > 10 and len(id_str) < 100 and all(c.isalnum() or c in '-_' for c in id_str)
 
 
-# ========================================
+# ----------------------------------------
 # COMMUNITY-SCOPED RBAC DECORATORS
-# ========================================
+# ----------------------------------------
 # These are the NEW decorators for multi-tenant mode.
 # They check both role AND community membership.
 # Use g.current_role and g.community_id from community_context_middleware.
