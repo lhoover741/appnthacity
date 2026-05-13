@@ -422,6 +422,8 @@ const GTAVCADData = {
   arrests: [],
   incidents: [],
   evidence: [],
+  evidenceAttachments: [],
+  evidenceAttachmentConfig: { direct_uploads_enabled: false, direct_upload_message: 'Direct uploads are not configured. Attach an external evidence link instead.' },
   trafficStops: [],
   calls911: [],
   officers: [
@@ -457,6 +459,16 @@ async function loadData() {
       const payload = await res.json();
       const data = payload && payload.data ? payload.data : payload;
       Object.assign(GTAVCADData, data);
+      try {
+        const configRes = await fetch('/api/cad/evidence/attachments/config');
+        const configData = await configRes.json();
+        if (configRes.ok && configData.success) GTAVCADData.evidenceAttachmentConfig = configData;
+        const attachmentRes = await fetch('/api/cad/evidence/attachments');
+        const attachmentData = await attachmentRes.json();
+        if (attachmentRes.ok && attachmentData.success) GTAVCADData.evidenceAttachments = attachmentData.attachments || [];
+      } catch (attachmentError) {
+        console.warn('Evidence attachment load failed:', attachmentError);
+      }
       return;
     }
     console.warn('CAD load failed:', res.status);
@@ -603,7 +615,19 @@ async function addArrest(record) {
   return data.arrest;
 }
 
-function addEvidence(record) {
+async function addEvidence(record, formElement = null) {
+  if (formElement) {
+    const payload = new FormData(formElement);
+    if (!payload.get('case_id') && payload.get('caseNumber')) payload.set('case_id', payload.get('caseNumber'));
+    if (!payload.get('description') && payload.get('evidenceDescription')) payload.set('description', payload.get('evidenceDescription'));
+    if (!payload.get('category') && payload.get('evidenceType')) payload.set('category', payload.get('evidenceType'));
+    if (!payload.get('external_url') && payload.get('evidenceLink')) payload.set('external_url', payload.get('evidenceLink'));
+    const res = await fetch('/api/cad/evidence/attachments', { method: 'POST', body: payload });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Evidence attachment save failed');
+    await loadData();
+    return data.attachment;
+  }
   record.id = generateId('evd');
   record.createdAt = new Date().toISOString();
   GTAVCADData.evidence.push(record);
@@ -1043,7 +1067,9 @@ function renderEvidenceTable() {
   const tbody = document.getElementById('evidence-tbody');
   if (!tbody) return;
 
-  const evidence = GTAVCADData.evidence.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const legacyEvidence = (GTAVCADData.evidence || []).map(item => ({ ...item, recordKind: 'legacy' }));
+  const attachments = (GTAVCADData.evidenceAttachments || []).map(item => ({ ...item, recordKind: 'attachment' }));
+  const evidence = [...attachments, ...legacyEvidence].sort((a, b) => new Date(b.created_at || b.createdAt || 0) - new Date(a.created_at || a.createdAt || 0));
 
   if (evidence.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-row">No evidence submitted yet.</td></tr>`;
@@ -1051,16 +1077,35 @@ function renderEvidenceTable() {
   }
 
   const html = evidence.map(item => {
-    const storageClass = item.storageStatus ? `badge-${item.storageStatus.toLowerCase().replace(' ', '-')}` : 'badge-secondary';
+    if (item.recordKind === 'attachment') {
+      const openAction = item.download_url
+        ? `<a class="button button-secondary" href="${escapeAttr(item.download_url)}">Download</a>`
+        : (item.external_url ? `<a class="button button-secondary" href="${escapeAttr(item.external_url)}" target="_blank" rel="noopener noreferrer">Open Link</a>` : 'None');
+      const action = `${openAction} <button class="button button-ghost" type="button" onclick="deleteEvidenceAttachment('${escapeAttr(item.attachment_id)}')">Delete</button>`;
+      const size = item.file_size ? `${Math.round(item.file_size / 1024)} KB` : '—';
+      return `
+        <tr>
+          <td>${escapeHtml(item.attachment_id)}</td>
+          <td>${escapeHtml(item.case_id || item.evidence_id || item.arrest_id || item.warrant_id || item.court_packet_id || '—')}</td>
+          <td>${escapeHtml(item.uploaded_by?.username || item.uploaded_by?.user_id || '—')}</td>
+          <td><span class="badge badge-secondary">${escapeHtml(item.file_type || 'link')}</span></td>
+          <td>${escapeHtml(item.description || item.original_filename || '—')}<br><small>${escapeHtml(item.category || '')} ${escapeHtml(size)}</small></td>
+          <td>${action}</td>
+          <td><span class="badge badge-submitted">${escapeHtml(item.review_status || 'submitted')}</span></td>
+          <td>${formatDate(item.created_at)}</td>
+        </tr>
+      `;
+    }
+    const storageClass = item.storageStatus ? `badge-${String(item.storageStatus).toLowerCase().replace(' ', '-')}` : 'badge-secondary';
     return `
       <tr>
-        <td>${item.id}</td>
-        <td>${item.caseNumber}</td>
-        <td>${item.officer}</td>
-        <td>${item.type}</td>
-        <td>${item.description}</td>
-        <td>${item.link ? `<a href="${item.link}" target="_blank">View Evidence</a>` : 'None'}</td>
-        <td><span class="badge ${storageClass}">${item.storageStatus || 'Unknown'}</span></td>
+        <td>${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.caseNumber)}</td>
+        <td>${escapeHtml(item.officer || item.evidenceOfficer)}</td>
+        <td>${escapeHtml(item.type || item.evidenceType)}</td>
+        <td>${escapeHtml(item.description || item.evidenceDescription)}</td>
+        <td>${item.link || item.evidenceLink ? `<a href="${escapeAttr(item.link || item.evidenceLink)}" target="_blank" rel="noopener noreferrer">View Evidence</a>` : 'None'}</td>
+        <td><span class="badge ${escapeAttr(storageClass)}">${escapeHtml(item.storageStatus || 'Unknown')}</span></td>
         <td>${formatDate(item.createdAt)}</td>
       </tr>
     `;
@@ -1068,6 +1113,23 @@ function renderEvidenceTable() {
 
   tbody.innerHTML = html;
 }
+
+
+async function deleteEvidenceAttachment(attachmentId) {
+  if (!attachmentId) return;
+  if (!window.confirm('Soft delete this evidence attachment?')) return;
+  try {
+    const res = await fetch(`/api/cad/evidence/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Evidence attachment delete failed');
+    await loadData();
+    renderEvidenceTable();
+    showToast('Evidence attachment deleted', 'success');
+  } catch (err) {
+    showToast(err.message || 'Evidence attachment delete failed', 'error');
+  }
+}
+window.deleteEvidenceAttachment = deleteEvidenceAttachment;
 
 // Render officers board
 function renderOfficersBoard() {
@@ -1274,7 +1336,6 @@ function updateDashboard() {
 function handleCivilianForm() {
   const form = document.getElementById('civilian-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const raw = getFormData(form);
@@ -1315,7 +1376,6 @@ function handleCivilianForm() {
 function handle911Form() {
   const form = document.getElementById('dispatch-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const statusEl = document.getElementById('dispatch-status');
@@ -1358,7 +1418,6 @@ function handle911Form() {
 function handleTrafficForm() {
   const form = document.getElementById('traffic-form');
   if (!form) return;
-
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const data = getFormData(form);
@@ -1374,7 +1433,6 @@ function handleTrafficForm() {
 function handleArrestForm() {
   const form = document.getElementById('arrest-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = getFormData(form);
@@ -1402,23 +1460,44 @@ function handleArrestForm() {
 function handleEvidenceForm() {
   const form = document.getElementById('evidence-form');
   if (!form) return;
+  const fileInput = form.querySelector('input[name="file"]');
+  const hint = form.querySelector('[data-evidence-upload-hint]');
+  const config = GTAVCADData.evidenceAttachmentConfig || {};
+  if (fileInput && config.direct_uploads_enabled !== true) {
+    fileInput.disabled = true;
+    fileInput.closest('label')?.classList.add('is-disabled');
+    if (hint) hint.textContent = config.direct_upload_message || 'Direct uploads are not configured. Attach an external evidence link instead.';
+  } else if (hint) {
+    hint.textContent = 'Attach an external evidence link or upload an allowed evidence file.';
+  }
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = getFormData(form);
-    addEvidence(data);
-    updateDashboard();
-    renderEvidenceTable();
-    addActivity('Evidence', `Evidence submitted for case ${data.caseNumber}`);
-    showToast('Evidence submitted successfully', 'success');
-    form.reset();
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    showFormMessage(form, 'Saving evidence attachment…', 'info');
+    try {
+      await addEvidence(data, form);
+      updateDashboard();
+      renderEvidenceTable();
+      addActivity('Evidence', `Evidence submitted for case ${data.caseNumber || data.case_id}`);
+      showToast('Evidence attachment submitted successfully', 'success');
+      showFormMessage(form, 'Evidence attachment submitted successfully', 'success');
+      form.reset();
+    } catch (err) {
+      const message = err.message || 'Evidence attachment save failed';
+      showToast(message, 'error');
+      showFormMessage(form, message, 'error');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
   });
 }
 
 function handleWarrantForm() {
   const form = document.getElementById('warrant-form');
   if (!form) return;
-
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const data = getFormData(form);
@@ -1434,7 +1513,6 @@ function handleWarrantForm() {
 function handleCivilianLookupForm() {
   const form = document.getElementById('civilian-lookup-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const nameQuery = form.querySelector('[name="lookupName"]').value.trim();
@@ -1500,7 +1578,6 @@ function handleCivilianLookupForm() {
 function handlePlateLookupForm() {
   const form = document.getElementById('plate-lookup-form');
   if (!form) return;
-
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const plate = form.querySelector('[name="plateLookup"]').value;
@@ -1514,7 +1591,6 @@ function handlePlateLookupForm() {
 function handleLicenseForm() {
   const form = document.getElementById('license-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const statusEl = document.getElementById('license-status');
@@ -1546,7 +1622,6 @@ function handleLicenseForm() {
 function handleVehicleForm() {
   const form = document.getElementById('vehicle-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const statusEl = document.getElementById('vehicle-status');
@@ -1578,7 +1653,6 @@ function handleVehicleForm() {
 function handleDMVPlateForm() {
   const form = document.getElementById('dmv-plate-form');
   if (!form) return;
-
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const plate = form.querySelector('[name="plateSearch"]').value;
@@ -1623,7 +1697,6 @@ async function createBusiness(record) {
 function handleBusinessForm() {
   const form = document.getElementById('business-form');
   if (!form) return;
-
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const statusEl = document.getElementById('business-status');
