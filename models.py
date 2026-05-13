@@ -640,6 +640,36 @@ class CadAuditLog(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class EvidenceAttachment(db.Model):
+    __tablename__ = 'evidence_attachments'
+
+    id = db.Column(db.Integer, primary_key=True)
+    attachment_id = db.Column(db.String(64), unique=True, nullable=False)
+    community_id = db.Column(db.String(64), nullable=False, index=True)
+    case_id = db.Column(db.String(64), nullable=True, index=True)
+    evidence_id = db.Column(db.String(64), nullable=True, index=True)
+    arrest_id = db.Column(db.String(64), nullable=True, index=True)
+    warrant_id = db.Column(db.String(64), nullable=True, index=True)
+    court_packet_id = db.Column(db.String(64), nullable=True, index=True)
+    uploaded_by_user_id = db.Column(db.Integer, nullable=False)
+    original_filename = db.Column(db.String(255), nullable=True)
+    stored_filename = db.Column(db.String(255), nullable=True)
+    file_type = db.Column(db.String(64), nullable=True)
+    mime_type = db.Column(db.String(255), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    storage_mode = db.Column(db.String(32), nullable=False)
+    storage_path = db.Column(db.Text, nullable=True)
+    external_url = db.Column(db.Text, nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(128), nullable=True)
+    review_status = db.Column(db.String(64), default='submitted')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+    is_deleted = db.Column(db.Boolean, default=False)
+
+
+
 class AIGenerationLog(db.Model):
     __tablename__ = 'ai_generation_logs'
 
