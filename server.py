@@ -1757,6 +1757,15 @@ def _warrant_status(w):
     return _warrant_value(w, 'status', 'warrant_status', 'Active') or 'Active'
 
 
+def _set_warrant_status(warrant, new_status, *, touch=True):
+    status = new_status or 'Active'
+    warrant.status = status
+    warrant.warrant_status = status
+    if touch:
+        warrant.updated_at = datetime.utcnow()
+    return status
+
+
 def _warrant_pdf_download_url(w):
     if getattr(w, 'pdf_attachment_id', None):
         return f'/api/cad/warrants/{w.warrant_id}/download-pdf'
@@ -2161,10 +2170,27 @@ def _upsert_license(data):
 def _upsert_warrant(data):
     community_id = get_current_community_id()
     payload = _normalize_warrant_payload(data) if 'WARRANT_FIELD_MAP' in globals() else {}
-    w_id = data.get('id') or data.get('warrant_id') or data.get('warrant_number') or f"WRT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
-    obj = scoped_query(Warrant, community_id).filter_by(warrant_id=w_id).first()
+    provided_warrant_id = data.get('warrant_id') or data.get('id')
+    display_warrant_number = data.get('warrant_number') or provided_warrant_id
+    obj = None
+    if provided_warrant_id:
+        obj = scoped_query(Warrant, community_id).filter(
+            or_(Warrant.warrant_id == provided_warrant_id, Warrant.warrant_number == provided_warrant_id)
+        ).first()
+    if obj is None and display_warrant_number:
+        obj = scoped_query(Warrant, community_id).filter_by(warrant_number=display_warrant_number).first()
     if obj is None:
-        obj = Warrant(community_id=community_id, warrant_id=w_id, created_by_user_id=session.get('user_id'), created_at=datetime.utcnow())
+        if provided_warrant_id and not Warrant.query.filter_by(warrant_id=provided_warrant_id).first():
+            warrant_id = provided_warrant_id
+        else:
+            warrant_id = generate_global_warrant_id()
+        obj = Warrant(
+            community_id=community_id,
+            warrant_id=warrant_id,
+            warrant_number=display_warrant_number,
+            created_by_user_id=session.get('user_id'),
+            created_at=datetime.utcnow(),
+        )
         db.session.add(obj)
     if payload:
         if not payload.get('warrant_number'):
@@ -2175,7 +2201,7 @@ def _upsert_warrant(data):
         obj.warrant_charges = data.get('warrantCharges', '')
         obj.warrant_issuer  = data.get('warrantIssuer', '')
         obj.warrant_notes   = data.get('warrantNotes', '')
-        obj.warrant_status  = data.get('warrantStatus', 'Active')
+        _set_warrant_status(obj, data.get('warrantStatus', 'Active'))
         obj.expiration_date = data.get('expirationDate', '')
         obj.justification   = data.get('justification', '')
         obj.updated_at      = datetime.utcnow()
@@ -6729,19 +6755,23 @@ def cad_case_create_warrant(case_id):
     if not case:
         return _cad_json_error('Case not found', 404)
     data = request.get_json(silent=True) or {}
-    generated_warrant_number = data.get('warrant_number') or data.get('warrant_id') or generate_warrant_number(community_id, data.get('warrant_type') or 'Arrest Warrant')
+    warrant_type = data.get('warrant_type') or 'Arrest Warrant'
+    generated_warrant_number = data.get('warrant_number') or generate_warrant_number(community_id, warrant_type)
+    while scoped_query(Warrant, community_id).filter_by(warrant_number=generated_warrant_number).first():
+        generated_warrant_number = generate_warrant_number(community_id, warrant_type)
+    new_status = data.get('status') or data.get('warrant_status') or 'Active'
     warrant = Warrant(
         community_id=community_id,
-        warrant_id=data.get('warrant_id') or generated_warrant_number,
+        warrant_id=generate_global_warrant_id(),
         warrant_number=generated_warrant_number,
-        warrant_type=data.get('warrant_type') or 'Arrest Warrant',
+        warrant_type=warrant_type,
         civilian_id=data.get('civilian_id') or (case.defendant_civilian_id or (_split_csv(case.involved_civilians)[0] if _split_csv(case.involved_civilians) else '')),
         warrant_name=data.get('warrant_name') or case.title or _case_public_id(case),
         warrant_charges=data.get('warrant_charges') or case.charges or '',
         warrant_issuer=data.get('warrant_issuer') or _actor_name(),
         warrant_notes=data.get('warrant_notes') or case.report_notes or '',
-        warrant_status=data.get('warrant_status') or 'Active',
-        status=data.get('status') or data.get('warrant_status') or 'Active',
+        warrant_status=new_status,
+        status=new_status,
         subject_name=data.get('subject_name') or data.get('warrant_name') or case.title or _case_public_id(case),
         charges_or_basis=data.get('charges_or_basis') or data.get('warrant_charges') or case.charges or '',
         probable_cause=data.get('probable_cause') or data.get('justification') or f"Probable cause linked to case {_case_public_id(case)}.",
@@ -6797,11 +6827,11 @@ def cad_case_link_warrant(case_id):
         return error
     case = _case_or_404_for_link(case_id, community_id)
     data = request.get_json(silent=True) or {}
-    warrant = scoped_query(Warrant, community_id).filter_by(warrant_id=data.get('warrant_id')).first()
+    warrant = _find_warrant_for_cad(community_id, data.get('warrant_id')) if data.get('warrant_id') else None
     if not case or not warrant:
         return _cad_json_error('Case or warrant not found', 404)
     if data.get('warrant_status'):
-        warrant.warrant_status = data.get('warrant_status')
+        _set_warrant_status(warrant, data.get('warrant_status'))
     case.linked_warrant_id = warrant.warrant_id
     case.updated_at = warrant.updated_at = datetime.utcnow()
     _cad_audit('warrant_linked', community_id, case.case_id, {'warrant_id': warrant.warrant_id})
@@ -6840,7 +6870,7 @@ def cad_case_court_packet(case_id):
     charges = scoped_query(CaseCharge, community_id).filter_by(case_id=case.case_id).order_by(CaseCharge.created_at.asc()).all()
     evidence = scoped_query(Evidence, community_id).filter(Evidence.evidence_id.in_(_split_csv(case.linked_evidence_ids or case.evidence_ids))).all() if _split_csv(case.linked_evidence_ids or case.evidence_ids) else scoped_query(Evidence, community_id).filter_by(case_number=_case_public_id(case)).all()
     arrest = scoped_query(Arrest, community_id).filter_by(arrest_id=case.linked_arrest_id or case.arrest_id).first() if (case.linked_arrest_id or case.arrest_id) else None
-    warrant = scoped_query(Warrant, community_id).filter_by(warrant_id=case.linked_warrant_id).first() if case.linked_warrant_id else None
+    warrant = _find_warrant_for_cad(community_id, case.linked_warrant_id) if case.linked_warrant_id else None
     civilians = scoped_query(Civilian, community_id).filter(Civilian.civilian_id.in_(_split_csv(case.involved_civilians or case.defendant_civilian_id))).all() if _split_csv(case.involved_civilians or case.defendant_civilian_id) else []
     packet = {
         'case_summary': _case_to_dict(case),
@@ -8581,7 +8611,7 @@ def community_admin_overview():
             'officers': sum(1 for role in roles if role in {'Police', 'Officer', 'LEO'}),
             'dispatchers': sum(1 for role in roles if role in {'Dispatch', 'Dispatcher'}),
             'civilians': count(lambda: Civilian.query.filter_by(community_id=community.community_id).count()),
-            'active_warrants': count(lambda: Warrant.query.filter_by(community_id=community.community_id, warrant_status='Active').count()),
+            'active_warrants': count(lambda: Warrant.query.filter(Warrant.community_id == community.community_id, or_(Warrant.status == 'Active', Warrant.warrant_status == 'Active')).count()),
             'open_reports': count(lambda: Incident.query.filter_by(community_id=community.community_id, status='Open').count()),
             'pending_applications': count(lambda: Application.query.filter_by(community_id=community.community_id, status='Pending').count()),
             'active_invites': count(lambda: CommunityInvite.query.filter_by(community_id=community.community_id, active=True).count()),
@@ -9185,6 +9215,14 @@ def _validate_warrant_payload(payload):
     return errors
 
 
+def generate_global_warrant_id():
+    for _ in range(100):
+        candidate = f"WRT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4).upper()}"
+        if not Warrant.query.filter_by(warrant_id=candidate).first():
+            return candidate
+    raise RuntimeError('Unable to generate unique warrant ID')
+
+
 def generate_warrant_number(community_id, warrant_type):
     prefix = TYPE_PREFIXES.get(warrant_type, 'WAR')
     date_part = datetime.utcnow().strftime('%Y%m%d')
@@ -9202,8 +9240,8 @@ def _ensure_warrant_identity(warrant, community_id):
         warrant.warrant_type = 'Arrest Warrant'
     if not getattr(warrant, 'warrant_number', None):
         warrant.warrant_number = generate_warrant_number(community_id, warrant.warrant_type or 'Arrest Warrant')
-    if not getattr(warrant, 'status', None):
-        warrant.status = getattr(warrant, 'warrant_status', None) or 'Active'
+    if not getattr(warrant, 'status', None) or not getattr(warrant, 'warrant_status', None):
+        _set_warrant_status(warrant, getattr(warrant, 'status', None) or getattr(warrant, 'warrant_status', None) or 'Active')
     return warrant
 
 
@@ -9227,8 +9265,7 @@ def _apply_warrant_payload(warrant, payload):
     warrant.warrant_issuer = payload.get('issuing_agency') or warrant.warrant_issuer or ''
     warrant.warrant_notes = payload.get('probable_cause') or warrant.warrant_notes or ''
     warrant.justification = payload.get('probable_cause') or warrant.justification or ''
-    warrant.warrant_status = payload.get('status') or warrant.warrant_status or 'Active'
-    warrant.updated_at = datetime.utcnow()
+    _set_warrant_status(warrant, payload.get('status') or warrant.status or warrant.warrant_status or 'Active')
 
 
 @app.route('/api/cad/warrants', methods=['GET'])
@@ -9239,9 +9276,9 @@ def cad_warrants_list():
     warrants = scoped_query(Warrant, community_id).order_by(Warrant.created_at.desc()).all()
     changed = False
     for warrant in warrants:
-        before = (getattr(warrant, 'warrant_type', None), getattr(warrant, 'warrant_number', None), getattr(warrant, 'status', None))
+        before = (getattr(warrant, 'warrant_type', None), getattr(warrant, 'warrant_number', None), getattr(warrant, 'status', None), getattr(warrant, 'warrant_status', None))
         _ensure_warrant_identity(warrant, community_id)
-        changed = changed or before != (warrant.warrant_type, warrant.warrant_number, warrant.status)
+        changed = changed or before != (warrant.warrant_type, warrant.warrant_number, warrant.status, warrant.warrant_status)
     if changed:
         db.session.commit()
     return jsonify({'success': True, 'warrants': [warrant_to_dict(w) for w in warrants]})
@@ -9261,9 +9298,7 @@ def cad_warrants_create():
     warrant_number = payload.get('warrant_number') or generate_warrant_number(community_id, warrant_type)
     while scoped_query(Warrant, community_id).filter_by(warrant_number=warrant_number).first():
         warrant_number = generate_warrant_number(community_id, warrant_type)
-    warrant_id = _payload_get(data, 'warrant_id', 'id') or warrant_number
-    if Warrant.query.filter_by(warrant_id=warrant_id).first():
-        warrant_id = f'{warrant_number}-{secrets.token_hex(2).upper()}'
+    warrant_id = generate_global_warrant_id()
     warrant = Warrant(
         community_id=community_id,
         warrant_id=warrant_id,
@@ -9303,9 +9338,7 @@ def cad_warrant_status(warrant_id):
     new_status = _payload_get(data, 'status', 'warrantStatus')
     if not new_status:
         return _cad_json_error('status is required', 400)
-    warrant.status = new_status
-    warrant.warrant_status = new_status
-    warrant.updated_at = datetime.utcnow()
+    _set_warrant_status(warrant, new_status)
     _cad_audit('warrant_status_updated', community_id, warrant.warrant_id, {'warrant_id': warrant.warrant_id, 'status': new_status})
     db.session.commit()
     return jsonify({'success': True, 'warrant': warrant_to_dict(warrant)})
