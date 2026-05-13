@@ -378,136 +378,43 @@ limiter = Limiter(
 cache.init_app(app)
 
 
-def _is_production_environment():
-    """Return True when the app is running in a production environment."""
-    return (os.environ.get('FLASK_ENV') or os.environ.get('APP_ENV') or '').strip().lower() == 'production'
-
-
-def _add_unique_origin(origins, seen, origin):
-    origin = (origin or '').strip().rstrip('/')
-    if origin and origin not in seen:
-        origins.append(origin)
-        seen.add(origin)
-
-
-def _is_local_hostname(hostname):
-    value = (hostname or '').strip().lower()
-    return value in {'localhost', '127.0.0.1', '::1'} or value.startswith('127.')
-
-
-def _should_add_www_variant(hostname):
-    """Add www only for apex custom domains, not local/hosted subdomains."""
-    value = (hostname or '').strip().lower().strip('[]')
-    if not value or value.startswith('www.') or _is_local_hostname(value):
-        return False
-    if value.endswith('.railway.app'):
-        return False
-    if ':' in value:
-        return False
-    # Only apex domains like example.com or gtavcad.app should get www.
-    return value.count('.') == 1
-
-
-def _normalize_socketio_origin(value):
-    """Normalize a configured public origin/domain for Socket.IO CORS."""
-    raw_value = (value or '').strip().rstrip('/')
-    if not raw_value:
-        return None
-    if raw_value == '*':
-        return '*'
-    if raw_value.startswith(('http://', 'https://')):
-        return raw_value
-    return f'https://{raw_value}'
-
-
-def _add_socketio_origin_with_variants(origins, seen, value):
-    origin = _normalize_socketio_origin(value)
-    if not origin:
-        return
-    _add_unique_origin(origins, seen, origin)
-
-    parsed = urlsplit(origin)
-
-    hostname = parsed.hostname or ''
-    if not _should_add_www_variant(hostname):
-        return
-
-    port = f':{parsed.port}' if parsed.port else ''
-    www_origin = urlunsplit((parsed.scheme, f'www.{hostname}{port}', parsed.path, parsed.query, parsed.fragment))
-    _add_unique_origin(origins, seen, www_origin.rstrip('/'))
-
-
-def _configured_socketio_domain_values():
-    """Collect public domain/base-url settings that can safely seed CORS origins."""
-    values = []
-    platform_domain_env = (os.environ.get('PLATFORM_DOMAIN') or '').strip()
-    if platform_domain_env:
-        values.append(platform_domain_env)
-    elif PLATFORM_DOMAIN:
-        values.append(PLATFORM_DOMAIN)
-
-    for key in ('PUBLIC_BASE_URL', 'APP_BASE_URL', 'BASE_URL', 'RAILWAY_PUBLIC_DOMAIN'):
-        value = (os.environ.get(key) or '').strip()
-        if value:
-            values.append(value)
-    return values
-
-
-def get_socketio_allowed_origins():
+def _parse_socketio_allowed_origins():
     """Return a Socket.IO CORS allowlist without production wildcards."""
-    is_production = _is_production_environment()
+    env_name = (os.environ.get('FLASK_ENV') or os.environ.get('APP_ENV') or '').strip().lower()
+    is_production = env_name == 'production'
     configured = os.environ.get('SOCKETIO_ALLOWED_ORIGINS')
+    production_defaults = ['https://gtavcad.app', 'https://www.gtavcad.app']
     development_defaults = [
         'http://localhost:5000',
         'http://127.0.0.1:5000',
         'http://localhost:3000',
         'http://127.0.0.1:3000',
     ]
+    raw_origins = configured.split(',') if configured else (production_defaults if is_production else development_defaults)
     origins = []
     seen = set()
-
-    if configured is not None:
-        for raw_origin in configured.split(','):
-            origin = _normalize_socketio_origin(raw_origin)
-            if not origin:
-                continue
-            if origin == '*':
-                if is_production:
-                    logger.warning('Ignoring wildcard Socket.IO CORS origin in production')
-                    continue
-                _add_unique_origin(origins, seen, origin)
-                continue
-            _add_unique_origin(origins, seen, origin)
-
-        if origins:
-            logger.info('Socket.IO CORS allowlist configured count=%s origins=%s', len(origins), origins)
-            return origins
-
-    if is_production:
-        for value in _configured_socketio_domain_values():
-            _add_socketio_origin_with_variants(origins, seen, value)
-        if not origins:
-            logger.warning('No production Socket.IO origins configured; set SOCKETIO_ALLOWED_ORIGINS')
-            if PLATFORM_DOMAIN:
-                _add_socketio_origin_with_variants(origins, seen, PLATFORM_DOMAIN)
-    else:
-        for origin in development_defaults:
-            _add_unique_origin(origins, seen, origin)
-        for value in _configured_socketio_domain_values():
-            _add_socketio_origin_with_variants(origins, seen, value)
-
+    for raw_origin in raw_origins:
+        origin = (raw_origin or '').strip().rstrip('/')
+        if not origin:
+            continue
+        if origin == '*':
+            logger.warning('Ignoring wildcard Socket.IO CORS origin')
+            continue
+        if origin not in seen:
+            origins.append(origin)
+            seen.add(origin)
+    if not origins:
+        origins = production_defaults if is_production else development_defaults
     logger.info('Socket.IO CORS allowlist configured count=%s origins=%s', len(origins), origins)
     return origins
 
-
-socketio_allowed_origins = get_socketio_allowed_origins()
 
 # Initialize Flask-Migrate
 migrate = Migrate(app, db)
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins=socketio_allowed_origins,
+    cors_allowed_origins=_parse_socketio_allowed_origins(),
     async_mode=os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet'),
     ping_interval=25,
     ping_timeout=60,

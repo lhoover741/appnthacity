@@ -147,6 +147,15 @@ def initialize_community_config(community):
         create_config_if_missing(key, community.community_id, value, description)
 
 
+def is_persisted_platform_owner(user_id):
+    """Return True only when the persisted user record is PlatformOwner."""
+    user = User.query.get(user_id) if user_id else None
+    return bool(user and (
+        getattr(user, 'role', None) == 'PlatformOwner'
+        or getattr(user, 'platform_role', None) == 'PlatformOwner'
+    ))
+
+
 def set_selected_community_session(community, membership=None):
     """Persist the active community and membership role in the current browser session."""
     session['selected_community_id'] = community.community_id
