@@ -9151,7 +9151,9 @@ def cad_ai_court_summary():
 
 
 _EVIDENCE_AI_METADATA_KEYS = {
+    # Parent-scope IDs are safe metadata and should survive the sanitizer.
     'case_id', 'evidence_id', 'attachment_id', 'parent_id', 'parent_type',
+    'arrest_id', 'warrant_id', 'court_packet_id',
     'title', 'name', 'display_name', 'file_name', 'filename', 'original_filename',
     'evidence_type', 'type', 'attachment_type', 'source_type', 'content_type',
     'mime_type', 'size_bytes', 'file_size', 'description', 'evidence_description',
