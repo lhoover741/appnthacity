@@ -1659,56 +1659,103 @@
     });
 
     /* ── AI WARRANT ── */
+    function fillWarrantField(name, value, options = {}) {
+      const overwrite = options.overwrite === true;
+      const input = document.querySelector(`#warrant-form [name="${name}"]`);
+      if (!input || value === undefined || value === null || String(value).trim() === '') return false;
+      if (!overwrite && String(input.value || '').trim() !== '') return false;
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+
     document.getElementById('ai-warrant-btn').addEventListener('click', async function () {
       const form = document.getElementById('warrant-form');
       const statusEl = document.getElementById('ai-warrant-status');
-      const notesEl = document.getElementById('warrantNotes');
-      const expirationEl = document.getElementById('warrantExpiration');
-      const statusSelect = document.getElementById('warrantStatus');
       const btnIcon = document.getElementById('ai-warrant-icon');
-
-      const warrantName = form.querySelector('[name="subject_name"]').value.trim();
-      const warrantCharges = form.querySelector('[name="charges_or_basis"]').value.trim();
-      const warrantIssuer = form.querySelector('[name="issuing_agency"]').value.trim();
-
-      if (!warrantName || !warrantCharges) {
-        statusEl.style.display = 'block';
-        statusEl.style.color = 'var(--accent)';
-        statusEl.textContent = 'Fill in suspect name and charges first.';
-        return;
-      }
+      const warrantFields = [
+        'warrant_type',
+        'subject_name',
+        'subject_dob',
+        'subject_address',
+        'charges_or_basis',
+        'issuing_agency',
+        'judge_or_authority',
+        'probable_cause',
+        'search_location',
+        'items_to_seize',
+        'court_case_number',
+        'bench_failure_reason',
+        'administrative_basis',
+        'inspection_scope',
+        'originating_jurisdiction',
+        'extradition_location',
+        'fugitive_last_known_location',
+        'alias_names',
+        'execution_instructions',
+        'expiration_date',
+        'status'
+      ];
+      const payload = {};
+      warrantFields.forEach((name) => {
+        payload[name] = form.querySelector(`[name="${name}"]`)?.value?.trim() || '';
+      });
+      payload.warrantName = payload.subject_name;
+      payload.warrantCharges = payload.charges_or_basis;
+      payload.warrantIssuer = payload.issuing_agency;
+      payload.warrantNotes = payload.probable_cause;
+      payload.warrantExpiration = payload.expiration_date;
+      payload.warrantStatus = payload.status;
 
       btnIcon.textContent = '⏳';
       this.disabled = true;
       statusEl.style.display = 'block';
       statusEl.style.color = 'var(--muted)';
-      statusEl.textContent = 'Drafting warrant justification…';
+      statusEl.textContent = 'Drafting warrant and filling blank fields…';
 
       try {
         const res = await fetch('/api/ai/warrant', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ warrantName, warrantCharges, warrantIssuer, warrantNotes: notesEl.value.trim() })
+          body: JSON.stringify(payload)
         });
         const json = await res.json();
         if (json.success) {
           const filled = [];
-          notesEl.value = json.justification;
-          filled.push('justification notes');
+          const fieldLabels = {
+            warrant_type: 'warrant type',
+            subject_name: 'subject name',
+            subject_dob: 'subject DOB',
+            subject_address: 'subject address',
+            charges_or_basis: 'charges / basis',
+            issuing_agency: 'issuing agency',
+            judge_or_authority: 'judge / authority',
+            probable_cause: 'probable cause',
+            search_location: 'search location',
+            items_to_seize: 'items to seize',
+            court_case_number: 'court case number',
+            bench_failure_reason: 'bench failure reason',
+            administrative_basis: 'administrative basis',
+            inspection_scope: 'inspection scope',
+            originating_jurisdiction: 'originating jurisdiction',
+            extradition_location: 'extradition location',
+            fugitive_last_known_location: 'last known location',
+            alias_names: 'alias names',
+            execution_instructions: 'execution instructions',
+            expiration_date: 'expiration date',
+            status: 'status'
+          };
 
-          if (json.suggestedExpiration && !expirationEl.value) {
-            expirationEl.value = json.suggestedExpiration;
-            filled.push('expiration date (30 days)');
-          }
-          if (json.suggestedStatus) {
-            for (let opt of statusSelect.options) {
-              if (opt.value === json.suggestedStatus) { statusSelect.value = json.suggestedStatus; break; }
-            }
-            filled.push('status → Active');
-          }
+          warrantFields.forEach((name) => {
+            const value = json[name] ?? (name === 'probable_cause' ? json.justification : undefined) ?? (name === 'expiration_date' ? json.suggestedExpiration : undefined) ?? (name === 'status' ? json.suggestedStatus : undefined);
+            if (fillWarrantField(name, value)) filled.push(fieldLabels[name] || name);
+          });
 
           statusEl.style.color = '#4caf82';
-          statusEl.textContent = `✓ Auto-filled: ${filled.join(', ')} — review before submitting.`;
+          statusEl.textContent = filled.length
+            ? `✓ Auto-filled blank fields: ${filled.join(', ')} — user-entered values were preserved. Review before submitting.`
+            : '✓ AI draft complete. Existing user-entered values were preserved; no blank fields needed updating.';
         } else {
           statusEl.style.color = 'var(--accent)';
           statusEl.textContent = json.error || 'Generation failed. Try again.';

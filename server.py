@@ -4079,6 +4079,187 @@ Respond only with the JSON object. No markdown, no extra text."""
         return jsonify({'success': False, 'error': 'Triage failed. Try again.'}), 500
 
 
+WARRANT_AI_FORM_FIELDS = [
+    'warrant_type',
+    'subject_name',
+    'subject_dob',
+    'subject_address',
+    'charges_or_basis',
+    'issuing_agency',
+    'judge_or_authority',
+    'probable_cause',
+    'search_location',
+    'items_to_seize',
+    'court_case_number',
+    'bench_failure_reason',
+    'administrative_basis',
+    'inspection_scope',
+    'originating_jurisdiction',
+    'extradition_location',
+    'fugitive_last_known_location',
+    'alias_names',
+    'execution_instructions',
+    'expiration_date',
+    'status',
+]
+
+WARRANT_AI_LEGACY_ALIASES = {
+    'warrantName': 'subject_name',
+    'warrantCharges': 'charges_or_basis',
+    'warrantIssuer': 'issuing_agency',
+    'warrantNotes': 'probable_cause',
+    'warrantExpiration': 'expiration_date',
+    'warrantStatus': 'status',
+}
+
+
+def _clean_warrant_ai_text(value, max_len=1600):
+    if value is None:
+        return ''
+    cleaned = ' '.join(str(value).replace('\x00', '').split())
+    return cleaned[:max_len]
+
+
+def _normalize_warrant_ai_payload(data):
+    """Copy only text warrant form fields into the AI context."""
+    normalized = {}
+    for field in WARRANT_AI_FORM_FIELDS:
+        normalized[field] = _clean_warrant_ai_text(data.get(field))
+    for alias, canonical in WARRANT_AI_LEGACY_ALIASES.items():
+        alias_value = _clean_warrant_ai_text(data.get(alias))
+        if alias_value and not normalized.get(canonical):
+            normalized[canonical] = alias_value
+        if alias_value:
+            normalized[alias] = alias_value
+    if not normalized.get('warrant_type'):
+        normalized['warrant_type'] = 'Arrest Warrant'
+    if normalized.get('warrant_type') not in WARRANT_TYPES:
+        normalized['warrant_type'] = 'Arrest Warrant'
+    return normalized
+
+
+def _warrant_ai_backfill_values(form_values):
+    warrant_type = form_values.get('warrant_type') or 'Arrest Warrant'
+    subject = form_values.get('subject_name') or 'the named subject'
+    charges = form_values.get('charges_or_basis') or 'pending criminal violations under San Andreas law'
+    agency = form_values.get('issuing_agency') or 'LSPD'
+    judge = form_values.get('judge_or_authority') or 'San Andreas court authority'
+    address = form_values.get('subject_address') or 'a location associated with the subject in Los Santos'
+    search_location = form_values.get('search_location') or address or 'the listed Los Santos location associated with the subject'
+    expires = form_values.get('expiration_date') or (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+
+    common = {
+        'warrant_type': warrant_type,
+        'subject_name': subject if subject != 'the named subject' else '',
+        'subject_dob': form_values.get('subject_dob', ''),
+        'subject_address': form_values.get('subject_address', ''),
+        'charges_or_basis': charges,
+        'issuing_agency': agency,
+        'judge_or_authority': judge,
+        'probable_cause': form_values.get('probable_cause', ''),
+        'search_location': form_values.get('search_location', ''),
+        'items_to_seize': form_values.get('items_to_seize', ''),
+        'court_case_number': form_values.get('court_case_number', ''),
+        'bench_failure_reason': form_values.get('bench_failure_reason', ''),
+        'administrative_basis': form_values.get('administrative_basis', ''),
+        'inspection_scope': form_values.get('inspection_scope', ''),
+        'originating_jurisdiction': form_values.get('originating_jurisdiction', ''),
+        'extradition_location': form_values.get('extradition_location', ''),
+        'fugitive_last_known_location': form_values.get('fugitive_last_known_location', ''),
+        'alias_names': form_values.get('alias_names', ''),
+        'execution_instructions': form_values.get('execution_instructions', ''),
+        'expiration_date': expires,
+        'status': form_values.get('status') or 'Active',
+        'summary': '',
+    }
+
+    if warrant_type == 'Search Warrant':
+        common.update({
+            'search_location': search_location,
+            'items_to_seize': form_values.get('items_to_seize') or 'weapons, stolen property, clothing matching suspect descriptions, communications devices, records, and other evidence connected to the listed offense',
+            'probable_cause': form_values.get('probable_cause') or f'Based on officer observations, witness statements, dispatch records, and investigative leads in Los Santos, {subject} is believed to be connected to {charges}. A search of {search_location} is requested because evidence related to the offense is reasonably believed to be located there, including property, weapons, communications, clothing, and records that may identify participants and preserve the facts for court review.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Execute with appropriate officer-safety precautions, secure occupants before the search, photograph and log evidence in place when practical, preserve chain of custody, and limit the search to areas where the authorized items may reasonably be located.',
+        })
+    elif warrant_type == 'Bench Warrant':
+        common.update({
+            'court_case_number': form_values.get('court_case_number') or f'SA-CR-{datetime.now().strftime("%Y%m%d")}-{random.randint(100, 999)}',
+            'bench_failure_reason': form_values.get('bench_failure_reason') or 'Failure to appear for a scheduled court proceeding or violation of a court-ordered condition after notice was provided.',
+            'probable_cause': form_values.get('probable_cause') or f'Court records indicate {subject} was required to appear or comply with a lawful court order before {judge}. The subject failed to appear or otherwise violated that order, creating sufficient basis for a bench warrant so the subject can be brought before the court for processing.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Take the subject into custody on confirmation of identity, notify the issuing court, and transport or book the subject for court processing according to agency policy.',
+        })
+    elif warrant_type == 'Administrative Warrant':
+        common.update({
+            'administrative_basis': form_values.get('administrative_basis') or f'Administrative enforcement inspection requested by {agency} for documented compliance concerns.',
+            'inspection_scope': form_values.get('inspection_scope') or 'Inspect only the listed premises, records, equipment, or areas reasonably tied to the administrative compliance basis.',
+            'probable_cause': form_values.get('probable_cause') or f'{agency} has documented an administrative compliance basis requiring a limited inspection involving {subject}. The request is limited in scope and intended to verify compliance, document conditions, and preserve relevant records without exceeding the authorized inspection purpose.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Conduct a limited administrative inspection within the authorized scope, document observations, avoid unrelated searches, and refer any criminal evidence through proper warrant channels.',
+        })
+    elif warrant_type == 'Extradition Warrant':
+        common.update({
+            'originating_jurisdiction': form_values.get('originating_jurisdiction') or 'San Andreas originating jurisdiction',
+            'extradition_location': form_values.get('extradition_location') or 'Los Santos / San Andreas custody transfer point',
+            'probable_cause': form_values.get('probable_cause') or f'{subject} is wanted by the originating jurisdiction for {charges}. Records support lawful custody and transfer so the subject can answer the pending matter while identity, warrant status, and transport requirements are confirmed.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Confirm identity and warrant validity, coordinate with the originating jurisdiction, document custody transfer, and maintain secure transport until handoff is complete.',
+        })
+    elif warrant_type == 'Fugitive Warrant':
+        common.update({
+            'fugitive_last_known_location': form_values.get('fugitive_last_known_location') or 'last known in the Los Santos area',
+            'probable_cause': form_values.get('probable_cause') or f'{subject} is wanted in connection with {charges} and is believed to be avoiding lawful detention or court processing. Information places the subject at or near {common["fugitive_last_known_location"]}, supporting fugitive status and the need for coordinated apprehension.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Use caution during contact, verify identity and warrant status, notify the issuing agency upon detention, and coordinate transport or transfer according to policy.',
+        })
+    elif warrant_type == 'Alias Warrant':
+        common.update({
+            'alias_names': form_values.get('alias_names') or (f'{subject} / unknown alias identifiers' if subject != 'the named subject' else 'Unknown aliases used to conceal identity'),
+            'probable_cause': form_values.get('probable_cause') or f'Investigative records indicate the subject may be using alternate names or identifiers to avoid detection while connected to {charges}. The alias information requires verification so officers can confirm identity, link records accurately, and prevent mistaken release or misidentification.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Verify identity through multiple identifiers, document all aliases used, confirm the warrant before enforcement action, and notify the issuing agency of any identity conflicts.',
+        })
+    else:
+        common.update({
+            'probable_cause': form_values.get('probable_cause') or f'Based on officer observations, witness statements, dispatch records, and investigative information, {subject} is believed to have committed or be connected to {charges} in San Andreas. The facts support issuance of an arrest warrant so officers may lawfully locate, identify, and bring the subject before the appropriate authority.',
+            'execution_instructions': form_values.get('execution_instructions') or 'Confirm the subject identity and warrant status before arrest, use standard officer-safety procedures, search incident to arrest as authorized, and transport the subject for booking or court processing.',
+        })
+
+    common['summary'] = form_values.get('summary') or f'{warrant_type} draft for {subject} based on {charges}.'
+    return common
+
+
+def _merge_warrant_ai_output(form_values, ai_json):
+    merged = _warrant_ai_backfill_values(form_values)
+    if isinstance(ai_json, dict):
+        for field in WARRANT_AI_FORM_FIELDS + ['summary']:
+            candidate = _clean_warrant_ai_text(ai_json.get(field), max_len=3000)
+            if candidate:
+                merged[field] = candidate
+
+    # User-entered form values are facts and must not be randomly replaced.
+    for field in WARRANT_AI_FORM_FIELDS:
+        if form_values.get(field):
+            merged[field] = form_values[field]
+
+    if not merged.get('status'):
+        merged['status'] = 'Active'
+    if not merged.get('expiration_date'):
+        merged['expiration_date'] = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+
+    # Re-run deterministic type-specific backfill after preserving user facts so required
+    # type-specific blanks are filled even when the AI omits them.
+    backfilled = _warrant_ai_backfill_values(merged)
+    for field, value in backfilled.items():
+        if not merged.get(field) and value:
+            merged[field] = value
+
+    merged['warrantName'] = merged.get('subject_name', '')
+    merged['warrantCharges'] = merged.get('charges_or_basis', '')
+    merged['warrantIssuer'] = merged.get('issuing_agency', '')
+    merged['warrantNotes'] = merged.get('probable_cause', '')
+    merged['warrantExpiration'] = merged.get('expiration_date', '')
+    merged['warrantStatus'] = merged.get('status', 'Active')
+    merged['justification'] = merged.get('probable_cause', '')
+    merged['suggestedExpiration'] = merged.get('expiration_date', '')
+    merged['suggestedStatus'] = merged.get('status', 'Active')
+    return merged
+
+
 @police_required
 @app.route('/api/ai/warrant', methods=['POST'])
 def ai_warrant():
@@ -4087,29 +4268,41 @@ def ai_warrant():
         return ai_error
     api_key = ai_runtime['api_key']
 
-    data = request.get_json(silent=True) or {}
-    suspect = data.get('warrantName', 'Unknown')
-    charges = data.get('warrantCharges', 'Unknown')
-    issuer = data.get('warrantIssuer', 'Unknown')
-    existing_notes = data.get('warrantNotes', '')
+    form_values = _normalize_warrant_ai_payload(request.get_json(silent=True) or {})
+    safe_context = {field: form_values.get(field, '') for field in WARRANT_AI_FORM_FIELDS}
+    for alias in WARRANT_AI_LEGACY_ALIASES:
+        if form_values.get(alias):
+            safe_context[alias] = form_values[alias]
 
-    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) system and report-writing assistant for GTAVCAD, a GTA V roleplay server set in Los Santos.
-LOCATION RULES (CRITICAL): ALL locations must reference GTA V map areas — Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, etc.
-Write in professional law enforcement language. Ground all references in Los Santos / San Andreas. No real-world city names."""
+    expected_json = {field: '' for field in WARRANT_AI_FORM_FIELDS}
+    expected_json['status'] = 'Active'
+    expected_json['summary'] = ''
 
-    user_msg = f"""Generate an arrest warrant justification. Respond with ONLY a valid JSON object with exactly two keys:
-- "justification": a formal probable-cause warrant justification (80-130 words) written in official LSPD legal language. Reference GTA V locations where relevant. Include probable cause, evidence basis, and the threat to public safety in Los Santos.
-- "suggestedStatus": always return "Active"
+    system_msg = """You are an AI-powered Computer Aided Dispatch (CAD) warrant drafting assistant for GTAVCAD, a GTA V roleplay server set in Los Santos.
+Use only the text form fields provided by the officer as facts. Do not claim you viewed PDFs, evidence files, storage paths, local file paths, binary uploads, or download URLs. If evidence is not described in text, refer only to officer-entered statements, dispatch records, witness statements, surveillance, records checks, or investigative leads as appropriate.
+Preserve every non-empty user-filled value exactly as a fact. Complete blank warrant fields with realistic, type-appropriate Los Santos / San Andreas roleplay details. Avoid contradictions, generic filler, and real-world city names.
+LOCATION RULES: Use GTA V / San Andreas areas such as Davis, Strawberry, Mission Row, Vespucci, Del Perro, Mirror Park, Route 68, Senora Freeway, Legion Square, Pillbox Hill, Maze Bank Arena, Paleto Bay, Sandy Shores, and Blaine County."""
 
-Suspect: {suspect}
-Charges: {charges}
-Issued By: {issuer}
-Additional Notes: {existing_notes if existing_notes else 'None'}
+    user_msg = f"""Draft and autofill a {safe_context.get('warrant_type') or 'Arrest Warrant'} form.
 
-Respond only with the JSON object. No markdown, no extra text."""
+Current officer-entered form values (non-empty values are facts to preserve; blank values should be completed):
+{json.dumps(safe_context, ensure_ascii=False, indent=2)}
 
-    from datetime import timedelta
-    expiration_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+Return ONLY one valid JSON object with these exact canonical keys plus the legacy aliases listed below:
+{json.dumps(expected_json, ensure_ascii=False, indent=2)}
+
+Also include legacy aliases: warrantName, warrantCharges, warrantIssuer, warrantNotes, warrantExpiration, warrantStatus.
+
+Type-specific completion rules:
+- Search Warrant: search_location and items_to_seize must not be blank; probable_cause must explain why the search is justified; execution_instructions should mention safe execution, officer safety, and evidence preservation.
+- Arrest Warrant: charges_or_basis must be clear; probable_cause must describe facts supporting arrest; execution_instructions should describe arrest/service instructions.
+- Bench Warrant: court_case_number must be generated if blank; bench_failure_reason must explain failure to appear or court violation; judge_or_authority should be filled if blank; execution_instructions should mention court processing.
+- Administrative Warrant: administrative_basis and inspection_scope must be filled; issuing_agency should be preserved or filled; execution_instructions should describe inspection scope.
+- Extradition Warrant: originating_jurisdiction and extradition_location must be filled; charges_or_basis must be clear; execution_instructions should mention custody transfer.
+- Fugitive Warrant: fugitive_last_known_location must be filled; charges_or_basis must be clear; probable_cause must support fugitive status; execution_instructions should mention caution and contacting the issuing agency.
+- Alias Warrant: alias_names must be filled; probable_cause must include identity/alias reasoning; charges_or_basis must be clear; execution_instructions should mention identity verification.
+
+If expiration_date is blank, use {(datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')}. If status is blank, use Active. Keep probable_cause specific, court-reviewable, and based on the supplied fields."""
 
     try:
         payload = json.dumps({
@@ -4118,8 +4311,8 @@ Respond only with the JSON object. No markdown, no extra text."""
                 {'role': 'system', 'content': system_msg},
                 {'role': 'user', 'content': user_msg}
             ],
-            'max_tokens': 300,
-            'temperature': 0.7,
+            'max_tokens': 1200,
+            'temperature': 0.35,
             'response_format': {'type': 'json_object'}
         }).encode('utf-8')
 
@@ -4137,12 +4330,8 @@ Respond only with the JSON object. No markdown, no extra text."""
         with urllib.request.urlopen(req, timeout=20) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             ai_json = json.loads(result['choices'][0]['message']['content'])
-            return jsonify({
-                'success': True,
-                'justification': ai_json.get('justification', ''),
-                'suggestedStatus': ai_json.get('suggestedStatus', 'Active'),
-                'suggestedExpiration': expiration_date
-            })
+            response_payload = _merge_warrant_ai_output(form_values, ai_json)
+            return jsonify({'success': True, **response_payload})
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='replace')
         logger.error(f'OpenRouter warrant error: {e.code} {body}')
