@@ -113,6 +113,23 @@ def _safe_json_error(message, code, status=400, details=None):
     }), status
 
 
+def parse_bool(value, default=False):
+    """Strictly parse booleans from JSON/form payload values."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {'true', '1', 'yes', 'y', 'on'}:
+            return True
+        if lowered in {'false', '0', 'no', 'n', 'off', ''}:
+            return False
+    return default
+
+
 
 def get_platform_ai_config():
     return get_ai_config()
@@ -546,22 +563,36 @@ def community_room_name(community_slug):
     return f"community:{community_slug}"
 
 
+def get_community_by_any_id(value):
+    """Resolve a community by tenant community_id first, then legacy numeric row id."""
+    if not value:
+        return None
+    community = Community.query.filter_by(community_id=value).first()
+    if community:
+        return community
+    try:
+        numeric_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return Community.query.filter_by(id=numeric_id).first()
+
+
 def get_user_room_context():
     user_id = session.get('user_id')
     community_id = get_current_community_id()
     if not user_id or not community_id:
         return None, None, None
-    community = Community.query.filter_by(id=community_id).first()
+    community = get_community_by_any_id(community_id)
     if not community:
         return None, None, None
-    return user_id, community_id, community_room_name(community.slug)
+    return user_id, community.community_id, community_room_name(community.slug)
 
 
 def emit_community_event(event_name, payload, community_id=None):
     target_community_id = community_id or get_current_community_id()
     if not target_community_id:
         return
-    community = Community.query.filter_by(id=target_community_id).first()
+    community = get_community_by_any_id(target_community_id)
     if not community:
         return
     socketio.emit(event_name, payload, room=community_room_name(community.slug))
@@ -574,7 +605,7 @@ def socket_connect(auth=None):
     if not user_id or not community_id or not room_name:
         logger.warning('Socket auth failed: missing user/session context')
         return False
-    membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id, is_active=True).first()
+    membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id, status='Active').first()
     if not membership:
         logger.warning(f'Socket auth failed: user {user_id} is not active in community {community_id}')
         return False
@@ -623,6 +654,9 @@ def socket_join_community(data):
         user_id, community_id, room_name = get_user_room_context()
         requested_slug = (data or {}).get('community_slug', '')
         if not user_id or not room_name:
+            return emit('socket:error', {'error': 'Unauthorized'})
+        membership = CommunityMember.query.filter_by(user_id=user_id, community_id=community_id, status='Active').first()
+        if not membership:
             return emit('socket:error', {'error': 'Unauthorized'})
         if room_name != community_room_name(requested_slug):
             logger.warning(f"Tenant spoof attempt by user {user_id}: requested_slug={requested_slug}")
@@ -8093,7 +8127,10 @@ def _community_admin_apply_cad_permission_attrs(membership):
             return membership
         for key in ('can_access_police_cad', 'can_dispatch', 'can_manage_warrants', 'can_manage_evidence', 'can_manage_arrests', 'rank'):
             if key in data:
-                setattr(membership, key, data.get(key))
+                if key == 'rank':
+                    setattr(membership, key, data.get(key))
+                else:
+                    setattr(membership, key, parse_bool(data.get(key)))
     return membership
 
 
@@ -8279,7 +8316,7 @@ def _community_admin_member_dict(membership, user=None):
 def _community_admin_permission_dict(membership, user=None):
     user = user or User.query.get(membership.user_id)
     _community_admin_apply_cad_permission_attrs(membership)
-    can_access = bool(getattr(membership, 'can_access_police_cad', False)) or user_can_access_police_cad(False, membership.role, user=user, membership=membership)
+    can_access = parse_bool(getattr(membership, 'can_access_police_cad', False)) or user_can_access_police_cad(False, membership.role, user=user, membership=membership)
     return {
         'user_id': membership.user_id,
         'username': user.username if user else f'user-{membership.user_id}',
@@ -8288,10 +8325,10 @@ def _community_admin_permission_dict(membership, user=None):
         'department': membership.department,
         'rank': getattr(membership, 'rank', None) or '',
         'callsign': membership.callsign,
-        'can_dispatch': bool(getattr(membership, 'can_dispatch', False)),
-        'can_manage_warrants': bool(getattr(membership, 'can_manage_warrants', False)),
-        'can_manage_evidence': bool(getattr(membership, 'can_manage_evidence', False)),
-        'can_manage_arrests': bool(getattr(membership, 'can_manage_arrests', False)),
+        'can_dispatch': parse_bool(getattr(membership, 'can_dispatch', False)),
+        'can_manage_warrants': parse_bool(getattr(membership, 'can_manage_warrants', False)),
+        'can_manage_evidence': parse_bool(getattr(membership, 'can_manage_evidence', False)),
+        'can_manage_arrests': parse_bool(getattr(membership, 'can_manage_arrests', False)),
     }
 
 
@@ -8428,7 +8465,7 @@ def community_admin_overview():
         },
         'metrics': {
             'members': len(members),
-            'officers': sum(1 for role in roles if role in {'Police', 'Officer'}),
+            'officers': sum(1 for role in roles if role in {'Police', 'Officer', 'LEO'}),
             'dispatchers': sum(1 for role in roles if role in {'Dispatch', 'Dispatcher'}),
             'civilians': count(lambda: Civilian.query.filter_by(community_id=community.community_id).count()),
             'active_warrants': count(lambda: Warrant.query.filter_by(community_id=community.community_id, warrant_status='Active').count()),
@@ -8498,7 +8535,7 @@ def community_admin_member_create():
         return jsonify({'success': False, 'error': 'Only PlatformOwner or CommunityOwner can assign CommunityOwner'}), 403
     if status_value not in {'Active', 'Inactive', 'Suspended'}:
         return jsonify({'success': False, 'error': 'Invalid member status'}), 400
-    requested_cad_access = bool(data.get('can_access_police_cad'))
+    requested_cad_access = parse_bool(data.get('can_access_police_cad'))
     cad_eligible = role_is_cad_permission_eligible(role)
     if requested_cad_access and not cad_eligible:
         return jsonify({'success': False, 'error': 'Selected role is not eligible for Police CAD access'}), 400
@@ -8699,7 +8736,7 @@ def community_admin_cad_permission_update(user_id):
         return jsonify({'success': False, 'error': 'Member not found in this community'}), 404
     data = _community_admin_body()
     role = normalize_community_role(target.role)
-    requested_access = bool(data.get('can_access_police_cad'))
+    requested_access = parse_bool(data.get('can_access_police_cad'))
     if requested_access and not role_is_cad_permission_eligible(role):
         return jsonify({'success': False, 'error': 'Selected role is not eligible for Police CAD access'}), 400
     if not role_is_cad_permission_eligible(role):
@@ -8724,7 +8761,7 @@ def community_admin_cad_permission_update(user_id):
     user_perms = perms.get(str(user_id), {}) if isinstance(perms.get(str(user_id), {}), dict) else {}
     for key in ('can_access_police_cad', 'can_dispatch', 'can_manage_warrants', 'can_manage_evidence', 'can_manage_arrests'):
         if key in data:
-            user_perms[key] = bool(data.get(key))
+            user_perms[key] = parse_bool(data.get(key))
     user_perms['rank'] = (data.get('rank') or '').strip()
     perms[str(user_id)] = user_perms
     _community_admin_save_cad_permissions(community.community_id, perms)
