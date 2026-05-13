@@ -8689,6 +8689,16 @@ def _attachment_admin_decision():
     return platform_role == 'PlatformOwner' or role in {'communityowner', 'communityadmin', 'owner', 'admin', 'supervisor'}
 
 
+def _safe_external_evidence_url(value):
+    raw = (value or '').strip()
+    if not raw or len(raw) > 2048 or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        return None
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() not in {'http', 'https'} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, parsed.query, parsed.fragment))
+
+
 @app.route('/api/cad/evidence/attachments/config', methods=['GET'])
 def cad_evidence_attachment_config():
     community_id, error = _require_cad_community()
@@ -8726,9 +8736,9 @@ def cad_evidence_attachment_create():
         return _cad_json_error('Either file or external_url is required', 400)
 
     if external_url:
-        parsed = urlsplit(external_url)
-        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
-            return _cad_json_error('external_url must be a valid http or https URL', 400)
+        external_url = _safe_external_evidence_url(external_url)
+        if not external_url:
+            return _cad_json_error('external_url must be a valid http or https URL without embedded credentials or control characters', 400)
 
     storage_cfg = get_storage_config()
     attachment_id = f"ATT-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}"
