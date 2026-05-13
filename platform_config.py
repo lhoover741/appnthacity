@@ -3,7 +3,7 @@
 import os
 
 PLATFORM_NAME = 'GTAVCAD'
-PLATFORM_DOMAIN = 'gtavcad.app'
+PLATFORM_DOMAIN = os.getenv('PLATFORM_DOMAIN', 'gtavcad.app')
 PLATFORM_TAGLINE = 'Multi-Community RP/CAD Platform'
 PLATFORM_CTA = 'Create or Join a Community'
 

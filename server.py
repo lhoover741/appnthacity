@@ -8,6 +8,7 @@ import string
 import uuid
 import time
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
