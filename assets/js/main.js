@@ -1499,10 +1499,11 @@ function handleCivilianForm() {
       if (res.ok && data.success) {
         const record = data.civilian || { id: data.civilian_id, ...raw };
         renderCivilianPreview({ ...record, discord: raw.discord || '' });
-        showFormMessage(form, `✅ Civilian registered — ID: ${data.civilian_id}`);
-        showToast(`Civilian saved to database — ID: ${data.civilian_id}`, 'success');
-        await loadData();
+        const dashboardUrl = data.dashboard_url || getCivilianDashboardUrl(data.civilian_id);
+        showFormMessage(form, `✅ Civilian profile created. Opening Civilian Dashboard… <a class="button button-secondary" href="${escapeAttr(dashboardUrl)}">Open Civilian Dashboard</a>`);
+        showToast(`Civilian profile created.`, 'success');
         form.reset();
+        window.location.href = dashboardUrl;
       } else {
         showFormMessage(form, `❌ Error: ${data.error || 'Registration failed'}`, 'error');
       }
@@ -2013,6 +2014,130 @@ function getLocationData(location) {
   return locations[location];
 }
 
+
+function isCivilianDashboardPage() {
+  return document.body?.dataset.dashboardPage === 'civilian';
+}
+
+function getCivilianDashboardUrl(civilianId = '') {
+  const base = CURRENT_COMMUNITY_SLUG ? `/c/${CURRENT_COMMUNITY_SLUG}/civilian-dashboard` : '/civilian-dashboard';
+  return civilianId ? `${base}?civilian_id=${encodeURIComponent(civilianId)}` : base;
+}
+
+function renderKeyValueGrid(container, rows) {
+  if (!container) return;
+  container.innerHTML = rows.map(([label, value]) => `<div class="record-field"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || '—')}</strong></div>`).join('');
+}
+
+function renderDashboardEmpty(container, message) {
+  if (!container) return;
+  container.innerHTML = `<p class="record-empty">${escapeHtml(message)}</p>`;
+}
+
+function renderCivilianDashboardTable(container, columns, rows, emptyMessage) {
+  if (!container) return;
+  if (!rows || !rows.length) {
+    renderDashboardEmpty(container, emptyMessage);
+    return;
+  }
+  const head = columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('');
+  const body = rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column.key] ?? '')}</td>`).join('')}</tr>`).join('');
+  container.innerHTML = `<div class="data-table-container"><table class="data-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function renderCivilianDashboard(data) {
+  const status = document.getElementById('civilian-dashboard-status');
+  const selectorCard = document.getElementById('civilian-profile-selector-card');
+  const content = document.getElementById('civilian-dashboard-content');
+  const profiles = data.profiles || [];
+  if (!data.civilian) {
+    if (content) content.classList.add('hidden');
+    if (selectorCard) selectorCard.classList.toggle('hidden', profiles.length === 0);
+    if (status) status.textContent = profiles.length ? 'Select a civilian profile to continue.' : 'No civilian profiles are linked to your account in this community.';
+    return;
+  }
+  if (status) status.classList.add('hidden');
+  if (selectorCard) selectorCard.classList.toggle('hidden', profiles.length <= 1);
+  if (content) content.classList.remove('hidden');
+
+  const civilian = data.civilian || {};
+  const badge = document.getElementById('civilian-license-badge');
+  if (badge) badge.textContent = civilian.license_status || 'License';
+  renderKeyValueGrid(document.getElementById('civilian-profile-card'), [
+    ['Full name', civilian.name],
+    ['DOB', civilian.date_of_birth],
+    ['Phone', civilian.phone],
+    ['Address', civilian.address],
+    ['Occupation', civilian.occupation],
+    ['License status', civilian.license_status],
+    ['Community', civilian.community_name || window.GTAVCAD_CONTEXT?.communityName],
+  ]);
+
+  const summary = data.summary || {};
+  const stats = document.getElementById('civilian-quick-stats');
+  if (stats) {
+    stats.innerHTML = [
+      ['Unpaid tickets', summary.unpaid_tickets || 0],
+      ['Open fines', summary.open_fines || 0],
+      ['Served warrants', summary.served_warrants || 0],
+      ['Upcoming court dates', summary.upcoming_court_dates || 0],
+    ].map(([label, value]) => `<article class="dashboard-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join('');
+  }
+
+  renderCivilianDashboardTable(document.getElementById('civilian-vehicles'), [
+    { key: 'plate', label: 'Plate' }, { key: 'make', label: 'Make' }, { key: 'model', label: 'Model' },
+    { key: 'color', label: 'Color' }, { key: 'registration_status', label: 'Registration' }, { key: 'insurance_status', label: 'Insurance' },
+  ], data.vehicles || [], 'No registered vehicles on record.');
+  renderCivilianDashboardTable(document.getElementById('civilian-licenses'), [
+    { key: 'license_type', label: 'License type' }, { key: 'status', label: 'Status' }, { key: 'expiration', label: 'Expiration' }, { key: 'restrictions', label: 'Restrictions' },
+  ], data.licenses || [], 'No licenses on record.');
+  renderCivilianDashboardTable(document.getElementById('civilian-tickets-fines'), [
+    { key: 'citation_number', label: 'Citation #' }, { key: 'violation', label: 'Violation' }, { key: 'amount', label: 'Amount' },
+    { key: 'status', label: 'Status' }, { key: 'issued_date', label: 'Issued' }, { key: 'court_required', label: 'Court required' },
+  ], data.citations || [], 'No tickets or fines on record.');
+  renderCivilianDashboardTable(document.getElementById('civilian-arrest-jail'), [
+    { key: 'arrest_date', label: 'Date' }, { key: 'charges', label: 'Charges' }, { key: 'status', label: 'Status' }, { key: 'jail_time', label: 'Jail/Fine' }, { key: 'public_notes', label: 'Public notes' },
+  ], [...(data.arrests || []), ...(data.jail_history || [])], 'No arrest or jail history on record.');
+  renderCivilianDashboardTable(document.getElementById('civilian-served-warrants'), [
+    { key: 'warrant_number', label: 'Warrant #' }, { key: 'warrant_type', label: 'Type' }, { key: 'status', label: 'Status' },
+    { key: 'served_date', label: 'Served' }, { key: 'charges_or_basis', label: 'Charges/Basis' }, { key: 'court_case_number', label: 'Court case' },
+  ], data.served_warrants || [], 'No served warrants on record.');
+  renderCivilianDashboardTable(document.getElementById('civilian-court-dates'), [
+    { key: 'hearing_date', label: 'Hearing date' }, { key: 'courtroom', label: 'Courtroom' }, { key: 'case_number', label: 'Case #' }, { key: 'status', label: 'Status' }, { key: 'outcome', label: 'Outcome' },
+  ], data.court_dates || [], 'No court dates on record.');
+  renderCivilianDashboardTable(document.getElementById('civilian-complaints'), [
+    { key: 'complaint_id', label: 'Complaint ID' }, { key: 'category', label: 'Category' }, { key: 'status', label: 'Status' }, { key: 'submitted_date', label: 'Submitted' },
+  ], data.complaints || [], 'No complaints on record.');
+}
+
+function bindCivilianProfileSelector(profiles = []) {
+  const selector = document.getElementById('civilian-profile-selector');
+  const button = document.getElementById('civilian-profile-open');
+  if (!selector || !button) return;
+  selector.innerHTML = profiles.map((profile) => `<option value="${escapeAttr(profile.civilian_id)}">${escapeHtml(profile.name || profile.civilian_id)}</option>`).join('');
+  button.onclick = () => {
+    const civilianId = selector.value;
+    if (civilianId) window.location.href = getCivilianDashboardUrl(civilianId);
+  };
+}
+
+async function initCivilianDashboard() {
+  if (!isCivilianDashboardPage()) return;
+  const status = document.getElementById('civilian-dashboard-status');
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const civilianId = params.get('civilian_id') || '';
+    const url = civilianId ? `/api/civilian/dashboard?civilian_id=${encodeURIComponent(civilianId)}` : '/api/civilian/dashboard';
+    const res = await fetch(url, { credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Unable to load Civilian Dashboard');
+    bindCivilianProfileSelector(data.profiles || []);
+    renderCivilianDashboard(data);
+  } catch (error) {
+    if (status) status.textContent = error.message || 'Unable to load Civilian Dashboard.';
+  }
+}
+
 // Initialize
 async function initApp() {
   await applyCommunityBranding();
@@ -2038,6 +2163,7 @@ async function initApp() {
   handleVehicleForm();
   handleDMVPlateForm();
   handleBusinessForm();
+  await initCivilianDashboard();
 
   // Initialize police CAD components only for authorized officer CAD pages.
   if (shouldLoadCadData) {
