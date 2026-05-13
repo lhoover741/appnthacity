@@ -448,15 +448,8 @@ def create_invite_for_selected_community():
         status='Active'
     ).first()
     authorized_invite_roles = {'Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'}
-    is_platform_owner = is_persisted_platform_owner(user_id)
-    stale_session_claims_platform_owner = (
-        session.get('platform_role') == 'PlatformOwner'
-        or session.get('role') == 'PlatformOwner'
-        or session.get('is_platform_owner') is True
-    )
-    if not is_platform_owner and stale_session_claims_platform_owner:
-        logger.warning('Stale PlatformOwner session ignored for invite permission check')
-    if not is_platform_owner and (not membership or membership.role not in authorized_invite_roles):
+    is_owner = session.get('platform_role') == 'PlatformOwner' or session.get('role') == 'PlatformOwner'
+    if not is_owner and (not membership or membership.role not in authorized_invite_roles):
         return jsonify({'success': False, 'error': 'Community admin or owner access required'}), 403
 
     role = data.get('role', 'Civilian')
