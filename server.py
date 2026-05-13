@@ -33,8 +33,10 @@ from security_service import (
 )
 from performance_service import cache, paginate_query
 from cad_access import (
+    CAD_ACCESS_ROLES as CANONICAL_CAD_ACCESS_ROLES,
     evaluate_police_cad_access,
     normalize_community_role as canonical_normalize_community_role,
+    role_allows_police_cad,
 )
 from ai_service import get_ai_config, ai_runtime_or_error, chat_json
 from evidence_storage import (
@@ -7755,7 +7757,18 @@ def platform_admin_promote_user(user_id):
 @app.errorhandler(Exception)
 def community_admin_json_exception(error):
     if request.path.startswith('/api/community-admin'):
-        logger.exception('Community admin endpoint failed request_id=%s path=%s', getattr(g, 'request_id', None), request.path)
+        logger.exception(
+            'Community admin endpoint failed request_id=%s path=%s user_id=%s selected_community_id=%s '
+            'impersonating_community_id=%s resolved_community_id=%s resolved_slug=%s failure_reason=%s',
+            getattr(g, 'request_id', None),
+            request.path,
+            session.get('user_id'),
+            session.get('selected_community_id'),
+            session.get('impersonating_community_id'),
+            getattr(getattr(g, 'community', None), 'community_id', None) or getattr(g, 'community_id', None),
+            getattr(getattr(g, 'community', None), 'slug', None),
+            getattr(error, 'description', type(error).__name__),
+        )
         code = getattr(error, 'code', 500) or 500
         if code >= 500:
             return jsonify({'success': False, 'error': 'Unable to load community admin data'}), 500
@@ -7765,9 +7778,10 @@ def community_admin_json_exception(error):
 COMMUNITY_ADMIN_ROLES = {'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'}
 COMMUNITY_SUPPORTED_ROLES = {
     'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer',
-    'Dispatch', 'Dispatcher', 'EMS', 'Civilian', 'Member', 'BusinessOwner'
+    'LEO', 'Dispatch', 'Dispatcher', 'EMS', 'DOJ', 'Staff',
+    'Civilian', 'Member', 'BusinessOwner'
 }
-CAD_ELIGIBLE_ROLES = {'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'Dispatch', 'Dispatcher', 'EMS'}
+CAD_ELIGIBLE_ROLES = set(CANONICAL_CAD_ACCESS_ROLES)
 COMMUNITY_SETTING_KEYS = {
     'departments', 'officer_ranks', 'ranks', 'call_types', 'penal_code_categories',
     'business_categories', 'invite_policy', 'cad_access_policy'
@@ -7777,6 +7791,59 @@ COMMUNITY_SETTING_ALIASES = {
 }
 
 PUBLIC_INVITE_ERROR = 'Invite is invalid, expired, revoked, or no longer available'
+
+DEFAULT_COMMUNITY_RANKS = [
+    'Cadet', 'Officer', 'Senior Officer', 'Corporal', 'Sergeant',
+    'Lieutenant', 'Captain', 'Assistant Chief', 'Chief'
+]
+COMMUNITY_LIST_SETTING_KEYS = {
+    'departments', 'officer_ranks', 'ranks', 'call_types',
+    'penal_code_categories', 'business_categories'
+}
+
+
+def role_is_cad_permission_eligible(role):
+    """Return True only for policy-approved roles that may receive Police CAD permissions."""
+    return role_allows_police_cad(normalize_community_role(role))
+
+
+def _normalize_text_list(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or '').strip()]
+    if isinstance(value, dict):
+        values = list(value.values())
+        if all(not isinstance(item, (dict, list)) for item in values):
+            return [str(item).strip() for item in values if str(item or '').strip()]
+        flattened = []
+        for item in values:
+            if isinstance(item, list):
+                flattened.extend(str(entry).strip() for entry in item if str(entry or '').strip())
+        return flattened
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        parsed = _json_loads(text, None)
+        if parsed is not None and parsed is not value:
+            return _normalize_text_list(parsed)
+        return [part.strip() for part in text.replace(',', '\n').splitlines() if part.strip()]
+    return []
+
+
+def _normalize_community_list_setting(key, value):
+    normalized = _normalize_text_list(value)
+    if COMMUNITY_SETTING_ALIASES.get(key, key) == 'officer_ranks' and not normalized:
+        return list(DEFAULT_COMMUNITY_RANKS)
+    return normalized
+
+
+def _revoke_community_admin_cad_permission(community_id, user_id):
+    perms = _community_admin_cad_permissions(community_id)
+    removed = perms.pop(str(user_id), None) is not None
+    if removed:
+        _community_admin_save_cad_permissions(community_id, perms)
+    return removed
+
 INVITE_JOIN_ROLES = COMMUNITY_SUPPORTED_ROLES - {'PlatformOwner'}
 INVITE_ADMIN_LEVEL_ROLES = {'CommunityAdmin', 'CommunityOwner', 'Owner', 'Admin'}
 
@@ -7985,12 +8052,18 @@ def _json_loads(value, default=None):
 
 
 def _community_admin_config_value(community_id, key, default=None):
+    key = COMMUNITY_SETTING_ALIASES.get(key, key)
     config = Config.query.filter_by(community_id=community_id, key=key).first()
-    return _json_loads(config.value, default) if config else default
+    value = _json_loads(config.value, default) if config else default
+    if key in COMMUNITY_LIST_SETTING_KEYS:
+        return _normalize_community_list_setting(key, value)
+    return value
 
 
 def _community_admin_set_config_value(community_id, key, value, description=None):
     key = COMMUNITY_SETTING_ALIASES.get(key, key)
+    if key in COMMUNITY_LIST_SETTING_KEYS:
+        value = _normalize_community_list_setting(key, value)
     config = Config.query.filter_by(community_id=community_id, key=key).first()
     if not config:
         config = Config(community_id=community_id, key=key, description=description or f'Community setting: {key}')
@@ -8014,6 +8087,10 @@ def _community_admin_apply_cad_permission_attrs(membership):
         return membership
     data = _community_admin_cad_permissions(membership.community_id).get(str(membership.user_id), {})
     if isinstance(data, dict):
+        if not role_is_cad_permission_eligible(getattr(membership, 'role', None)):
+            for key in ('can_access_police_cad', 'can_dispatch', 'can_manage_warrants', 'can_manage_evidence', 'can_manage_arrests'):
+                setattr(membership, key, False)
+            return membership
         for key in ('can_access_police_cad', 'can_dispatch', 'can_manage_warrants', 'can_manage_evidence', 'can_manage_arrests', 'rank'):
             if key in data:
                 setattr(membership, key, data.get(key))
@@ -8285,7 +8362,7 @@ def _community_admin_settings_dict(community):
     }
     for key in keys:
         public_key = 'ranks' if key == 'officer_ranks' else key
-        settings[public_key] = _community_admin_config_value(community.community_id, key, [] if key in {'departments', 'officer_ranks', 'call_types', 'penal_code_categories', 'business_categories'} else {})
+        settings[public_key] = _community_admin_config_value(community.community_id, key, [] if key in COMMUNITY_LIST_SETTING_KEYS else {})
     settings.pop('cad_permissions', None)
     return settings
 
@@ -8302,7 +8379,18 @@ def community_admin_overview():
         try:
             return fn()
         except Exception as exc:
-            logger.warning('Community admin overview %s failed community_id=%s error=%s', name, community.community_id, exc)
+            logger.warning(
+                'Community admin overview section failed path=%s user_id=%s resolved_community_id=%s resolved_slug=%s '
+                'has_selected_community=%s has_impersonating_community=%s section=%s failure_reason=%s',
+                request.path,
+                session.get('user_id'),
+                community.community_id,
+                community.slug,
+                bool(session.get('selected_community_id')),
+                bool(session.get('impersonating_community_id')),
+                name,
+                type(exc).__name__,
+            )
             warnings.append(f'{name} unavailable')
             return fallback
 
@@ -8313,6 +8401,7 @@ def community_admin_overview():
     invites = section('invites', [], lambda: [i.to_dict() for i in CommunityInvite.query.filter_by(community_id=community.community_id).order_by(CommunityInvite.created_at.desc()).limit(25).all()])
     activity = section('activity', [], lambda: _community_admin_activity_rows(community.community_id, 25))
     permissions = section('cad_permissions', [], lambda: [_community_admin_permission_dict(m, users.get(m.user_id)) for m in members])
+    settings = section('settings', {}, lambda: _community_admin_settings_dict(community))
 
     def count(fn):
         return section('metrics', 0, fn)
@@ -8351,10 +8440,23 @@ def community_admin_overview():
         'invites': invites,
         'activity': activity,
         'cad_permissions': permissions,
-        'settings': _community_admin_settings_dict(community),
+        'settings': settings,
+        'stats': {},
+        'recent_activity': activity,
+        'members_count': len(members),
+        'invites_count': count(lambda: CommunityInvite.query.filter_by(community_id=community.community_id).count()),
+        'departments': settings.get('departments', []),
+        'ranks': settings.get('ranks', list(DEFAULT_COMMUNITY_RANKS)),
+        'current_user_permissions': {
+            'can_manage_community': True,
+            'can_manage_members': True,
+            'can_manage_settings': True,
+            'can_manage_cad_permissions': True,
+        },
         'warnings': warnings,
         'available_communities': _community_admin_available_communities() if is_platform_owner() else [],
     }
+    payload['stats'] = payload['metrics']
     payload['overview'] = payload
     return jsonify(payload)
 
@@ -8396,6 +8498,10 @@ def community_admin_member_create():
         return jsonify({'success': False, 'error': 'Only PlatformOwner or CommunityOwner can assign CommunityOwner'}), 403
     if status_value not in {'Active', 'Inactive', 'Suspended'}:
         return jsonify({'success': False, 'error': 'Invalid member status'}), 400
+    requested_cad_access = bool(data.get('can_access_police_cad'))
+    cad_eligible = role_is_cad_permission_eligible(role)
+    if requested_cad_access and not cad_eligible:
+        return jsonify({'success': False, 'error': 'Selected role is not eligible for Police CAD access'}), 400
 
     user = User.query.filter(func.lower(User.email) == email).first()
     created_user = False
@@ -8433,10 +8539,14 @@ def community_admin_member_create():
         member.status = status_value
         member.updated_at = datetime.utcnow()
 
-    if data.get('can_access_police_cad') is not None:
+    if not cad_eligible:
+        if _revoke_community_admin_cad_permission(community.community_id, user.id):
+            _community_admin_audit(community.community_id, 'cad_permission_revoked', target_user_id=user.id, details={'reason': 'role_not_eligible', 'role': role})
+    elif data.get('can_access_police_cad') is not None:
         perms = _community_admin_cad_permissions(community.community_id)
         user_perms = perms.get(str(user.id), {})
-        user_perms['can_access_police_cad'] = bool(data.get('can_access_police_cad'))
+        user_perms = user_perms if isinstance(user_perms, dict) else {}
+        user_perms['can_access_police_cad'] = requested_cad_access
         user_perms['department'] = department or ''
         user_perms['callsign'] = callsign or ''
         perms[str(user.id)] = user_perms
@@ -8469,6 +8579,8 @@ def community_admin_member_role(user_id):
     before = target.role
     target.role = role
     target.updated_at = datetime.utcnow()
+    if not role_is_cad_permission_eligible(role) and _revoke_community_admin_cad_permission(community.community_id, user_id):
+        _community_admin_audit(community.community_id, 'cad_permission_revoked', target_user_id=user_id, details={'reason': 'role_not_eligible', 'before_role': before, 'after_role': role})
     _community_admin_audit(community.community_id, 'member_role_changed', target_user_id=user_id, details={'before_role': before, 'after_role': role})
     invalidate_user_sessions(user_id)
     db.session.commit()
@@ -8588,8 +8700,14 @@ def community_admin_cad_permission_update(user_id):
     data = _community_admin_body()
     role = normalize_community_role(target.role)
     requested_access = bool(data.get('can_access_police_cad'))
-    if requested_access and role not in CAD_ELIGIBLE_ROLES:
-        return jsonify({'success': False, 'error': 'Civilian users do not get CAD access by default'}), 400
+    if requested_access and not role_is_cad_permission_eligible(role):
+        return jsonify({'success': False, 'error': 'Selected role is not eligible for Police CAD access'}), 400
+    if not role_is_cad_permission_eligible(role):
+        _revoke_community_admin_cad_permission(community.community_id, user_id)
+        _community_admin_audit(community.community_id, 'cad_permission_revoked', target_user_id=user_id, details={'reason': 'role_not_eligible', 'role': role})
+        invalidate_user_sessions(user_id)
+        db.session.commit()
+        return jsonify({'success': True, 'permission': _community_admin_permission_dict(target)})
     callsign = (data.get('callsign') or '').strip() or None
     if callsign:
         existing = CommunityMember.query.filter(
