@@ -2224,8 +2224,12 @@ def _dashboard_jail_rows(civilian, community_id):
     return bookings + inmates
 
 
-def _normalize_warrant_status_for_civilian(warrant):
-    return str(_warrant_value(warrant, 'status', 'warrant_status', '') or '').strip().lower()
+def _is_served_warrant_for_civilian(warrant):
+    status_values = (
+        str(getattr(warrant, 'status', '') or '').strip().lower(),
+        str(getattr(warrant, 'warrant_status', '') or '').strip().lower(),
+    )
+    return any(status == 'served' for status in status_values)
 
 
 def _dashboard_served_warrant_rows(civilian, community_id):
@@ -2239,7 +2243,7 @@ def _dashboard_served_warrant_rows(civilian, community_id):
         'court_case_number': _warrant_value(w, 'court_case_number'),
         'issuing_agency': _warrant_value(w, 'issuing_agency', 'warrant_issuer'),
         'created_at': w.created_at.isoformat() if w.created_at else None,
-    } for w in warrants if _normalize_warrant_status_for_civilian(w) == 'served']
+    } for w in warrants if _is_served_warrant_for_civilian(w)]
 
 
 def _dashboard_court_rows(civilian, community_id):
