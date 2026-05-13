@@ -213,23 +213,38 @@ def list_user_communities():
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
 
-    memberships = (
-        CommunityMember.query
-        .join(Community, Community.community_id == CommunityMember.community_id)
-        .filter(
-            CommunityMember.user_id == user_id,
-            CommunityMember.status == 'Active',
-            Community.status == 'Active',
+    if is_persisted_platform_owner(user_id):
+        communities = Community.query.order_by(Community.name.asc()).all()
+        communities_data = [{
+            'community': community.to_dict(),
+            'membership': {
+                'community_id': community.community_id,
+                'user_id': user_id,
+                'role': 'PlatformOwner',
+                'status': 'Active',
+            },
+            'can_manage_community': True,
+        } for community in communities]
+    else:
+        memberships = (
+            CommunityMember.query
+            .join(Community, Community.community_id == CommunityMember.community_id)
+            .filter(
+                CommunityMember.user_id == user_id,
+                CommunityMember.status == 'Active',
+                Community.status == 'Active',
+            )
+            .all()
         )
-        .all()
-    )
 
-    communities_data = []
-    for membership in memberships:
-        communities_data.append({
-            'community': membership.community.to_dict(),
-            'membership': membership.to_dict(),
-        })
+        communities_data = []
+        for membership in memberships:
+            role = membership.role
+            communities_data.append({
+                'community': membership.community.to_dict(),
+                'membership': membership.to_dict(),
+                'can_manage_community': role in {'PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'},
+            })
 
     return jsonify({
         'success': True,
@@ -531,6 +546,14 @@ def get_current_community_context():
         if membership:
             set_selected_community_session(community, membership)
 
+    community_role = membership.role if membership else None
+    is_owner = is_persisted_platform_owner(user_id)
+    can_manage = bool(
+        is_owner
+        or (membership and community_role in {'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'})
+        or (user_id and community.owner_user_id == user_id)
+    )
+
     return jsonify({
         'success': True,
         'platform': {'name': 'GTAVCAD', 'domain': 'gtavcad.app'},
@@ -553,8 +576,10 @@ def get_current_community_context():
             'role': session.get('role', 'Civilian'),
             'platform_role': session.get('platform_role'),
             'community_role': membership.role if membership else None,
-            'is_platform_owner': bool(session.get('is_platform_owner')),
+            'is_platform_owner': is_owner,
             'impersonation_active': bool(session.get('impersonating_community_id')),
+            'can_manage_community': can_manage,
+            'is_community_admin': can_manage,
             'can_access_police_cad': can_access_police_cad(session.get('platform_role'), membership.role if membership else None, user=User.query.get(user_id) if user_id else None, membership=membership),
         } if user_id else None,
     }), 200
