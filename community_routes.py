@@ -197,9 +197,9 @@ def get_active_or_create_invite(community, created_by=None, deactivate_existing=
     return invite
 
 
-# ========================================
+# ----------------------------------------
 # User Community Management
-# ========================================
+# ----------------------------------------
 
 @community_bp.route('', methods=['GET'])
 @require_auth
@@ -286,9 +286,9 @@ def select_community():
     }), 200
 
 
-# ========================================
+# ----------------------------------------
 # Community Creation
-# ========================================
+# ----------------------------------------
 
 @community_bp.route('', methods=['POST'])
 @community_bp.route('/create', methods=['POST'])
@@ -402,9 +402,9 @@ def create_community():
         return jsonify({'error': str(e)}), 500
 
 
-# ========================================
+# ----------------------------------------
 # Public Community Lookup
-# ========================================
+# ----------------------------------------
 
 @community_bp.route('/public/<slug>', methods=['GET'])
 def get_public_community_by_slug(slug):
@@ -507,9 +507,9 @@ def accept_invite_alias():
     return join_with_invite()
 
 
-# ========================================
+# ----------------------------------------
 # Community Details
-# ========================================
+# ----------------------------------------
 
 @community_bp.route('/context', methods=['GET'])
 @community_bp.route('/current', methods=['GET'])
@@ -593,9 +593,9 @@ def get_community(community_id):
     }), 200
 
 
-# ========================================
+# ----------------------------------------
 # Invite System
-# ========================================
+# ----------------------------------------
 
 @community_bp.route('/join', methods=['POST'])
 @require_auth
@@ -694,9 +694,9 @@ def join_with_invite():
         return jsonify({'error': str(e)}), 500
 
 
-# ========================================
+# ----------------------------------------
 # Community Admin Functions
-# ========================================
+# ----------------------------------------
 
 @community_bp.route('/<community_id>/members', methods=['GET'])
 @require_auth
@@ -831,9 +831,9 @@ def revoke_invite_code(community_id, invite_code):
         return jsonify({'error': str(e)}), 500
 
 
-# ========================================
+# ----------------------------------------
 # Export
-# ========================================
+# ----------------------------------------
 
 def register_community_routes(app):
     """Register community blueprint with Flask app."""
