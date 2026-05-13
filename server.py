@@ -8496,14 +8496,23 @@ def get_ai_config_status():
 
 
 @app.route('/api/community-admin/ai-status', methods=['GET'])
+@require_auth
 def community_admin_ai_status():
-    membership, denied = require_community_admin_membership()
-    if denied:
-        return denied
-    community_id = membership.community_id
+    _current_user, community, _membership, error, status = require_community_admin()
+    if error:
+        return error, status
+    community_id = community.community_id
     cfg = get_platform_ai_config()
-    usage_count = scoped_query(AIGenerationLog).filter_by(community_id=community_id).count()
-    return jsonify({'success': True, 'ai_available': bool(cfg['enabled'] and cfg['has_api_key']), 'provider': 'Platform OpenRouter', 'model': cfg['model'], 'usage_count': usage_count})
+    usage_count = scoped_query(AIGenerationLog, community_id).filter_by(community_id=community_id).count()
+    return jsonify({
+        'success': True,
+        'ai_available': bool(cfg['enabled'] and cfg['has_api_key']),
+        'provider': 'Platform OpenRouter',
+        'model': cfg['model'],
+        'usage_count': usage_count,
+        'community_id': community_id,
+        'community_slug': community.slug,
+    })
 
 
 @app.route('/api/cad/ai/status', methods=['GET'])
