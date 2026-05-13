@@ -8861,7 +8861,7 @@ _EVIDENCE_AI_NESTED_KEYS = {'evidence', 'attachments', 'evidence_attachments', '
 def _evidence_ai_metadata_only(value):
     """Strip evidence AI input to metadata so files, paths, and raw URLs are never sent to the provider."""
     if isinstance(value, list):
-        return [_evidence_ai_metadata_only(item) for item in value[:50]]
+        return [_evidence_ai_metadata_only(item) for item in value]
     if not isinstance(value, dict):
         return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)[:200]
 
