@@ -12,7 +12,6 @@ import logging
 from functools import wraps
 from flask import request, session, g, abort, jsonify
 from models import Community, CommunityMember, User
-from platform_config import DEFAULT_COMMUNITY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +77,7 @@ def resolve_active_community():
     """
     user_id = session.get('user_id')
     user = User.query.get(user_id) if user_id else None
-    is_owner = bool(user and (getattr(user, 'platform_role', None) == 'PlatformOwner' or getattr(user, 'role', None) == 'PlatformOwner' or session.get('is_platform_owner') is True))
+    is_owner = bool(user and (getattr(user, 'platform_role', None) == 'PlatformOwner' or getattr(user, 'role', None) == 'PlatformOwner'))
 
     route_slug = request.args.get('community_slug') or resolve_community_slug_from_path()
     query_slug = request.args.get('slug') or request.args.get('community_slug')
@@ -205,7 +204,7 @@ def scope_query_to_community(query_obj, model_class, community_id=None):
     
     Usage:
         civilians = scope_query_to_community(
-            Civilian.query, Civilian, DEFAULT_COMMUNITY_ID
+            Civilian.query, Civilian, community_id
         ).all()
     """
     if community_id is None:

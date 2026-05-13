@@ -26,7 +26,6 @@ window.GTAVCAD_CONTEXT = window.GTAVCAD_CONTEXT || {
   cadName: '',
   role: '',
   department: '',
-  inviteCode: '',
   colors: {}
 };
 
@@ -122,6 +121,14 @@ function isCadAdminBypass() {
 function isOfficerCadPage() {
   const leaf = window.location.pathname.split('/').pop().toLowerCase();
   return leaf === 'police.html' || leaf === 'police' || leaf === 'cad.html' || leaf === 'cad';
+}
+
+
+function removePublicInviteContext() {
+  document.querySelectorAll('[data-context-invite]').forEach((el) => {
+    const wrapper = el.closest('[data-context-invite-wrap]') || el.closest('span') || el;
+    wrapper.remove();
+  });
 }
 
 function enforceCadRoleVisibility() {
@@ -255,6 +262,8 @@ async function applyCommunityBranding() {
     }
   });
 
+  removePublicInviteContext();
+
   try {
     const res = await fetch('/api/communities/context', { credentials: 'include' });
     const data = await res.json();
@@ -275,7 +284,6 @@ async function applyCommunityBranding() {
       platform_role: data.user?.platform_role || '',
       community_role: data.user?.community_role || membership?.role || '',
       department: membership?.department || '',
-      inviteCode: data.invite_code || '',
       can_access_police_cad: data.user?.can_access_police_cad === true,
       is_platform_owner: data.user?.is_platform_owner === true,
       impersonation_active: data.user?.impersonation_active === true,
@@ -315,8 +323,7 @@ async function applyCommunityBranding() {
     bindAuthenticatedControls();
     const communityRoleEl = document.querySelector('[data-context-community-role]');
     if (communityRoleEl) communityRoleEl.textContent = membership?.role || 'Member';
-    const communityCtxInvite = document.querySelector('[data-context-invite]');
-    if (communityCtxInvite) communityCtxInvite.textContent = window.GTAVCAD_CONTEXT.inviteCode || 'Unavailable';
+    removePublicInviteContext();
     const cadAccess = Boolean(
       window.GTAVCAD_CURRENT_USER?.can_access_police_cad === true
       || window.GTAVCAD_CONTEXT?.can_access_police_cad === true
@@ -341,45 +348,8 @@ async function applyCommunityBranding() {
         .replaceAll('{community}', window.GTAVCAD_CONTEXT.communityName)
         .replaceAll('{cad}', window.GTAVCAD_CONTEXT.cadName)
         .replaceAll('{role}', window.GTAVCAD_CONTEXT.role || 'No membership')
-        .replaceAll('{invite}', window.GTAVCAD_CONTEXT.inviteCode || 'Unavailable');
+        .replaceAll('{invite}', '');
     });
-
-    const header = document.querySelector('[data-tenant-header]');
-    if (header && !header.querySelector('[data-copy-invite]')) {
-      const canManageInvite = ['Owner', 'Admin'].includes(window.GTAVCAD_CONTEXT.role);
-      const copyBtn = document.createElement('button');
-      copyBtn.type = 'button';
-      copyBtn.className = 'button button-ghost';
-      copyBtn.dataset.copyInvite = 'true';
-      copyBtn.textContent = 'Copy Invite';
-      copyBtn.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(window.GTAVCAD_CONTEXT.inviteCode || '');
-        copyBtn.textContent = 'Invite Copied';
-        setTimeout(() => { copyBtn.textContent = 'Copy Invite'; }, 1600);
-      });
-      header.appendChild(copyBtn);
-      if (canManageInvite) {
-        const regenBtn = document.createElement('button');
-        regenBtn.type = 'button';
-        regenBtn.className = 'button button-secondary';
-        regenBtn.textContent = 'Regenerate Invite';
-        regenBtn.addEventListener('click', async () => {
-          regenBtn.disabled = true;
-          const regenRes = await fetch('/api/communities/invite', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ regenerate: true }),
-          });
-          const regenData = await regenRes.json();
-          if (regenRes.ok && regenData.success) {
-            window.GTAVCAD_CONTEXT.inviteCode = regenData.invite.invite_code;
-            if (communityCtxInvite) communityCtxInvite.textContent = window.GTAVCAD_CONTEXT.inviteCode;
-          }
-          regenBtn.disabled = false;
-        });
-        header.appendChild(regenBtn);
-      }
-    }
 
     if (!membership && document.body.dataset.communityPage === 'true') {
       const target = document.querySelector('[data-tenant-header]') || document.querySelector('main') || document.body;
@@ -442,7 +412,8 @@ async function refreshAuthNavigation() {
 bindAuthenticatedControls();
 refreshAuthNavigation();
 
-// Shared frontend data model
+// Shared frontend data model. This browser cache is not authoritative for tenant
+// context; route slug and server-provided GTAVCAD_CONTEXT always win.
 const GTAVCADData = {
   civilians: [],
   vehicles: [],
@@ -462,6 +433,7 @@ const GTAVCADData = {
   ],
   activityLog: []
 };
+// Legacy alias only; not authoritative for tenant context.
 const NThaCityData = GTAVCADData;
 window.NThaCityData = GTAVCADData;
 
