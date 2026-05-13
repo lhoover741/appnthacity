@@ -51,44 +51,71 @@ def get_current_community_id():
     return None
 
 
-def resolve_active_community():
-    """
-    Resolve active tenant context without any hardcoded fallback.
-    Priority:
-    1) route/query slug
-    2) platform-owner impersonation session
-    3) selected community session
-    4) first active membership
-    """
-    requested_slug = request.args.get('community_slug') or resolve_community_slug_from_path()
-    user_id = session.get('user_id')
+def _community_dict(community):
+    return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
 
-    if requested_slug:
-        community = Community.query.filter_by(slug=requested_slug).first()
+
+def _find_community(community_id=None, slug=None):
+    if slug:
+        community = Community.query.filter_by(slug=slug).first()
         if community:
-            return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
-
-    impersonation_id = session.get('impersonating_community_id')
-    if impersonation_id:
-        community = Community.query.filter_by(community_id=impersonation_id).first()
-        if community:
-            return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
-
-    selected_id = session.get('selected_community_id')
-    if selected_id:
-        community = Community.query.filter_by(community_id=selected_id).first()
-        if community:
-            return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
-
-    if user_id:
-        membership = CommunityMember.query.filter_by(user_id=user_id, status='Active').first()
-        if membership:
-            community = Community.query.filter_by(community_id=membership.community_id).first()
-            if community:
-                return {'community_id': community.community_id, 'slug': community.slug, 'name': community.name, 'cad_name': community.cad_name}
-
+            return community
+    if community_id:
+        return Community.query.filter_by(community_id=community_id).first()
     return None
 
+
+def resolve_active_community():
+    """
+    Resolve active tenant context without any hardcoded/default fallback.
+
+    Priority for slugless pages such as /community-admin:
+    1) PlatformOwner query community_id/slug
+    2) impersonating community session id/slug
+    3) selected community session id/slug
+    4) legacy community session id/slug
+    5) exactly one active user membership
+    """
+    user_id = session.get('user_id')
+    user = User.query.get(user_id) if user_id else None
+    is_owner = bool(user and (getattr(user, 'platform_role', None) == 'PlatformOwner' or getattr(user, 'role', None) == 'PlatformOwner' or session.get('is_platform_owner') is True))
+
+    route_slug = request.args.get('community_slug') or resolve_community_slug_from_path()
+    query_slug = request.args.get('slug') or request.args.get('community_slug')
+    query_id = request.args.get('community_id')
+
+    candidates = []
+    if route_slug:
+        candidates.append(('route', _find_community(slug=route_slug)))
+    if is_owner:
+        candidates.extend([
+            ('query', _find_community(query_id, query_slug)),
+            ('impersonating_id', _find_community(session.get('impersonating_community_id'))),
+            ('impersonating_slug', _find_community(slug=session.get('impersonating_community_slug'))),
+        ])
+    candidates.extend([
+        ('selected_id', _find_community(session.get('selected_community_id'))),
+        ('selected_slug', _find_community(slug=session.get('selected_community_slug'))),
+        ('session_id', _find_community(session.get('community_id'))),
+        ('session_slug', _find_community(slug=session.get('community_slug'))),
+    ])
+
+    for _source, community in candidates:
+        if not community:
+            continue
+        if is_owner:
+            return _community_dict(community)
+        if user_id and CommunityMember.query.filter_by(user_id=user_id, community_id=community.community_id, status='Active').first():
+            return _community_dict(community)
+
+    if user_id:
+        memberships = CommunityMember.query.filter_by(user_id=user_id, status='Active').all()
+        if len(memberships) == 1:
+            community = Community.query.filter_by(community_id=memberships[0].community_id).first()
+            if community:
+                return _community_dict(community)
+
+    return None
 
 def resolve_community_slug_from_path():
     """Extract community slug from request path like /c/metro-rp/cad."""
