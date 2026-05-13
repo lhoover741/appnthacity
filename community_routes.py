@@ -448,7 +448,7 @@ def create_invite_for_selected_community():
         status='Active'
     ).first()
     authorized_invite_roles = {'Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'}
-    is_owner = session.get('platform_role') == 'PlatformOwner' or session.get('role') == 'PlatformOwner'
+    is_owner = is_persisted_platform_owner(user_id)
     if not is_owner and (not membership or membership.role not in authorized_invite_roles):
         return jsonify({'success': False, 'error': 'Community admin or owner access required'}), 403
 
