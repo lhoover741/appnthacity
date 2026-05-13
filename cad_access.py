@@ -1,6 +1,8 @@
 """Canonical Police CAD access policy helpers."""
 
-import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 CAD_ACCESS_ROLES = {
     "PlatformOwner",
@@ -89,21 +91,15 @@ def get_explicit_police_cad_permission(*subjects):
 
 
 def platform_owner_override(user=None, session_values=None):
-    """Return True when any canonical PlatformOwner condition is met."""
+    """Return True only for persisted/session PlatformOwner roles."""
     session_values = session_values or {}
-    if session_values.get("is_platform_owner") is True:
-        return True
-
-    owner_email = (os.getenv("PLATFORM_OWNER_EMAIL") or "").strip().lower()
     user_role = normalize_community_role(_read_attr(user, "role", session_values.get("role")))
     user_platform_role = normalize_community_role(_read_attr(user, "platform_role", session_values.get("platform_role")))
-    user_email = str(_read_attr(user, "email", session_values.get("email")) or "").strip().lower()
 
-    return (
-        user_role == "PlatformOwner"
-        or user_platform_role == "PlatformOwner"
-        or bool(owner_email and user_email == owner_email)
-    )
+    is_owner_role = user_role == "PlatformOwner" or user_platform_role == "PlatformOwner"
+    if session_values.get("is_platform_owner") is True and not is_owner_role:
+        logger.warning("Ignoring stale session PlatformOwner flag without persisted PlatformOwner role")
+    return is_owner_role
 
 
 def evaluate_police_cad_access(user=None, role=None, membership=None, session_values=None):

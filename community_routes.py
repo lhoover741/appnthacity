@@ -147,6 +147,15 @@ def initialize_community_config(community):
         create_config_if_missing(key, community.community_id, value, description)
 
 
+def is_persisted_platform_owner(user_id):
+    """Return True only when the persisted user record is PlatformOwner."""
+    user = User.query.get(user_id) if user_id else None
+    return bool(user and (
+        getattr(user, 'role', None) == 'PlatformOwner'
+        or getattr(user, 'platform_role', None) == 'PlatformOwner'
+    ))
+
+
 def set_selected_community_session(community, membership=None):
     """Persist the active community and membership role in the current browser session."""
     session['selected_community_id'] = community.community_id
@@ -438,8 +447,17 @@ def create_invite_for_selected_community():
         community_id=community_id,
         status='Active'
     ).first()
-    if not membership or membership.role not in ('Owner', 'Admin'):
-        return jsonify({'success': False, 'error': 'Admin or owner membership required'}), 403
+    authorized_invite_roles = {'Owner', 'Admin', 'CommunityOwner', 'CommunityAdmin'}
+    is_platform_owner = is_persisted_platform_owner(user_id)
+    stale_session_claims_platform_owner = (
+        session.get('platform_role') == 'PlatformOwner'
+        or session.get('role') == 'PlatformOwner'
+        or session.get('is_platform_owner') is True
+    )
+    if not is_platform_owner and stale_session_claims_platform_owner:
+        logger.warning('Stale PlatformOwner session ignored for invite permission check')
+    if not is_platform_owner and (not membership or membership.role not in authorized_invite_roles):
+        return jsonify({'success': False, 'error': 'Community admin or owner access required'}), 403
 
     role = data.get('role', 'Civilian')
     department = data.get('department')
@@ -520,9 +538,6 @@ def get_current_community_context():
         if membership:
             set_selected_community_session(community, membership)
 
-    invite = get_active_or_create_invite(community, created_by=community.owner_user_id)
-    db.session.commit()
-
     return jsonify({
         'success': True,
         'platform': {'name': 'GTAVCAD', 'domain': 'gtavcad.app'},
@@ -548,8 +563,7 @@ def get_current_community_context():
             'is_platform_owner': bool(session.get('is_platform_owner')),
             'impersonation_active': bool(session.get('impersonating_community_id')),
             'can_access_police_cad': can_access_police_cad(session.get('platform_role'), membership.role if membership else None, user=User.query.get(user_id) if user_id else None, membership=membership),
-        },
-        'invite_code': invite.invite_code,
+        } if user_id else None,
     }), 200
 
 
