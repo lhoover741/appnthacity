@@ -12,7 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify, send_from_directory, session, redirect, abort, g
+from flask import Flask, request, jsonify, send_from_directory, send_file, session, redirect, abort, g
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_migrate import Migrate
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -37,6 +37,10 @@ from cad_access import (
     normalize_community_role as canonical_normalize_community_role,
 )
 from ai_service import get_ai_config, ai_runtime_or_error, chat_json
+from evidence_storage import (
+    LINK_ONLY_DISABLED_MESSAGE, get_storage_config, validate_upload,
+    relative_storage_path, save_local_file, resolve_local_path,
+)
 from platform_config import (
     PLATFORM_NAME,
     PLATFORM_DOMAIN,
@@ -65,7 +69,7 @@ from models import (
     ServerStatus, Inmate, Hearing, DispatchCall,
     KnownAssociate, Business, Citation, JailBooking,
     UseOfForceReport, OfficerNote, CaseFile, CaseCharge, CadAuditLog,
-    AIGenerationLog, AuditLog,
+    AIGenerationLog, AuditLog, EvidenceAttachment,
     Community, CommunityMember, CommunityInvite,
     PlatformAdminLog, PlatformActivityLog, PasswordResetToken, CommunityStatus, UserSession
 )
@@ -949,6 +953,50 @@ def ensure_arrest_automation_schema():
     db.session.commit()
 
 
+def ensure_evidence_attachment_schema():
+    """Safely create/sync additive evidence attachment storage table."""
+    db.create_all()
+    inspector = sa_inspect(db.engine)
+    try:
+        existing = {col['name'] for col in inspector.get_columns('evidence_attachments')}
+    except Exception:
+        return
+    dialect = db.engine.dialect.name
+    specs = {
+        'attachment_id': 'VARCHAR(64)',
+        'community_id': 'VARCHAR(64)',
+        'case_id': 'VARCHAR(64)',
+        'evidence_id': 'VARCHAR(64)',
+        'arrest_id': 'VARCHAR(64)',
+        'warrant_id': 'VARCHAR(64)',
+        'court_packet_id': 'VARCHAR(64)',
+        'uploaded_by_user_id': 'INTEGER',
+        'original_filename': 'VARCHAR(255)',
+        'stored_filename': 'VARCHAR(255)',
+        'file_type': 'VARCHAR(64)',
+        'mime_type': 'VARCHAR(255)',
+        'file_size': 'INTEGER',
+        'storage_mode': 'VARCHAR(32)',
+        'storage_path': 'TEXT',
+        'external_url': 'TEXT',
+        'description': 'TEXT',
+        'category': 'VARCHAR(128)',
+        'review_status': "VARCHAR(64) DEFAULT 'submitted'",
+        'created_at': 'TIMESTAMP',
+        'updated_at': 'TIMESTAMP',
+        'deleted_at': 'TIMESTAMP',
+        'is_deleted': 'BOOLEAN DEFAULT FALSE',
+    }
+    for column, col_type in specs.items():
+        if column in existing:
+            continue
+        if dialect == 'postgresql':
+            db.session.execute(text(f'ALTER TABLE evidence_attachments ADD COLUMN IF NOT EXISTS {column} {col_type}'))
+        else:
+            db.session.execute(text(f'ALTER TABLE evidence_attachments ADD COLUMN {column} {col_type}'))
+    db.session.commit()
+
+
 def backfill_criminal_record_links():
     """Safely link legacy arrest/custody/court rows to civilians by arrest ID or full name."""
     dialect = db.engine.dialect.name
@@ -1046,6 +1094,7 @@ def backfill_criminal_record_links():
 with app.app_context():
     try:
         db.create_all()
+        ensure_evidence_attachment_schema()
         ensure_arrest_automation_schema()
         backfill_criminal_record_links()
         logger.info('✓ Database tables verified on startup')
@@ -6628,6 +6677,7 @@ def cad_case_court_packet(case_id):
         'charges': [_charge_to_dict(c) for c in charges],
         'officer_narrative': case.report_notes or (arrest.narrative if arrest else '') or '',
         'evidence_links': [_evidence_workflow_to_dict(e) for e in evidence],
+        'evidence_attachments': [_attachment_to_dict(a) for a in scoped_query(EvidenceAttachment, community_id).filter_by(case_id=case.case_id, is_deleted=False).order_by(EvidenceAttachment.created_at.desc()).all()],
         'witness_notes': case.defense_notes or '',
         'arrest_info': arrest_to_dict(arrest) if arrest else None,
         'warrant_info': warrant_to_dict(warrant) if warrant else None,
@@ -8544,6 +8594,260 @@ def community_admin_ai_status():
     })
 
 
+
+
+# ---------------------------------------------------------------------------
+# Tenant-scoped CAD Evidence Attachment Routes
+# ---------------------------------------------------------------------------
+
+EVIDENCE_ATTACHMENT_PARENT_MODELS = {
+    'case_id': (CaseFile, 'case_id'),
+    'evidence_id': (Evidence, 'evidence_id'),
+    'arrest_id': (Arrest, 'arrest_id'),
+    'warrant_id': (Warrant, 'warrant_id'),
+    # Court packets are represented by CAD cases in the current schema.
+    'court_packet_id': (CaseFile, 'case_id'),
+}
+
+
+def _attachment_parent_values(source):
+    values = {key: (source.get(key) or '').strip() for key in EVIDENCE_ATTACHMENT_PARENT_MODELS.keys() if (source.get(key) or '').strip()}
+    if not values.get('case_id') and (source.get('caseNumber') or '').strip():
+        values['case_id'] = (source.get('caseNumber') or '').strip()
+    return values
+
+
+def _validate_attachment_parents(community_id, parent_values):
+    if not parent_values:
+        return None, _cad_json_error('At least one parent CAD record is required', 400)
+    found = {}
+    for field, value in parent_values.items():
+        model, attr = EVIDENCE_ATTACHMENT_PARENT_MODELS[field]
+        record = scoped_query(model, community_id).filter(getattr(model, attr) == value).first()
+        if not record and field == 'case_id':
+            record = scoped_query(model, community_id).filter(CaseFile.case_number == value).first()
+        if not record and field == 'court_packet_id':
+            record = scoped_query(model, community_id).filter(CaseFile.case_number == value).first()
+        if not record:
+            return None, _cad_json_error('Parent CAD record not found for this community', 404)
+        found[field] = record
+    return found, None
+
+
+def _primary_attachment_parent(parent_values):
+    for field in ('case_id', 'evidence_id', 'arrest_id', 'warrant_id', 'court_packet_id'):
+        if parent_values.get(field):
+            return field.replace('_id', ''), parent_values[field]
+    return 'attachment', 'unlinked'
+
+
+def _safe_user_summary(user_id):
+    user = User.query.get(user_id) if user_id else None
+    if not user:
+        return {'user_id': user_id}
+    return {'user_id': user.id, 'username': user.username}
+
+
+def _attachment_download_url(attachment):
+    if attachment.storage_mode == 'local_volume' and not attachment.is_deleted:
+        return f'/api/cad/evidence/attachments/{attachment.attachment_id}/download'
+    return None
+
+
+def _attachment_to_dict(attachment):
+    payload = {
+        'attachment_id': attachment.attachment_id,
+        'community_id': attachment.community_id,
+        'case_id': attachment.case_id,
+        'evidence_id': attachment.evidence_id,
+        'arrest_id': attachment.arrest_id,
+        'warrant_id': attachment.warrant_id,
+        'court_packet_id': attachment.court_packet_id,
+        'original_filename': attachment.original_filename,
+        'file_type': attachment.file_type,
+        'mime_type': attachment.mime_type,
+        'file_size': attachment.file_size,
+        'storage_mode': attachment.storage_mode,
+        'external_url': attachment.external_url if attachment.storage_mode == 'link_only' else None,
+        'download_url': _attachment_download_url(attachment),
+        'description': attachment.description or '',
+        'category': attachment.category or '',
+        'review_status': attachment.review_status or 'submitted',
+        'created_at': attachment.created_at.isoformat() if attachment.created_at else None,
+        'updated_at': attachment.updated_at.isoformat() if attachment.updated_at else None,
+        'deleted_at': attachment.deleted_at.isoformat() if attachment.deleted_at else None,
+        'is_deleted': bool(attachment.is_deleted),
+        'uploaded_by': _safe_user_summary(attachment.uploaded_by_user_id),
+    }
+    return payload
+
+
+def _attachment_admin_decision():
+    decision = _current_police_cad_access_decision(request.path)
+    role = (decision.get('normalized_role') or decision.get('role') or '').lower()
+    platform_role = decision.get('platform_role')
+    return platform_role == 'PlatformOwner' or role in {'communityowner', 'communityadmin', 'owner', 'admin', 'supervisor'}
+
+
+def _safe_external_evidence_url(value):
+    raw = (value or '').strip()
+    if not raw or len(raw) > 2048 or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        return None
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() not in {'http', 'https'} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, parsed.query, parsed.fragment))
+
+
+@app.route('/api/cad/evidence/attachments/config', methods=['GET'])
+def cad_evidence_attachment_config():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    cfg = get_storage_config()
+    return jsonify({
+        'success': True,
+        'community_id': community_id,
+        'storage_mode': cfg.get('mode'),
+        'direct_uploads_enabled': bool(cfg.get('direct_uploads_enabled')),
+        'direct_upload_message': LINK_ONLY_DISABLED_MESSAGE,
+    })
+
+
+@app.route('/api/cad/evidence/attachments', methods=['POST'])
+def cad_evidence_attachment_create():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    form = request.form if request.form else (request.get_json(silent=True) or {})
+    parent_values = _attachment_parent_values(form)
+    parent_records, parent_error = _validate_attachment_parents(community_id, parent_values)
+    if parent_error:
+        return parent_error
+    for field, record in parent_records.items():
+        _, attr = EVIDENCE_ATTACHMENT_PARENT_MODELS[field]
+        parent_values[field] = getattr(record, attr)
+
+    file_obj = request.files.get('file') if request.files else None
+    if file_obj is not None and not (getattr(file_obj, 'filename', '') or '').strip():
+        file_obj = None
+    external_url = (form.get('external_url') or form.get('evidenceLink') or '').strip()
+    if not file_obj and not external_url:
+        return _cad_json_error('Either file or external_url is required', 400)
+
+    if external_url:
+        external_url = _safe_external_evidence_url(external_url)
+        if not external_url:
+            return _cad_json_error('external_url must be a valid http or https URL without embedded credentials or control characters', 400)
+
+    storage_cfg = get_storage_config()
+    attachment_id = f"ATT-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}"
+    attachment = EvidenceAttachment(
+        attachment_id=attachment_id,
+        community_id=community_id,
+        uploaded_by_user_id=session.get('user_id'),
+        case_id=parent_values.get('case_id'),
+        evidence_id=parent_values.get('evidence_id'),
+        arrest_id=parent_values.get('arrest_id'),
+        warrant_id=parent_values.get('warrant_id'),
+        court_packet_id=parent_values.get('court_packet_id'),
+        description=(form.get('description') or '').strip(),
+        category=(form.get('category') or '').strip(),
+        review_status='submitted',
+        created_at=datetime.utcnow(),
+    )
+
+    if file_obj:
+        if storage_cfg.get('mode') != 'local_volume' or not storage_cfg.get('direct_uploads_enabled'):
+            return _cad_json_error(LINK_ONLY_DISABLED_MESSAGE, 400)
+        meta, validation_error = validate_upload(file_obj)
+        if validation_error:
+            return _cad_json_error(validation_error, 400)
+        parent_type, parent_id = _primary_attachment_parent(parent_values)
+        rel_path = relative_storage_path(community_id, parent_type, parent_id, attachment_id, meta['stored_leaf'])
+        save_error = save_local_file(file_obj, rel_path)
+        if save_error:
+            return _cad_json_error('Evidence file could not be stored securely', 500)
+        attachment.original_filename = meta['original_filename']
+        attachment.stored_filename = meta['stored_leaf']
+        attachment.file_type = meta['file_type']
+        attachment.mime_type = meta['mime_type']
+        attachment.file_size = meta['file_size']
+        attachment.storage_mode = 'local_volume'
+        attachment.storage_path = rel_path
+    else:
+        attachment.original_filename = None
+        attachment.file_type = 'external_link'
+        attachment.storage_mode = 'link_only'
+        attachment.external_url = external_url
+
+    db.session.add(attachment)
+    _cad_audit('evidence_attachment_created', community_id, attachment.case_id, {
+        'attachment_id': attachment.attachment_id,
+        'storage_mode': attachment.storage_mode,
+        'parent_fields': sorted(parent_values.keys()),
+    })
+    db.session.commit()
+    return jsonify({'success': True, 'attachment': _attachment_to_dict(attachment)}), 201
+
+
+@app.route('/api/cad/evidence/attachments', methods=['GET'])
+def cad_evidence_attachment_list():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    query = scoped_query(EvidenceAttachment, community_id)
+    for field in EVIDENCE_ATTACHMENT_PARENT_MODELS.keys():
+        value = (request.args.get(field) or '').strip()
+        if value:
+            query = query.filter(getattr(EvidenceAttachment, field) == value)
+    include_deleted = (request.args.get('include_deleted') or '').lower() in {'1', 'true', 'yes'}
+    if include_deleted and not _attachment_admin_decision():
+        return _cad_json_error('Admin evidence attachment access required', 403)
+    if not include_deleted:
+        query = query.filter(EvidenceAttachment.is_deleted.is_(False))
+    attachments = query.order_by(EvidenceAttachment.created_at.desc()).all()
+    return jsonify({'success': True, 'attachments': [_attachment_to_dict(a) for a in attachments]})
+
+
+@app.route('/api/cad/evidence/attachments/<attachment_id>/download', methods=['GET'])
+def cad_evidence_attachment_download(attachment_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    attachment = scoped_query(EvidenceAttachment, community_id).filter_by(attachment_id=attachment_id).first()
+    if not attachment or attachment.is_deleted:
+        return _cad_json_error('Evidence attachment not found', 404)
+    if attachment.storage_mode != 'local_volume':
+        return _cad_json_error('External evidence links are opened by URL, not downloaded by the CAD server', 400)
+    path, path_error = resolve_local_path(attachment.storage_path)
+    if path_error:
+        return _cad_json_error('Evidence attachment is not available', 404)
+    if not path.exists() or not path.is_file():
+        return _cad_json_error('Evidence attachment is not available', 404)
+    _cad_audit('evidence_attachment_downloaded', community_id, attachment.case_id, {'attachment_id': attachment.attachment_id})
+    db.session.commit()
+    return send_file(path, as_attachment=True, download_name=attachment.original_filename or 'evidence_attachment', mimetype=attachment.mime_type or None, conditional=True)
+
+
+@app.route('/api/cad/evidence/attachments/<attachment_id>', methods=['DELETE'])
+def cad_evidence_attachment_delete(attachment_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    attachment = scoped_query(EvidenceAttachment, community_id).filter_by(attachment_id=attachment_id).first()
+    if not attachment or attachment.is_deleted:
+        return _cad_json_error('Evidence attachment not found', 404)
+    if attachment.uploaded_by_user_id != session.get('user_id') and not _attachment_admin_decision():
+        return _cad_json_error('Evidence attachment delete permission required', 403)
+    attachment.is_deleted = True
+    attachment.deleted_at = datetime.utcnow()
+    attachment.updated_at = datetime.utcnow()
+    _cad_audit('evidence_attachment_deleted', community_id, attachment.case_id, {'attachment_id': attachment.attachment_id})
+    db.session.commit()
+    return jsonify({'success': True, 'attachment': _attachment_to_dict(attachment)})
+
+
 @app.route('/api/cad/ai/status', methods=['GET'])
 def cad_ai_status():
     guard, err = _cad_ai_guard()
@@ -8883,16 +9187,53 @@ def cad_ai_evidence_summary():
     guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
     if err:
         return err
+<<<<<<< codex/review-gtavcad-evidence-uploads-pr
     evidence_metadata = _evidence_ai_metadata_only(payload)
     ai_result = _ai_json_route(
         'evidence_summary',
         _default_ai_system_rules("Based on attachment metadata and officer-entered descriptions only. Do not claim to view images, videos, PDFs, downloads, links, or binary file contents."),
         f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Input metadata: {json.dumps(evidence_metadata)}",
         evidence_metadata,
+=======
+    community_id = guard['community_id']
+    attachment_query = scoped_query(EvidenceAttachment, community_id).filter(EvidenceAttachment.is_deleted.is_(False))
+    for field in ('case_id', 'evidence_id', 'arrest_id', 'warrant_id', 'court_packet_id'):
+        if payload.get(field):
+            attachment_query = attachment_query.filter(getattr(EvidenceAttachment, field) == str(payload.get(field)).strip())
+    attachments = []
+    for attachment in attachment_query.order_by(EvidenceAttachment.created_at.desc()).limit(25).all():
+        attachments.append({
+            'attachment_id': attachment.attachment_id,
+            'filename': attachment.original_filename,
+            'file_type': attachment.file_type,
+            'category': attachment.category,
+            'description': attachment.description,
+            'upload_time': attachment.created_at.isoformat() if attachment.created_at else None,
+            'case_id': attachment.case_id,
+            'evidence_id': attachment.evidence_id,
+            'arrest_id': attachment.arrest_id,
+            'warrant_id': attachment.warrant_id,
+            'court_packet_id': attachment.court_packet_id,
+            'external_link_available': bool(attachment.external_url),
+        })
+    metadata_payload = {
+        'officer_notes': payload.get('officer_notes') or payload.get('notes') or '',
+        'case_id': payload.get('case_id'),
+        'evidence_id': payload.get('evidence_id'),
+        'arrest_id': payload.get('arrest_id'),
+        'warrant_id': payload.get('warrant_id'),
+        'attachments': attachments,
+    }
+    ai_result = _ai_json_route(
+        'evidence_summary',
+        _default_ai_system_rules("Based on the attachment metadata and officer-entered descriptions only. Do not claim you viewed any image, video, PDF, or binary file contents."),
+        f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Start narrative wording with 'Based on the attachment metadata and officer-entered descriptions...' Input metadata only: {json.dumps(metadata_payload)}",
+        {'case_id': payload.get('case_id'), 'attachment_count': len(attachments)},
+>>>>>>> main
     )
     if not ai_result or not isinstance(ai_result[0], dict):
         return ai_result
-    return jsonify({'success': True, **ai_result[0]})
+    return jsonify({'success': True, 'source': 'attachment_metadata_only', **ai_result[0]})
 
 
 @app.route('/api/cad/ai/charge-suggestions', methods=['POST'])

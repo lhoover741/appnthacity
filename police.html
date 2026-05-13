@@ -497,14 +497,18 @@
 
         <article class="card form-card">
           <h3>Submit Evidence</h3>
-          <form id="evidence-form" class="system-form">
-            <label><span>Case number</span><input name="caseNumber" type="text" required /></label>
-            <label><span>Officer</span><input name="evidenceOfficer" type="text" required /></label>
-            <label><span>Evidence type</span><select name="evidenceType" required><option value="">Select</option><option>Photo</option><option>Video clip</option><option>Weapon</option><option>Document</option></select></label>
+          <form id="evidence-form" class="system-form" enctype="multipart/form-data">
+            <p class="form-hint" data-evidence-upload-hint>Direct uploads are not configured. Attach an external evidence link instead.</p>
+            <label><span>Case ID / number</span><input name="caseNumber" type="text" required /></label>
+            <label><span>Evidence record ID</span><input name="evidence_id" type="text" placeholder="Optional existing evidence ID" /></label>
+            <label><span>Arrest ID</span><input name="arrest_id" type="text" placeholder="Optional arrest ID" /></label>
+            <label><span>Warrant ID</span><input name="warrant_id" type="text" placeholder="Optional warrant ID" /></label>
+            <label><span>Evidence type</span><select name="evidenceType" required><option value="">Select</option><option>Photo</option><option>Video clip</option><option>PDF</option><option>Text note</option><option>External link</option><option>Document</option></select></label>
+            <label><span>Category</span><input name="category" type="text" placeholder="Bodycam, dashcam, screenshot, report…" /></label>
             <label><span>Description</span><textarea name="evidenceDescription" rows="3" required></textarea></label>
-            <label><span>Clip / screenshot link</span><input name="evidenceLink" type="url" placeholder="https://" /></label>
-            <label><span>Storage status</span><select name="storageStatus" required><option value="">Select</option><option>Locked</option><option>In transit</option><option>Filed</option></select></label>
-            <button class="button button-primary" type="submit">Log Evidence</button>
+            <label><span>External clip / screenshot link</span><input name="evidenceLink" type="url" placeholder="https://" /></label>
+            <label><span>Direct upload file</span><input name="file" type="file" accept=".png,.jpg,.jpeg,.webp,.mp4,.mov,.webm,.pdf,.txt,.zip" /></label>
+            <button class="button button-primary" type="submit">Attach Evidence</button>
             <div class="form-status" id="evidence-status"></div>
           </form>
         </article>
