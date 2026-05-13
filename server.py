@@ -378,6 +378,78 @@ limiter = Limiter(
 cache.init_app(app)
 
 
+def _normalize_socketio_origin(value):
+    """Normalize a configured URL/domain to an Engine.IO origin."""
+    raw_value = (value or '').strip().rstrip('/')
+    if not raw_value:
+        return None
+    if raw_value == '*':
+        return '*'
+
+    url_value = raw_value if raw_value.startswith(('http://', 'https://')) else f'https://{raw_value}'
+    parsed = urlsplit(url_value)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+
+    # Browsers send the Origin header as scheme + host (+ port), without any path,
+    # query string, or fragment. Engine.IO compares against that exact origin string.
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), '', '', ''))
+
+
+def _add_unique_socketio_origin(origins, seen, value):
+    origin = _normalize_socketio_origin(value)
+    if origin and origin not in seen:
+        origins.append(origin)
+        seen.add(origin)
+
+
+def _is_local_socketio_hostname(hostname):
+    value = (hostname or '').strip().lower().strip('[]')
+    return value in {'localhost', '127.0.0.1', '::1'} or value.startswith('127.')
+
+
+def _should_add_socketio_www_variant(hostname):
+    """Add www only for apex custom domains, not local/hosted subdomains."""
+    value = (hostname or '').strip().lower().strip('[]')
+    if not value or value.startswith('www.') or _is_local_socketio_hostname(value):
+        return False
+    if value.endswith('.railway.app') or ':' in value:
+        return False
+    return value.count('.') == 1
+
+
+def _add_socketio_origin_with_variants(origins, seen, value):
+    origin = _normalize_socketio_origin(value)
+    if not origin or origin == '*':
+        return
+
+    _add_unique_socketio_origin(origins, seen, origin)
+
+    parsed = urlsplit(origin)
+    if not _should_add_socketio_www_variant(parsed.hostname):
+        return
+
+    port = f':{parsed.port}' if parsed.port else ''
+    www_origin = urlunsplit((parsed.scheme, f'www.{parsed.hostname}{port}', '', '', ''))
+    _add_unique_socketio_origin(origins, seen, www_origin)
+
+
+def _configured_socketio_domain_values():
+    """Collect public domain/base-url settings that can safely seed CORS origins."""
+    values = []
+    platform_domain_env = (os.environ.get('PLATFORM_DOMAIN') or '').strip()
+    if platform_domain_env:
+        values.append(platform_domain_env)
+    elif PLATFORM_DOMAIN:
+        values.append(PLATFORM_DOMAIN)
+
+    for key in ('PUBLIC_BASE_URL', 'APP_BASE_URL', 'BASE_URL', 'RAILWAY_PUBLIC_DOMAIN'):
+        value = (os.environ.get(key) or '').strip()
+        if value:
+            values.append(value)
+    return values
+
+
 def _parse_socketio_allowed_origins():
     """Return a Socket.IO CORS allowlist without production wildcards."""
     env_name = (os.environ.get('FLASK_ENV') or os.environ.get('APP_ENV') or '').strip().lower()
@@ -390,21 +462,34 @@ def _parse_socketio_allowed_origins():
         'http://localhost:3000',
         'http://127.0.0.1:3000',
     ]
-    raw_origins = configured.split(',') if configured else (production_defaults if is_production else development_defaults)
     origins = []
     seen = set()
-    for raw_origin in raw_origins:
-        origin = (raw_origin or '').strip().rstrip('/')
-        if not origin:
-            continue
-        if origin == '*':
-            logger.warning('Ignoring wildcard Socket.IO CORS origin')
-            continue
-        if origin not in seen:
-            origins.append(origin)
-            seen.add(origin)
-    if not origins:
-        origins = production_defaults if is_production else development_defaults
+
+    if configured is not None:
+        for raw_origin in configured.split(','):
+            origin = _normalize_socketio_origin(raw_origin)
+            if not origin:
+                continue
+            if origin == '*':
+                logger.warning('Ignoring wildcard Socket.IO CORS origin')
+                continue
+            _add_unique_socketio_origin(origins, seen, origin)
+        if origins:
+            logger.info('Socket.IO CORS allowlist configured count=%s origins=%s', len(origins), origins)
+            return origins
+
+    if is_production:
+        for value in _configured_socketio_domain_values():
+            _add_socketio_origin_with_variants(origins, seen, value)
+        if not origins:
+            for fallback_origin in production_defaults:
+                _add_unique_socketio_origin(origins, seen, fallback_origin)
+    else:
+        for fallback_origin in development_defaults:
+            _add_unique_socketio_origin(origins, seen, fallback_origin)
+        for value in _configured_socketio_domain_values():
+            _add_socketio_origin_with_variants(origins, seen, value)
+
     logger.info('Socket.IO CORS allowlist configured count=%s origins=%s', len(origins), origins)
     return origins
 
