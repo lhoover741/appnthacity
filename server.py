@@ -9150,12 +9150,51 @@ def cad_ai_court_summary():
     return jsonify({'success': True, 'summary': ai_result[0], 'review_required': True})
 
 
+_EVIDENCE_AI_METADATA_KEYS = {
+    'case_id', 'evidence_id', 'attachment_id', 'parent_id', 'parent_type',
+    'title', 'name', 'display_name', 'file_name', 'filename', 'original_filename',
+    'evidence_type', 'type', 'attachment_type', 'source_type', 'content_type',
+    'mime_type', 'size_bytes', 'file_size', 'description', 'evidence_description',
+    'officer', 'uploaded_by', 'created_by', 'created_at', 'updated_at', 'status',
+    'storage_status', 'chain_of_custody', 'notes', 'tags',
+}
+_EVIDENCE_AI_URL_KEYS = {'external_url', 'clip_link', 'screenshot_link', 'download_url', 'url', 'link'}
+_EVIDENCE_AI_NESTED_KEYS = {'evidence', 'attachments', 'evidence_attachments', 'items'}
+
+
+def _evidence_ai_metadata_only(value):
+    """Strip evidence AI input to metadata so files, paths, and raw URLs are never sent to the provider."""
+    if isinstance(value, list):
+        return [_evidence_ai_metadata_only(item) for item in value]
+    if not isinstance(value, dict):
+        return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)[:200]
+
+    sanitized = {}
+    for key, item in value.items():
+        key_str = str(key)
+        if key_str in _EVIDENCE_AI_METADATA_KEYS:
+            sanitized[key_str] = _evidence_ai_metadata_only(item)
+        elif key_str in _EVIDENCE_AI_URL_KEYS:
+            sanitized[f'has_{key_str}'] = bool(item)
+        elif key_str in _EVIDENCE_AI_NESTED_KEYS:
+            sanitized[key_str] = _evidence_ai_metadata_only(item)
+    return sanitized
+
+
 @app.route('/api/cad/ai/evidence-summary', methods=['POST'])
 def cad_ai_evidence_summary():
     payload = request.get_json(silent=True) or {}
     guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
     if err:
         return err
+<<<<<<< codex/review-gtavcad-evidence-uploads-pr
+    evidence_metadata = _evidence_ai_metadata_only(payload)
+    ai_result = _ai_json_route(
+        'evidence_summary',
+        _default_ai_system_rules("Based on attachment metadata and officer-entered descriptions only. Do not claim to view images, videos, PDFs, downloads, links, or binary file contents."),
+        f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Input metadata: {json.dumps(evidence_metadata)}",
+        evidence_metadata,
+=======
     community_id = guard['community_id']
     attachment_query = scoped_query(EvidenceAttachment, community_id).filter(EvidenceAttachment.is_deleted.is_(False))
     for field in ('case_id', 'evidence_id', 'arrest_id', 'warrant_id', 'court_packet_id'):
@@ -9190,6 +9229,7 @@ def cad_ai_evidence_summary():
         _default_ai_system_rules("Based on the attachment metadata and officer-entered descriptions only. Do not claim you viewed any image, video, PDF, or binary file contents."),
         f"Return JSON keys: evidence_summary, chain_of_custody_narrative, relevance_to_charges, missing_evidence_checklist, review_notes. Start narrative wording with 'Based on the attachment metadata and officer-entered descriptions...' Input metadata only: {json.dumps(metadata_payload)}",
         {'case_id': payload.get('case_id'), 'attachment_count': len(attachments)},
+>>>>>>> main
     )
     if not ai_result or not isinstance(ai_result[0], dict):
         return ai_result

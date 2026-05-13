@@ -1100,6 +1100,15 @@ function renderEvidenceTable() {
     return;
   }
 
+  const safeEvidenceUrl = (value) => {
+    try {
+      const parsed = new URL(String(value || ''), window.location.origin);
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    } catch (error) {
+      return '';
+    }
+  };
+
   const html = evidence.map(item => {
     if (item.recordKind === 'attachment') {
       const safeDownload = safeEvidenceHref(item.download_url, { allowInternalDownload: true });
