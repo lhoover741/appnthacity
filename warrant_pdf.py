@@ -1,4 +1,5 @@
 from datetime import datetime
+from html import escape
 from io import BytesIO
 import re
 
@@ -57,6 +58,12 @@ def _fmt_dt(value):
     return str(value)
 
 
+def _pdf_text(value):
+    text = str(value or '—')
+    text = escape(text, quote=True)
+    return text.replace('\n', '<br/>')
+
+
 def build_warrant_pdf(warrant, *, community_name='', cad_name='', created_by='', approved_by=''):
     """Return a generated warrant PDF as bytes without reading any stored binary input."""
     try:
@@ -76,8 +83,8 @@ def build_warrant_pdf(warrant, *, community_name='', cad_name='', created_by='',
 
     warrant_type = _value(warrant, 'warrant_type') or 'Arrest Warrant'
     warrant_number = _value(warrant, 'warrant_number', 'warrant_id')
-    story.append(Paragraph('GTAVCAD Warrant', styles['Title']))
-    story.append(Paragraph(f'{community_name or "Community"} • {cad_name or "CAD"}', styles['Heading3']))
+    story.append(Paragraph(_pdf_text('GTAVCAD Warrant'), styles['Title']))
+    story.append(Paragraph(_pdf_text(f'{community_name or "Community"} • {cad_name or "CAD"}'), styles['Heading3']))
     story.append(Spacer(1, 0.15 * inch))
 
     rows = [
@@ -101,7 +108,13 @@ def build_warrant_pdf(warrant, *, community_name='', cad_name='', created_by='',
         ('Created By', created_by),
         ('Approved By', approved_by),
     ])
-    table_data = [[Paragraph(f'<b>{label}</b>', styles['Normal']), Paragraph(str(value or '—').replace('\n', '<br/>'), styles['Normal'])] for label, value in rows]
+    table_data = [
+        [
+            Paragraph(f'<b>{escape(str(label), quote=True)}</b>', styles['Normal']),
+            Paragraph(_pdf_text(value), styles['Normal'])
+        ]
+        for label, value in rows
+    ]
     table = Table(table_data, colWidths=[1.85 * inch, 5.0 * inch])
     table.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#cccccc')),
@@ -114,6 +127,6 @@ def build_warrant_pdf(warrant, *, community_name='', cad_name='', created_by='',
     ]))
     story.append(table)
     story.append(Spacer(1, 0.2 * inch))
-    story.append(Paragraph(DISCLAIMER, styles['SmallMuted']))
+    story.append(Paragraph(_pdf_text(DISCLAIMER), styles['SmallMuted']))
     doc.build(story)
     return buffer.getvalue()
