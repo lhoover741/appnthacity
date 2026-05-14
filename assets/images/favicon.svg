@@ -1,10 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#050505"/>
-  <path d="M256 40 420 92 472 178 430 388 256 474 82 388 40 178 92 92Z" fill="#111" stroke="#8b0000" stroke-width="12"/>
-  <rect x="92" y="204" width="328" height="124" rx="26" fill="#030303" stroke="#2a2a2a" stroke-width="8"/>
-  <text x="256" y="290" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="82" letter-spacing="4" fill="#f4f4f4" stroke="#111" stroke-width="3">CAD</text>
-  <circle cx="256" cy="148" r="9" fill="#ff2d2d"/>
-  <path d="M202 148a54 54 0 0 1 108 0M172 148a84 84 0 0 1 168 0" fill="none" stroke="#ff2d2d" stroke-width="5" opacity=".55"/>
-  <rect x="84" y="176" width="46" height="12" rx="5" fill="#2478ff"/>
-  <rect x="382" y="176" width="46" height="12" rx="5" fill="#ff2d2d"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 250" role="img" aria-label="GTAVCAD favicon">
+  <image href="/assets/images/gtavcad-logo.svg" width="250" height="250" preserveAspectRatio="xMidYMid meet"/>
 </svg>
