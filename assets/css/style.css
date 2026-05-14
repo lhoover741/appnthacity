@@ -1668,3 +1668,34 @@ button:disabled {
 #civilian-profile-selector {
   min-width: min(100%, 20rem);
 }
+
+.profile-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin-bottom: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.profile-label {
+  font-weight: 700;
+  color: var(--muted, #b8b8b8);
+  min-width: 130px;
+}
+
+.profile-value {
+  color: var(--text, #f6f6f6);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .profile-label { min-width: 100px; }
+}
+
+.traffic-outcome-panel {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 12px;
+  padding: 1rem;
+  margin: 0.75rem 0;
+  background: rgba(255,255,255,0.03);
+}

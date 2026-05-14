@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import re
 import smtplib
 import logging
 import secrets
@@ -926,11 +927,13 @@ def internal_error(error):
 
 
 
+@app.route('/c/<slug>/civilian-portal', methods=['GET'])
 @app.route('/c/<slug>/civilian-dashboard', methods=['GET'])
 def tenant_civilian_dashboard_page(slug):
     return send_from_directory('.', 'civilian-dashboard.html')
 
 
+@app.route('/civilian-portal', methods=['GET'])
 @app.route('/civilian-dashboard', methods=['GET'])
 def civilian_dashboard_page():
     return send_from_directory('.', 'civilian-dashboard.html')
@@ -2334,8 +2337,29 @@ def _is_served_warrant_for_civilian(warrant):
     return any(status == 'served' for status in status_values)
 
 
+def _warrant_matches_civilian(warrant, civilian):
+    if (getattr(warrant, 'civilian_id', None) or '').strip() == civilian.civilian_id:
+        return True
+    subject = _normalize_name(_warrant_value(warrant, 'subject_name', 'warrant_name'))
+    if not subject or subject != _normalize_name(_civilian_full_name(civilian)):
+        return False
+    subject_dob = str(_warrant_value(warrant, 'subject_dob') or '').strip()
+    civilian_dob = civilian.date_of_birth.isoformat() if civilian.date_of_birth else ''
+    if subject_dob and civilian_dob and subject_dob == civilian_dob:
+        return True
+    subject_address = _normalize_name(_warrant_value(warrant, 'subject_address'))
+    civilian_address = _normalize_name(civilian.address)
+    return bool(subject_address and civilian_address and subject_address == civilian_address)
+
+
 def _dashboard_served_warrant_rows(civilian, community_id):
-    warrants = scoped_query(Warrant, community_id).filter_by(civilian_id=civilian.civilian_id).order_by(Warrant.created_at.desc()).all()
+    direct = scoped_query(Warrant, community_id).filter_by(civilian_id=civilian.civilian_id).all()
+    named = scoped_query(Warrant, community_id).filter(or_(Warrant.subject_name.ilike(_civilian_full_name(civilian)), Warrant.warrant_name.ilike(_civilian_full_name(civilian)))).all()
+    seen = {}
+    for warrant in direct + named:
+        if _is_served_warrant_for_civilian(warrant) and _warrant_matches_civilian(warrant, civilian):
+            seen[warrant.warrant_id] = warrant
+    warrants = sorted(seen.values(), key=lambda w: w.created_at or datetime.min, reverse=True)
     return [{
         'warrant_number': _warrant_value(w, 'warrant_number', 'warrant_id'),
         'warrant_type': _warrant_value(w, 'warrant_type', default='Arrest Warrant') or 'Arrest Warrant',
@@ -8643,7 +8667,7 @@ COMMUNITY_SUPPORTED_ROLES = {
 CAD_ELIGIBLE_ROLES = set(CANONICAL_CAD_ACCESS_ROLES)
 COMMUNITY_SETTING_KEYS = {
     'departments', 'officer_ranks', 'ranks', 'call_types', 'penal_code_categories',
-    'business_categories', 'invite_policy', 'cad_access_policy'
+    'business_categories', 'invite_policy', 'cad_access_policy', 'accent_color', 'background_color', 'text_color'
 }
 COMMUNITY_SETTING_ALIASES = {
     'ranks': 'officer_ranks',
@@ -9221,8 +9245,16 @@ def _community_admin_settings_dict(community):
         'cad_name': community.cad_name,
         'slug': community.slug,
         'status': community.status,
+        'logo_url': community.logo_url or '',
+        'primary_color': community.primary_color or '#1a1a1a',
+        'secondary_color': community.secondary_color or '#0066cc',
+        'accent_color': _community_admin_config_value(community.community_id, 'accent_color', '#ff2d2d'),
+        'background_color': _community_admin_config_value(community.community_id, 'background_color', '#0b0b0d'),
+        'text_color': _community_admin_config_value(community.community_id, 'text_color', '#f6f6f6'),
     }
     for key in keys:
+        if key in {'accent_color', 'background_color', 'text_color'}:
+            continue
         public_key = 'ranks' if key == 'officer_ranks' else key
         settings[public_key] = _community_admin_config_value(community.community_id, key, [] if key in COMMUNITY_LIST_SETTING_KEYS else {})
     settings.pop('cad_permissions', None)
@@ -9622,6 +9654,28 @@ def community_admin_settings_post():
         if not cad_name:
             return jsonify({'success': False, 'error': 'CAD display name is required'}), 400
         community.cad_name = cad_name
+    if 'logo_url' in data:
+        community.logo_url = (data.get('logo_url') or '').strip() or None
+    def _valid_hex(value):
+        return isinstance(value, str) and re.fullmatch(r'#[0-9A-Fa-f]{6}', value.strip())
+    for color_key in ('primary_color', 'secondary_color'):
+        if color_key in data:
+            color = (data.get(color_key) or '').strip()
+            if not _valid_hex(color):
+                return jsonify({'success': False, 'error': f'{color_key} must be a #RRGGBB hex color'}), 400
+            setattr(community, color_key, color)
+    for color_key in ('accent_color', 'background_color', 'text_color'):
+        if color_key in data:
+            color = (data.get(color_key) or '').strip()
+            if not _valid_hex(color):
+                return jsonify({'success': False, 'error': f'{color_key} must be a #RRGGBB hex color'}), 400
+            _community_admin_set_config_value(community.community_id, color_key, color)
+    if data.get('reset_colors') is True:
+        community.primary_color = '#1a1a1a'
+        community.secondary_color = '#0066cc'
+        _community_admin_set_config_value(community.community_id, 'accent_color', '#ff2d2d')
+        _community_admin_set_config_value(community.community_id, 'background_color', '#0b0b0d')
+        _community_admin_set_config_value(community.community_id, 'text_color', '#f6f6f6')
     updated = []
     for raw_key, value in data.items():
         key = COMMUNITY_SETTING_ALIASES.get(raw_key, raw_key)
@@ -9950,6 +10004,103 @@ def _apply_warrant_payload(warrant, payload):
     _set_warrant_status(warrant, payload.get('status') or warrant.status or warrant.warrant_status or 'Active')
 
 
+def _link_warrant_subject_to_civilian(warrant, community_id):
+    subject = _warrant_value(warrant, 'subject_name', 'warrant_name')
+    if not subject:
+        return None
+    matches = scoped_query(Civilian, community_id).filter(_civilian_name_filter(subject)).limit(3).all()
+    exact = [c for c in matches if _normalize_name(_civilian_full_name(c)) == _normalize_name(subject)]
+    if len(exact) != 1:
+        return exact
+    civilian = exact[0]
+    warrant.civilian_id = civilian.civilian_id
+    if not getattr(warrant, 'subject_dob', None) and civilian.date_of_birth:
+        warrant.subject_dob = civilian.date_of_birth.isoformat()
+    if not getattr(warrant, 'subject_address', None) and civilian.address:
+        warrant.subject_address = civilian.address
+    return exact
+
+
+
+
+@app.route('/api/cad/warrants/find-civilian', methods=['POST'])
+def cad_warrant_find_civilian():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    subject = (data.get('subject_name') or data.get('name') or '').strip()
+    if not subject:
+        return _cad_json_error('subject_name is required', 400)
+    matches = scoped_query(Civilian, community_id).filter(_civilian_name_filter(subject)).order_by(Civilian.created_at.desc()).limit(10).all()
+    exact = [c for c in matches if _normalize_name(_civilian_full_name(c)) == _normalize_name(subject)]
+    selected = exact[0] if len(exact) == 1 else None
+    return jsonify({
+        'success': True,
+        'match_count': len(exact) if exact else len(matches),
+        'multiple': len(exact) > 1,
+        'civilian': _civilian_response(selected) if selected else None,
+        'matches': [_civilian_response(c) for c in (exact or matches)],
+    })
+
+
+def _criminal_record_for_civilian(civilian, community_id):
+    full_name = _civilian_full_name(civilian)
+    warrants = [warrant_to_dict(w) for w in scoped_query(Warrant, community_id).filter(or_(Warrant.civilian_id == civilian.civilian_id, Warrant.subject_name.ilike(full_name), Warrant.warrant_name.ilike(full_name))).order_by(Warrant.created_at.desc()).all() if _warrant_matches_civilian(w, civilian) or (w.civilian_id == civilian.civilian_id)]
+    arrests = [arrest_to_dict(a) for a in scoped_query(Arrest, community_id).filter(or_(Arrest.civilian_id == civilian.civilian_id, Arrest.suspect_name.ilike(full_name))).order_by(Arrest.created_at.desc()).all()]
+    citations = [citation_to_dict(c) for c in scoped_query(Citation, community_id).filter(Citation.civilian_id == civilian.civilian_id).order_by(Citation.created_at.desc()).all()]
+    jail_records = [jail_booking_to_dict(j) for j in scoped_query(JailBooking, community_id).filter(or_(JailBooking.civilian_id == civilian.civilian_id, JailBooking.suspect_name.ilike(full_name))).order_by(JailBooking.created_at.desc()).all()]
+    hearings = [hearing_to_dict(h) for h in scoped_query(Hearing, community_id).filter(or_(Hearing.civilian_id == civilian.civilian_id, Hearing.suspect_name.ilike(full_name))).order_by(Hearing.created_at.desc()).all()]
+    traffic_stops = [traffic_stop_to_dict(t) for t in scoped_query(TrafficStop, community_id).filter(TrafficStop.driver_name.ilike(full_name)).order_by(TrafficStop.created_at.desc()).all()]
+    cases = [_case_to_dict(c) for c in scoped_query(CaseFile, community_id).filter(CaseFile.defendant_civilian_id == civilian.civilian_id).order_by(CaseFile.created_at.desc()).all()]
+    evidence_count = scoped_query(EvidenceAttachment, community_id).filter(EvidenceAttachment.is_deleted.is_(False), or_(EvidenceAttachment.case_id.in_([c.get('case_id') for c in cases] or ['']), EvidenceAttachment.arrest_id.in_([a.get('id') for a in arrests] or ['']), EvidenceAttachment.warrant_id.in_([w.get('warrant_id') for w in warrants] or ['']))).count()
+    has = any([warrants, arrests, citations, jail_records, hearings, traffic_stops, cases, evidence_count])
+    return {'civilian': _civilian_response(civilian), 'warrants': warrants, 'arrests': arrests, 'citations': citations, 'jailRecords': jail_records, 'hearings': hearings, 'trafficStops': traffic_stops, 'cases': cases, 'evidence': [{'evidenceCount': evidence_count}] if evidence_count else [], 'hasCriminalHistory': bool(has)}
+
+@app.route('/api/criminal-records/search', methods=['GET'])
+def criminal_records_search():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    query = (request.args.get('q') or request.args.get('query') or '').strip()
+    if not query:
+        return _cad_json_error('query is required', 400)
+    civilians = _civilian_search_query(query, community_id=community_id).order_by(Civilian.created_at.desc()).limit(25).all()
+    records = [_criminal_record_for_civilian(c, community_id) for c in civilians]
+    flattened = {
+        'civilians': [r['civilian'] for r in records],
+        'warrants': [item for r in records for item in r['warrants']],
+        'arrests': [item for r in records for item in r['arrests']],
+        'citations': [item for r in records for item in r['citations']],
+        'jailRecords': [item for r in records for item in r['jailRecords']],
+        'hearings': [item for r in records for item in r['hearings']],
+        'trafficStops': [item for r in records for item in r['trafficStops']],
+        'cases': [item for r in records for item in r['cases']],
+        'evidence': [item for r in records for item in r['evidence']],
+    }
+    return jsonify({'success': True, 'records': records, 'results': flattened['civilians'], 'total': len(records), **flattened})
+
+@app.route('/api/cad/case-packets/generate', methods=['POST'])
+def cad_case_packet_generate():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    arrest_id = (data.get('arrest_id') or '').strip()
+    warrant_id = (data.get('warrant_id') or '').strip()
+    civilian_id = (data.get('civilian_id') or '').strip()
+    arrest = scoped_query(Arrest, community_id).filter_by(arrest_id=arrest_id).first() if arrest_id else None
+    warrant = _find_warrant_for_cad(community_id, warrant_id) if warrant_id else None
+    if not civilian_id:
+        civilian_id = (arrest.civilian_id if arrest else '') or (warrant.civilian_id if warrant else '')
+    title = data.get('title') or f"Case Packet {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+    case_id = f"CASE-PKT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}"
+    case = CaseFile(community_id=community_id, case_id=case_id, case_number=case_id, title=title, case_type='case_packet', linked_arrest_id=arrest_id or None, linked_warrant_id=warrant_id or None, defendant_civilian_id=civilian_id or None, charges=(arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None), report_notes=data.get('notes') or 'Generated case packet record. Evidence metadata/counts only; storage paths are not exposed.', created_by=_actor_name(), status='open', created_at=datetime.utcnow())
+    db.session.add(case)
+    _cad_audit('case_packet_generated', community_id, case_id, {'case_id': case_id, 'arrest_id': arrest_id, 'warrant_id': warrant_id, 'civilian_id': civilian_id})
+    db.session.commit()
+    return jsonify({'success': True, 'case_packet': _case_to_dict(case), 'case_id': case_id})
+
 @app.route('/api/cad/warrants', methods=['GET'])
 def cad_warrants_list():
     community_id, error = _require_cad_community()
@@ -9990,6 +10141,7 @@ def cad_warrants_create():
         created_at=datetime.utcnow(),
     )
     _apply_warrant_payload(warrant, payload)
+    _link_warrant_subject_to_civilian(warrant, community_id)
     db.session.add(warrant)
     _cad_audit('warrant_created', community_id, warrant.warrant_id, {'warrant_id': warrant.warrant_id, 'warrant_number': warrant.warrant_number, 'warrant_type': warrant.warrant_type})
     db.session.commit()
@@ -10328,7 +10480,7 @@ def _cad_ai_guard(case_id=None):
     if not session.get('user_id'):
         return None, (jsonify({'success': False, 'error': 'Unauthorized'}), 401)
     if not current_role_allows_police_cad():
-        return None, (jsonify({'success': False, 'error': 'Police CAD access required'}), 403)
+        return None, (jsonify({'success': False, 'error': 'CAD AI access requires an authorized CAD role in this community.'}), 403)
     community_ctx = resolve_active_community()
     community_id = (community_ctx or {}).get('community_id')
     if not community_id:
