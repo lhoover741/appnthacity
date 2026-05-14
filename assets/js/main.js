@@ -2439,3 +2439,25 @@ function showCommunityCreatedModal() {
 showCommunityCreatedModal();
 
 window.GTAVCADData = GTAVCADData;
+
+(function(){
+  function cadInit(){
+    const modules=[...document.querySelectorAll('.cad-module')]; if(!modules.length) return;
+    const buttons=[...document.querySelectorAll('.cad-sidebar-btn')];
+    const title=document.getElementById('cad-module-title');
+    const feed=document.getElementById('cad-feed-items');
+    const now=document.getElementById('cad-now');
+    const status=document.getElementById('cad-officer-status');
+    const key='cad.selectedModule';
+    const labels={dashboard:'Dashboard',calls:'Active Calls',traffic:'Traffic Stops',lookup:'Lookup',warrants:'Warrants',arrests:'Arrests',evidence:'Evidence',reports:'Reports',court:'Court / Case Packets','officer-status':'Officer Status','gang-investigations':'Gang Unit / Investigations'};
+    const addFeed=(badge,msg)=>{if(!feed) return; const d=document.createElement('div'); d.className='cad-feed-item'; d.innerHTML=`<span class="cad-badge ${badge}">${new Date().toLocaleTimeString()}</span> ${msg}`; feed.prepend(d)};
+    const switchTo=(name)=>{modules.forEach(m=>m.classList.toggle('active',m.dataset.cadModule===name));buttons.forEach(b=>b.classList.toggle('active',b.dataset.cadModuleTarget===name));if(title) title.textContent=labels[name]||name; localStorage.setItem(key,name)};
+    buttons.forEach(b=>b.addEventListener('click',()=>switchTo(b.dataset.cadModuleTarget)));
+    document.querySelectorAll('[data-cad-quick-action]').forEach(btn=>btn.addEventListener('click',()=>{const m=btn.dataset.cadQuickAction;switchTo(m); const f=btn.dataset.cadFocus; if(f){const el=document.querySelector(f); if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.focus();}}}));
+    ['dispatch-form','traffic-stop-form','warrant-form','arrest-form','evidence-form'].forEach(id=>{const f=document.getElementById(id); if(f) f.addEventListener('submit',()=>addFeed('cad-badge-status-active',`${id.replace('-form','')} updated`));});
+    if(status) status.addEventListener('change',()=>addFeed('cad-badge-status-pending',`Officer status changed to ${status.value}`));
+    const saved=localStorage.getItem(key); if(saved&&labels[saved]) switchTo(saved);
+    setInterval(()=>{if(now) now.textContent=new Date().toLocaleString();},1000);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',cadInit); else cadInit();
+})();

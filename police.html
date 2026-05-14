@@ -43,6 +43,48 @@
   </section>
 
   <main>
+
+    <section class="cad-shell" id="cad-shell">
+      <div class="cad-topbar">
+        <div><strong>GTAVCAD</strong> · <span data-context-community>Community</span> · CAD / MDT</div>
+        <div><span id="cad-module-title">Dashboard</span> · <span id="cad-aop">AOP: Citywide</span> · <span id="cad-now"></span></div>
+        <div><span data-context-username>Officer</span> · <span data-context-role>Police</span>
+          <select id="cad-officer-status"><option>Available</option><option>En Route</option><option>On Scene</option><option>Busy</option><option>Off Duty</option></select>
+          <a class="button button-ghost" data-community-link="index" href="#">Back to Community</a>
+          <button type="button" class="button button-primary" data-auth-logout>Logout</button>
+        </div>
+      </div>
+      <div class="cad-grid">
+        <aside class="cad-sidebar" id="cad-sidebar">
+          <button class="cad-sidebar-btn active" data-cad-module-target="dashboard">Dashboard</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="calls">Active Calls</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="traffic">Traffic Stops</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="lookup">Lookup</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="warrants">Warrants</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="arrests">Arrests</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="evidence">Evidence</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="reports">Reports</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="court">Court / Case Packets</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="officer-status">Officer Status</button>
+          <button class="cad-sidebar-btn" data-cad-module-target="gang-investigations">Gang Unit / Investigations</button>
+        </aside>
+        <div class="cad-main">
+          <section class="cad-module active" data-cad-module="dashboard"><div class="cad-panel"><h3>Dashboard</h3><div class="cad-action-row"><button class="button button-secondary" data-cad-quick-action="calls" data-cad-focus="#dispatch-form [name=callerName]">Create 911 Call</button><button class="button button-secondary" data-cad-quick-action="traffic" data-cad-focus="#traffic-stop-form [name=suspectName]">Start Traffic Stop</button><button class="button button-secondary" data-cad-quick-action="gang-investigations">Gang Investigation</button></div></div></section>
+          <section class="cad-module" data-cad-module="calls"><div class="cad-panel"><h3>Active Calls</h3><p>Use the 911 form and queue below.</p></div></section>
+          <section class="cad-module" data-cad-module="traffic"><div class="cad-panel"><h3>Traffic Stops</h3></div></section>
+          <section class="cad-module" data-cad-module="lookup"><div class="cad-panel"><h3>Lookup</h3></div></section>
+          <section class="cad-module" data-cad-module="warrants"><div class="cad-panel"><h3>Warrants</h3></div></section>
+          <section class="cad-module" data-cad-module="arrests"><div class="cad-panel"><h3>Arrests</h3></div></section>
+          <section class="cad-module" data-cad-module="evidence"><div class="cad-panel"><h3>Evidence</h3></div></section>
+          <section class="cad-module" data-cad-module="reports"><div class="cad-panel"><h3>Reports</h3></div></section>
+          <section class="cad-module" data-cad-module="court"><div class="cad-panel"><h3>Court / Case Packets</h3></div></section>
+          <section class="cad-module" data-cad-module="officer-status"><div class="cad-panel"><h3>Officer Status</h3></div></section>
+          <section class="cad-module" data-cad-module="gang-investigations"><div class="cad-panel"><h3>Gang Unit / Investigations</h3><div class="gang-intel-grid"><div class="cad-card"><h4>Gang Profiles</h4></div><div class="cad-card"><h4>Territory Map</h4><p class="cad-empty-state">Territory map placeholder — ready for GTA V map marker integration.</p></div><div class="cad-card"><h4>Investigation Cases</h4></div><div class="cad-card"><h4>Suspect Watchlist</h4></div><div class="cad-card"><h4>Intelligence Notes</h4></div><div class="cad-card"><h4>Gang Investigation Packet</h4><button class="button button-secondary" disabled>AI Draft Investigation Summary</button></div></div></div></section>
+        </div>
+        <aside class="cad-feed"><h3>Live Dispatch Feed</h3><div id="cad-feed-items"></div></aside>
+      </div>
+    </section>
+
     <section class="hero page-hero panel">
       <div class="container hero-grid">
         <div>
