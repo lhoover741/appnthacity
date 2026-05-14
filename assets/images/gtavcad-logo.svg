@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="gtavcadLogoTitle gtavcadLogoDesc">
+  <title id="gtavcadLogoTitle">GTAVCAD Logo</title>
+  <desc id="gtavcadLogoDesc">Dark police computer terminal shield logo for the GTAVCAD roleplay dispatch system.</desc>
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#161616"/>
+      <stop offset="0.45" stop-color="#050505"/>
+      <stop offset="1" stop-color="#220000"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.48" stop-color="#d8d8d8"/>
+      <stop offset="1" stop-color="#8f8f8f"/>
+    </linearGradient>
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse">
+      <path d="M42 0H0V42" fill="none" stroke="#ffffff" stroke-opacity="0.055" stroke-width="2"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="720" fill="none"/>
+  <path d="M600 34 942 132 1092 286 1005 575 600 690 195 575 108 286 258 132Z" fill="#050505" stroke="#303030" stroke-width="18"/>
+  <path d="M600 70 915 160 1054 302 972 548 600 653 228 548 146 302 285 160Z" fill="url(#shield)" stroke="#8b0000" stroke-width="7"/>
+  <path d="M600 112 862 188 969 302 904 502 600 589 296 502 231 302 338 188Z" fill="#0d0d0d" stroke="#1f1f1f" stroke-width="5"/>
+  <path d="M300 500 C420 455 510 430 600 430 C690 430 780 455 900 500 L875 555 C770 528 681 512 600 512 C519 512 430 528 325 555Z" fill="url(#grid)" opacity="0.75"/>
+  <path d="M350 330h500" stroke="#8b0000" stroke-width="5" opacity="0.9"/>
+  <path d="M215 352h970v152H215z" rx="28" fill="#030303" stroke="#1d1d1d" stroke-width="10"/>
+  <path d="M222 505h956" stroke="#8b0000" stroke-width="7"/>
+
+  <g fill="#0a0a0a" stroke="#252525" stroke-width="5">
+    <path d="M160 308h165l-30 44H132z"/>
+    <path d="M875 308h165l28 44H905z"/>
+  </g>
+  <g filter="url(#glow)">
+    <rect x="170" y="323" width="34" height="10" rx="3" fill="#2478ff"/>
+    <rect x="218" y="323" width="34" height="10" rx="3" fill="#2478ff"/>
+    <rect x="966" y="323" width="34" height="10" rx="3" fill="#ff2d2d"/>
+    <rect x="1014" y="323" width="34" height="10" rx="3" fill="#ff2d2d"/>
+  </g>
+
+  <g transform="translate(0 0)" opacity="0.9">
+    <path d="M345 305h38v-70h52v70h36v-98h48v98h38v-62h50v62h36v-82h55v82h38v-108h58v108h35v-69h50v69h34v47H345z" fill="#050505" stroke="#262626" stroke-width="3"/>
+    <path d="M348 305h524" stroke="#8b0000" stroke-width="3" opacity="0.75"/>
+    <circle cx="600" cy="217" r="8" fill="#ff2d2d" filter="url(#glow)"/>
+    <path d="M600 217v90" stroke="#ff2d2d" stroke-width="3" opacity="0.75"/>
+    <path d="M552 217a48 48 0 0 1 96 0M520 217a80 80 0 0 1 160 0M486 217a114 114 0 0 1 228 0" fill="none" stroke="#ff2d2d" stroke-width="3" opacity="0.45"/>
+  </g>
+
+  <text x="600" y="468" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="152" letter-spacing="10" fill="url(#steel)" stroke="#111" stroke-width="5">GTAVCAD</text>
+  <text x="600" y="548" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" letter-spacing="18" fill="#f3f3f3">ROLEPLAY DISPATCH SYSTEM</text>
+  <text x="229" y="585" font-family="Arial Black, sans-serif" font-size="30" fill="#ff2d2d">10-13</text>
+  <text x="226" y="621" font-family="Arial, sans-serif" font-size="18" letter-spacing="4" fill="#b8b8b8">DISPATCH</text>
+  <text x="957" y="585" font-family="Arial, sans-serif" font-size="18" letter-spacing="4" fill="#b8b8b8">STATUS</text>
+  <text x="957" y="621" font-family="Arial Black, sans-serif" font-size="28" fill="#ff2d2d">EN ROUTE</text>
+  <path d="M552 604h96l-20 48h-56z" fill="#0b0b0b" stroke="#333" stroke-width="5"/>
+  <text x="600" y="627" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" letter-spacing="4" fill="#b8b8b8">EST</text>
+  <text x="600" y="651" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="27" fill="#ededed">2026</text>
+</svg>
