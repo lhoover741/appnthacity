@@ -69,16 +69,16 @@
           <button class="cad-sidebar-btn" data-cad-module-target="gang-investigations">Gang Unit / Investigations</button>
         </aside>
         <div class="cad-main">
-          <section class="cad-module active" data-cad-module="dashboard"><div class="cad-panel"><h3>Dashboard</h3><div class="cad-action-row"><button class="button button-secondary" data-cad-quick-action="calls" data-cad-focus="#dispatch-form [name=callerName]">Create 911 Call</button><button class="button button-secondary" data-cad-quick-action="traffic" data-cad-focus="#traffic-stop-form [name=suspectName]">Start Traffic Stop</button><button class="button button-secondary" data-cad-quick-action="gang-investigations">Gang Investigation</button></div></div></section>
-          <section class="cad-module" data-cad-module="calls"><div class="cad-panel"><h3>Active Calls</h3><p>Use the 911 form and queue below.</p></div></section>
-          <section class="cad-module" data-cad-module="traffic"><div class="cad-panel"><h3>Traffic Stops</h3></div></section>
-          <section class="cad-module" data-cad-module="lookup"><div class="cad-panel"><h3>Lookup</h3></div></section>
-          <section class="cad-module" data-cad-module="warrants"><div class="cad-panel"><h3>Warrants</h3></div></section>
-          <section class="cad-module" data-cad-module="arrests"><div class="cad-panel"><h3>Arrests</h3></div></section>
-          <section class="cad-module" data-cad-module="evidence"><div class="cad-panel"><h3>Evidence</h3></div></section>
-          <section class="cad-module" data-cad-module="reports"><div class="cad-panel"><h3>Reports</h3></div></section>
-          <section class="cad-module" data-cad-module="court"><div class="cad-panel"><h3>Court / Case Packets</h3></div></section>
-          <section class="cad-module" data-cad-module="officer-status"><div class="cad-panel"><h3>Officer Status</h3></div></section>
+          <section class="cad-module active" data-cad-module="dashboard"><div class="cad-panel"><h3>Dashboard</h3><div class="cad-action-row"><button class="button button-secondary" data-cad-quick-action="calls" data-cad-focus="#dispatch-form [name=callerName]">Create 911 Call</button><button class="button button-secondary" data-cad-quick-action="traffic" data-cad-focus="#traffic-form [name=suspectName]">Start Traffic Stop</button><button class="button button-secondary" data-cad-quick-action="lookup" data-cad-focus="#civilian-lookup-form [name=lookupName]">Lookup Civilian</button><button class="button button-secondary" data-cad-quick-action="lookup" data-cad-focus="#plate-lookup-form [name=plateLookup]">Lookup Vehicle Plate</button><button class="button button-secondary" data-cad-quick-action="warrants" data-cad-focus="#warrant-form [name=subject_name]">Add Warrant</button><button class="button button-secondary" data-cad-quick-action="arrests" data-cad-focus="#arrest-form [name=suspectName]">File Arrest Report</button><button class="button button-secondary" data-cad-quick-action="evidence" data-cad-focus="#evidence-form [name=evidenceDescription]">Submit Evidence</button><button class="button button-secondary" data-cad-quick-action="court" data-cad-focus="#case-packet-form [name=incident_summary]">Generate Case Packet</button><button class="button button-secondary" data-cad-quick-action="gang-investigations">Gang Investigation</button></div></div><div data-cad-mount="dashboard"></div></section>
+          <section class="cad-module" data-cad-module="calls"><div data-cad-mount="calls"></div></section>
+          <section class="cad-module" data-cad-module="traffic"><div data-cad-mount="traffic"></div></section>
+          <section class="cad-module" data-cad-module="lookup"><div data-cad-mount="lookup"></div></section>
+          <section class="cad-module" data-cad-module="warrants"><div data-cad-mount="warrants"></div></section>
+          <section class="cad-module" data-cad-module="arrests"><div data-cad-mount="arrests"></div></section>
+          <section class="cad-module" data-cad-module="evidence"><div data-cad-mount="evidence"></div></section>
+          <section class="cad-module" data-cad-module="reports"><div data-cad-mount="reports"></div></section>
+          <section class="cad-module" data-cad-module="court"><div data-cad-mount="court"></div></section>
+          <section class="cad-module" data-cad-module="officer-status"><div data-cad-mount="officer-status"></div></section>
           <section class="cad-module" data-cad-module="gang-investigations"><div class="cad-panel"><h3>Gang Unit / Investigations</h3><div class="gang-intel-grid"><div class="cad-card"><h4>Gang Profiles</h4></div><div class="cad-card"><h4>Territory Map</h4><p class="cad-empty-state">Territory map placeholder — ready for GTA V map marker integration.</p></div><div class="cad-card"><h4>Investigation Cases</h4></div><div class="cad-card"><h4>Suspect Watchlist</h4></div><div class="cad-card"><h4>Intelligence Notes</h4></div><div class="cad-card"><h4>Gang Investigation Packet</h4><button class="button button-secondary" disabled>AI Draft Investigation Summary</button></div></div></div></section>
         </div>
         <aside class="cad-feed"><h3>Live Dispatch Feed</h3><div id="cad-feed-items"></div></aside>

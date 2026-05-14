@@ -2450,11 +2450,31 @@ window.GTAVCADData = GTAVCADData;
     const status=document.getElementById('cad-officer-status');
     const key='cad.selectedModule';
     const labels={dashboard:'Dashboard',calls:'Active Calls',traffic:'Traffic Stops',lookup:'Lookup',warrants:'Warrants',arrests:'Arrests',evidence:'Evidence',reports:'Reports',court:'Court / Case Packets','officer-status':'Officer Status','gang-investigations':'Gang Unit / Investigations'};
+
+    const mount=(name,selectors)=>{const host=document.querySelector(`[data-cad-mount="${name}"]`); if(!host) return; selectors.forEach(sel=>document.querySelectorAll(sel).forEach(el=>host.appendChild(el)));};
+    mount('dashboard',['.cad-panel .container','.cad-panel .command-dashboard','#my-dashboard-section']);
+    mount('calls',['.dispatch-section .call-queue-panel','#dispatch-form','.forms-full > .panel:nth-child(6)']);
+    mount('traffic',['.dispatch-section .traffic-panel','#traffic-form','.forms-full > .panel:nth-child(7)']);
+    mount('lookup',['#civilian-lookup-form','#plate-lookup-form','.lookup-results','.container.section:has(#criminal-record-input)']);
+    mount('warrants',['.dispatch-section .warrants-panel','#warrant-form']);
+    mount('arrests',['#arrest-form','.dispatch-section .officer-status-panel']);
+    mount('evidence',['.dispatch-section .evidence-panel','#evidence-form']);
+    mount('reports',['.container.section:has(#uof-generate-btn)']);
+    mount('court',['.container.section:has(#case-packet-form)','.container.section:has(#court-hearings-list)']);
+    mount('officer-status',['.dispatch-section .officer-status-panel']);
+
+    document.querySelectorAll('main > section:not(.cad-shell)').forEach(sec=>{if(sec.closest('.cad-module')) return; if(sec.querySelector('[data-cad-mount]')) return; sec.classList.add('cad-legacy-hidden');});
+
+    const role=(document.querySelector('[data-context-role]')?.textContent||'').trim().toLowerCase();
+    const allowed=['platformowner','communityowner','communityadmin','owner','admin','police','officer','leo','detective','detectives','investigator','investigations','gang unit','doj','staff'];
+    const gangBtn=document.querySelector('[data-cad-module-target="gang-investigations"]');
+    if(gangBtn && role && !allowed.includes(role)) gangBtn.style.display='none';
+
     const addFeed=(badge,msg)=>{if(!feed) return; const d=document.createElement('div'); d.className='cad-feed-item'; d.innerHTML=`<span class="cad-badge ${badge}">${new Date().toLocaleTimeString()}</span> ${msg}`; feed.prepend(d)};
     const switchTo=(name)=>{modules.forEach(m=>m.classList.toggle('active',m.dataset.cadModule===name));buttons.forEach(b=>b.classList.toggle('active',b.dataset.cadModuleTarget===name));if(title) title.textContent=labels[name]||name; localStorage.setItem(key,name)};
     buttons.forEach(b=>b.addEventListener('click',()=>switchTo(b.dataset.cadModuleTarget)));
     document.querySelectorAll('[data-cad-quick-action]').forEach(btn=>btn.addEventListener('click',()=>{const m=btn.dataset.cadQuickAction;switchTo(m); const f=btn.dataset.cadFocus; if(f){const el=document.querySelector(f); if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.focus();}}}));
-    ['dispatch-form','traffic-stop-form','warrant-form','arrest-form','evidence-form'].forEach(id=>{const f=document.getElementById(id); if(f) f.addEventListener('submit',()=>addFeed('cad-badge-status-active',`${id.replace('-form','')} updated`));});
+    ['dispatch-form','traffic-form','warrant-form','arrest-form','evidence-form'].forEach(id=>{const f=document.getElementById(id); if(f) f.addEventListener('submit',()=>addFeed('cad-badge-status-active',`${id.replace('-form','')} updated`));});
     if(status) status.addEventListener('change',()=>addFeed('cad-badge-status-pending',`Officer status changed to ${status.value}`));
     const saved=localStorage.getItem(key); if(saved&&labels[saved]) switchTo(saved);
     setInterval(()=>{if(now) now.textContent=new Date().toLocaleString();},1000);
