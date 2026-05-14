@@ -390,14 +390,23 @@ async function applyCommunityBranding() {
       }
     }
 
-    const communityCtxName = document.querySelector('[data-context-community]');
-    if (communityCtxName) communityCtxName.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community';
+    document.querySelectorAll('[data-context-community]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community'; });
     const communityCtxCad = document.querySelector('[data-context-cad]');
     if (communityCtxCad) communityCtxCad.textContent = window.GTAVCAD_CONTEXT.cadName || 'CAD';
-    const communityCtxRole = document.querySelector('[data-context-role]');
-    if (communityCtxRole) communityCtxRole.textContent = window.GTAVCAD_CONTEXT.community_role || window.GTAVCAD_CONTEXT.platform_role || window.GTAVCAD_CONTEXT.role || (membership ? membership.role : 'No membership');
-    const usernameEl = document.querySelector('[data-context-username]');
-    if (usernameEl) usernameEl.textContent = data.user?.username || 'Unknown';
+    const resolvedRole = window.GTAVCAD_CONTEXT.community_role || window.GTAVCAD_CONTEXT.platform_role || window.GTAVCAD_CONTEXT.role || (membership ? membership.role : 'No membership');
+    document.querySelectorAll('[data-context-role]').forEach((el) => { el.textContent = resolvedRole; });
+    const resolvedUsername = data.user?.username || 'Unknown';
+    document.querySelectorAll('[data-context-username]').forEach((el) => { el.textContent = resolvedUsername; });
+    
+    const cadTopbarCommunity = document.getElementById('cad-topbar-community');
+    if (cadTopbarCommunity) cadTopbarCommunity.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community';
+    const cadTopbarUsername = document.getElementById('cad-topbar-username');
+    if (cadTopbarUsername) cadTopbarUsername.textContent = resolvedUsername;
+    const cadTopbarRole = document.getElementById('cad-topbar-role');
+    if (cadTopbarRole) cadTopbarRole.textContent = resolvedRole;
+    const cadTopbarDepartment = document.getElementById('cad-topbar-department');
+    if (cadTopbarDepartment) cadTopbarDepartment.textContent = window.GTAVCAD_CONTEXT.department || '—';
+
     document.querySelectorAll('[data-cad-access-badge]').forEach((el) => { el.textContent = (data.user?.can_access_police_cad === true) ? 'CAD ACCESS' : 'CAD LOCKED'; });
     document.querySelectorAll('[data-exit-impersonation]').forEach((el) => { el.classList.toggle('hidden', data.user?.impersonation_active !== true); });
     bindAuthenticatedControls();
@@ -2439,3 +2448,45 @@ function showCommunityCreatedModal() {
 showCommunityCreatedModal();
 
 window.GTAVCADData = GTAVCADData;
+
+(function(){
+  function cadInit(){
+    const modules=[...document.querySelectorAll('.cad-module')]; if(!modules.length) return;
+    const buttons=[...document.querySelectorAll('.cad-sidebar-btn')];
+    const title=document.getElementById('cad-module-title');
+    const feed=document.getElementById('cad-feed-items');
+    const now=document.getElementById('cad-now');
+    const status=document.getElementById('cad-officer-status');
+    const key='cad.selectedModule';
+    const labels={dashboard:'Dashboard',calls:'Active Calls',traffic:'Traffic Stops',lookup:'Lookup',warrants:'Warrants',arrests:'Arrests',evidence:'Evidence',reports:'Reports',court:'Court / Case Packets','officer-status':'Officer Status','gang-investigations':'Gang Unit / Investigations'};
+
+    const mount=(name,selectors)=>{const host=document.querySelector(`[data-cad-mount="${name}"]`); if(!host) return; selectors.forEach(sel=>document.querySelectorAll(sel).forEach(el=>host.appendChild(el)));};
+    mount('dashboard',['.cad-panel .container','.cad-panel .command-dashboard','#my-dashboard-section']);
+    mount('calls',['.dispatch-section .call-queue-panel','#dispatch-form','.forms-full > .panel:nth-child(6)']);
+    mount('traffic',['.dispatch-section .traffic-panel','#traffic-form','.forms-full > .panel:nth-child(7)']);
+    mount('lookup',['#civilian-lookup-form','#plate-lookup-form','.lookup-results','.container.section:has(#criminal-record-input)']);
+    mount('warrants',['.dispatch-section .warrants-panel','#warrant-form']);
+    mount('arrests',['#arrest-form','.dispatch-section .officer-status-panel']);
+    mount('evidence',['.dispatch-section .evidence-panel','#evidence-form']);
+    mount('reports',['.container.section:has(#uof-generate-btn)']);
+    mount('court',['.container.section:has(#case-packet-form)','.container.section:has(#court-hearings-list)']);
+    mount('officer-status',['.dispatch-section .officer-status-panel']);
+
+    document.querySelectorAll('main > section:not(.cad-shell)').forEach(sec=>{if(sec.closest('.cad-module')) return; if(sec.querySelector('[data-cad-mount]')) return; sec.classList.add('cad-legacy-hidden');});
+
+    const role=(document.querySelector('[data-context-role]')?.textContent||'').trim().toLowerCase();
+    const allowed=['platformowner','communityowner','communityadmin','owner','admin','police','officer','leo','detective','detectives','investigator','investigations','gang unit','doj','staff'];
+    const gangBtn=document.querySelector('[data-cad-module-target="gang-investigations"]');
+    if(gangBtn && role && !allowed.includes(role)) gangBtn.style.display='none';
+
+    const addFeed=(badge,msg)=>{if(!feed) return; const d=document.createElement('div'); d.className='cad-feed-item'; d.innerHTML=`<span class="cad-badge ${badge}">${new Date().toLocaleTimeString()}</span> ${msg}`; feed.prepend(d)};
+    const switchTo=(name)=>{modules.forEach(m=>m.classList.toggle('active',m.dataset.cadModule===name));buttons.forEach(b=>b.classList.toggle('active',b.dataset.cadModuleTarget===name));if(title) title.textContent=labels[name]||name; localStorage.setItem(key,name)};
+    buttons.forEach(b=>b.addEventListener('click',()=>switchTo(b.dataset.cadModuleTarget)));
+    document.querySelectorAll('[data-cad-quick-action]').forEach(btn=>btn.addEventListener('click',()=>{const m=btn.dataset.cadQuickAction;switchTo(m); const f=btn.dataset.cadFocus; if(f){const el=document.querySelector(f); if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.focus();}}}));
+    ['dispatch-form','traffic-form','warrant-form','arrest-form','evidence-form'].forEach(id=>{const f=document.getElementById(id); if(f) f.addEventListener('submit',()=>addFeed('cad-badge-status-active',`${id.replace('-form','')} updated`));});
+    if(status) status.addEventListener('change',()=>addFeed('cad-badge-status-pending',`Officer status changed to ${status.value}`));
+    const saved=localStorage.getItem(key); if(saved&&labels[saved]) switchTo(saved);
+    setInterval(()=>{if(now) now.textContent=new Date().toLocaleString();},1000);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',cadInit); else cadInit();
+})();
