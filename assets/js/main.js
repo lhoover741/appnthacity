@@ -1235,16 +1235,18 @@ function renderEvidenceTable() {
         </tr>
       `;
     }
+    const isCasePacket = String(item.type || item.evidenceType || '').toUpperCase() === 'CASE PACKET';
     const storageClass = item.storageStatus ? `badge-${String(item.storageStatus).toLowerCase().replace(' ', '-')}` : 'badge-secondary';
+    const hasFile = Boolean(item.link || item.evidenceLink);
     return `
       <tr data-evidence-id="${escapeAttr(item.id || '')}">
         <td>${escapeHtml(item.id)}</td>
         <td>${escapeHtml(item.caseNumber)}</td>
         <td>${escapeHtml(item.officer || item.evidenceOfficer)}</td>
-        <td>${escapeHtml(item.type || item.evidenceType)}</td>
-        <td>${escapeHtml(item.description || item.evidenceDescription)}</td>
-        <td>${item.link || item.evidenceLink ? evidenceLinkAction(item.link || item.evidenceLink, 'View Evidence') : 'None'}</td>
-        <td><span class="badge ${escapeAttr(storageClass)}">${escapeHtml(item.storageStatus || 'Unknown')}</span></td>
+        <td>${escapeHtml(isCasePacket ? 'CASE PACKET PDF' : (item.type || item.evidenceType))}</td>
+        <td>${escapeHtml(isCasePacket ? `Generated court packet for ${item.subject_name || 'Unknown Subject'} — ${item.charges || item.caseNumber || 'Case'}` : (item.description || item.evidenceDescription))}</td>
+        <td>${hasFile ? evidenceLinkAction(item.link || item.evidenceLink, 'Download') : 'No file attached'}</td>
+        <td><span class="badge ${escapeAttr(storageClass)}">${escapeHtml(item.storageStatus || (hasFile ? 'GENERATED' : 'METADATA ONLY'))}</span></td>
         <td>${formatDate(item.createdAt)}</td>
       </tr>
     `;
@@ -1636,19 +1638,96 @@ function renderCasePacketsTable() {
     return `<tr>
       <td>${escapeHtml(p.case_number || p.case_id || '—')}</td>
       <td>${escapeHtml((p.involved_civilians || [])[0] || p.subject_name || '—')}</td>
-      <td>${escapeHtml(p.type || 'case_packet')}</td>
+      <td>${escapeHtml(({ case_packet: 'Case Packet', arrest_packet: 'Arrest Packet', warrant_packet: 'Warrant Packet', traffic_packet: 'Traffic Stop Packet', court_packet: 'Court Packet', gang_packet: 'Gang Investigation Packet' }[p.type] || p.type || 'Case Packet'))}</td>
       <td>${escapeHtml(p.linked_arrest_id || '—')}</td>
       <td>${escapeHtml(p.linked_warrant_id || '—')}</td>
       <td>${escapeHtml(p.linked_traffic_stop_id || p.traffic_stop_id || '—')}</td>
       <td>${escapeHtml(p.created_by || '—')}</td>
       <td>${formatDate(p.created_at)}</td>
-      <td><span class="badge badge-secondary">${escapeHtml(status)}</span></td>
+      <td><span class="badge badge-secondary">${escapeHtml(({ open: 'Open', archived: 'Archived', closed: 'Closed' }[status] || status))}</span></td>
       <td class="table-actions">${viewButton} ${downloadButton} ${evidenceButton} ${deleteButton}</td>
     </tr>`;
   }).join('');
 }
 window.renderCasePacketsTable = renderCasePacketsTable;
-window.viewCasePacket = (caseId) => { if (caseId) window.open(`/api/cad/cases/${encodeURIComponent(caseId)}`, '_blank', 'noopener'); };
+function ensureCasePacketViewerModal() {
+  let modal = document.getElementById('case-packet-viewer-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'case-packet-viewer-modal';
+  modal.className = 'case-packet-viewer-modal hidden';
+  modal.innerHTML = `
+    <div class="case-packet-viewer-backdrop" data-close-case-packet-viewer="true"></div>
+    <div class="case-packet-viewer-panel" role="dialog" aria-modal="true" aria-label="Case Packet Viewer">
+      <div class="case-packet-viewer-header">
+        <h3>Case Packet Viewer</h3>
+        <button type="button" class="button button-ghost" data-close-case-packet-viewer="true">Close</button>
+      </div>
+      <div class="case-packet-viewer-content" id="case-packet-viewer-content"></div>
+      <div class="case-packet-viewer-actions" id="case-packet-viewer-actions"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (event) => {
+    if (event.target?.dataset?.closeCasePacketViewer === 'true') closeCasePacketViewer();
+  });
+  return modal;
+}
+
+function closeCasePacketViewer() {
+  const modal = document.getElementById('case-packet-viewer-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+if (!window.__casePacketViewerEscBound) {
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeCasePacketViewer();
+  });
+  window.__casePacketViewerEscBound = true;
+}
+
+function openCasePacketViewer(packet, linkedEvidence) {
+  const modal = ensureCasePacketViewerModal();
+  const content = document.getElementById('case-packet-viewer-content');
+  const actions = document.getElementById('case-packet-viewer-actions');
+  if (!content || !actions) return;
+  content.innerHTML = `
+    <p><strong>Case ID:</strong> ${escapeHtml(packet.case_id || packet.case_number || '—')}</p>
+    <p><strong>Packet Type:</strong> ${escapeHtml(packet.type || 'case_packet')}</p>
+    <p><strong>Subject / Suspect:</strong> ${escapeHtml((packet.involved_civilians || [])[0] || packet.subject_name || '—')}</p>
+    <p><strong>Created By:</strong> ${escapeHtml(packet.created_by || '—')}</p>
+    <p><strong>Created Date:</strong> ${formatDate(packet.created_at)}</p>
+    <p><strong>Status:</strong> ${escapeHtml(packet.status || 'open')}</p>
+    <p><strong>Linked Arrest ID:</strong> ${escapeHtml(packet.linked_arrest_id || '—')}</p>
+    <p><strong>Linked Warrant ID:</strong> ${escapeHtml(packet.linked_warrant_id || '—')}</p>
+    <p><strong>Linked Traffic Stop ID:</strong> ${escapeHtml(packet.linked_traffic_stop_id || '—')}</p>
+    <p><strong>Charges / Basis:</strong> ${escapeHtml(packet.charges || '—')}</p>
+    <p><strong>Narrative / Summary:</strong> ${escapeHtml(packet.report_notes || '—')}</p>
+    <p><strong>Evidence links/counts:</strong> ${escapeHtml(linkedEvidence.join(', ') || 'None')}</p>
+    <p><strong>Court/hearing info:</strong> ${escapeHtml(packet.court_info || 'Missing')}</p>
+    <p><strong>Packet notes/metadata:</strong> ${escapeHtml(packet.title || '—')}</p>`;
+  actions.innerHTML = `${packet.download_url ? `<a class="button button-secondary" href="${escapeAttr(packet.download_url)}">Download PDF</a>` : ''}
+    ${linkedEvidence[0] ? `<button class="button button-secondary" data-open-case-packet-evidence="true">Open Evidence${linkedEvidence.length > 1 ? ` (${linkedEvidence.length})` : ''}</button>` : ''}
+    <button class="button button-ghost" data-delete-case-packet="true">Delete / Archive</button>
+    <button class="button button-ghost" data-close-case-packet-viewer="true">Close</button>`;
+  actions.querySelector('[data-open-case-packet-evidence="true"]')?.addEventListener('click', () => focusEvidenceItem(linkedEvidence[0]));
+  actions.querySelector('[data-delete-case-packet="true"]')?.addEventListener('click', async () => {
+    await deleteCasePacket(packet.case_id || packet.case_number || '');
+    closeCasePacketViewer();
+  });
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+window.viewCasePacket = async (caseId) => {
+  if (!caseId) return;
+  const res = await fetch(`/api/cad/cases/${encodeURIComponent(caseId)}`);
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Case packet view failed');
+  const packet = data.case || {};
+  const linkedEvidence = Array.isArray(packet.linked_evidence_ids) ? packet.linked_evidence_ids : String(packet.linked_evidence_ids || '').split(',').map((v) => v.trim()).filter(Boolean);
+  openCasePacketViewer(packet, linkedEvidence);
+};
 window.deleteCasePacket = async (caseId) => {
   if (!caseId || !window.confirm('Archive this case packet?')) return;
   const res = await fetch(`/api/cad/case-packets/${encodeURIComponent(caseId)}`, { method: 'DELETE', credentials: 'include' });
