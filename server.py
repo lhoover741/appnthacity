@@ -10014,21 +10014,43 @@ def _apply_warrant_payload(warrant, payload):
     _set_warrant_status(warrant, payload.get('status') or warrant.status or warrant.warrant_status or 'Active')
 
 
+def _ordered_civilian_query(community_id):
+    return scoped_query(Civilian, community_id).order_by(Civilian.created_at.desc(), Civilian.id.desc())
+
+
+def _warrant_subject_civilian_matches(subject, community_id, *, fuzzy_limit=10, response_limit=25):
+    """Find warrant subject candidates without limiting away exact matches first."""
+    normalized_subject = _normalize_name(subject)
+    if not normalized_subject:
+        return {'exact': [], 'fuzzy': [], 'selected': None, 'multiple_exact': False, 'match_type': 'none'}
+
+    # Do not apply a small fuzzy limit before exact matching; exact same-name civilians
+    # may be older than the newest fuzzy candidates in active communities.
+    exact = [
+        civilian for civilian in _ordered_civilian_query(community_id).all()
+        if _normalize_name(_civilian_full_name(civilian)) == normalized_subject
+    ]
+    if len(exact) == 1:
+        return {'exact': exact, 'fuzzy': [], 'selected': exact[0], 'multiple_exact': False, 'match_type': 'exact'}
+    if len(exact) > 1:
+        return {'exact': exact[:response_limit], 'fuzzy': [], 'selected': None, 'multiple_exact': True, 'match_type': 'multiple_exact'}
+
+    fuzzy = _ordered_civilian_query(community_id).filter(_civilian_name_filter(subject)).limit(fuzzy_limit).all()
+    return {'exact': [], 'fuzzy': fuzzy, 'selected': None, 'multiple_exact': False, 'match_type': 'fuzzy' if fuzzy else 'none'}
+
+
 def _link_warrant_subject_to_civilian(warrant, community_id):
     subject = _warrant_value(warrant, 'subject_name', 'warrant_name')
-    if not subject:
-        return None
-    matches = scoped_query(Civilian, community_id).filter(_civilian_name_filter(subject)).limit(3).all()
-    exact = [c for c in matches if _normalize_name(_civilian_full_name(c)) == _normalize_name(subject)]
-    if len(exact) != 1:
-        return exact
-    civilian = exact[0]
+    matches = _warrant_subject_civilian_matches(subject, community_id)
+    civilian = matches.get('selected')
+    if not civilian:
+        return matches.get('exact') or []
     warrant.civilian_id = civilian.civilian_id
     if not getattr(warrant, 'subject_dob', None) and civilian.date_of_birth:
         warrant.subject_dob = civilian.date_of_birth.isoformat()
     if not getattr(warrant, 'subject_address', None) and civilian.address:
         warrant.subject_address = civilian.address
-    return exact
+    return [civilian]
 
 
 
@@ -10367,15 +10389,16 @@ def cad_warrant_find_civilian():
     subject = (data.get('subject_name') or data.get('name') or '').strip()
     if not subject:
         return _cad_json_error('subject_name is required', 400)
-    matches = scoped_query(Civilian, community_id).filter(_civilian_name_filter(subject)).order_by(Civilian.created_at.desc()).limit(10).all()
-    exact = [c for c in matches if _normalize_name(_civilian_full_name(c)) == _normalize_name(subject)]
-    selected = exact[0] if len(exact) == 1 else None
+    match_result = _warrant_subject_civilian_matches(subject, community_id)
+    selected = match_result.get('selected')
+    candidates = match_result.get('exact') or match_result.get('fuzzy') or []
     return jsonify({
         'success': True,
-        'match_count': len(exact) if exact else len(matches),
-        'multiple': len(exact) > 1,
+        'match_count': len(candidates),
+        'multiple': bool(match_result.get('multiple_exact')),
+        'match_type': match_result.get('match_type'),
         'civilian': _civilian_response(selected) if selected else None,
-        'matches': [_civilian_response(c) for c in (exact or matches)],
+        'matches': [_civilian_response(c) for c in candidates],
     })
 
 

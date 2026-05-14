@@ -1670,11 +1670,25 @@
         const res = await fetch('/api/cad/warrants/find-civilian', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subject_name: subject}) });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Civilian lookup failed');
-        if (data.multiple) { status.textContent = 'Multiple civilians found. Refine the name before autofill.'; return; }
-        if (!data.civilian) { status.textContent = 'No exact civilian match found.'; return; }
+        if (data.multiple && Array.isArray(data.matches) && data.matches.length) {
+          status.innerHTML = `Multiple exact civilians found. Select one before autofill: <select id="warrant-civilian-match-select">${data.matches.map((c, i) => `<option value="${i}">${escapeHtml(c.name || c.civilian_id || 'Civilian')} · DOB ${escapeHtml(c.dob || c.date_of_birth || '—')}</option>`).join('')}</select> <button type="button" id="warrant-civilian-match-apply">Use Selected</button>`;
+          document.getElementById('warrant-civilian-match-apply')?.addEventListener('click', () => {
+            const idx = Number(document.getElementById('warrant-civilian-match-select')?.value || 0);
+            const selected = data.matches[idx];
+            if (!selected) return;
+            fillWarrantField('subject_dob', selected.dob || selected.date_of_birth);
+            fillWarrantField('subject_address', selected.address);
+            status.textContent = `Selected ${selected.name || 'civilian'}; empty DOB/address fields were autofilled.`;
+          });
+          return;
+        }
+        if (!data.civilian) {
+          status.textContent = data.matches?.length ? 'No exact civilian match found. Fuzzy candidates were not auto-filled.' : 'No exact civilian match found.';
+          return;
+        }
         fillWarrantField('subject_dob', data.civilian.dob || data.civilian.date_of_birth);
         fillWarrantField('subject_address', data.civilian.address);
-        status.textContent = `Autofilled DOB/address for ${data.civilian.name || subject}.`;
+        status.textContent = `Autofilled empty DOB/address fields for ${data.civilian.name || subject}.`;
       } catch (err) { status.textContent = err.message || 'Civilian lookup failed.'; }
     });
 
