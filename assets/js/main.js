@@ -673,12 +673,18 @@ async function add911Call(record) {
   }
 }
 
-function addTrafficStop(record) {
-  record.id = generateId('stop');
-  record.createdAt = new Date().toISOString();
-  GTAVCADData.trafficStops.push(record);
-  saveData();
-  return record;
+async function addTrafficStop(record) {
+  const payload = { ...record, id: record.id || record.traffic_stop_id || generateId('stop') };
+  const res = await fetch('/api/cad/traffic-stops', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Traffic stop save failed');
+  await loadData();
+  return data.traffic_stop || { ...payload, id: data.traffic_stop_id, createdAt: new Date().toISOString() };
 }
 
 async function addArrest(record) {
@@ -1586,9 +1592,9 @@ async function generateCasePacket(payload = {}) {
 }
 
 function trafficOutcomeTemplate(outcome) {
-  if (outcome === 'Citation') return `<h4>Citation / Ticket</h4><div class="form-grid"><label><span>Violation</span><input name="citationViolation" placeholder="Speeding / reckless driving"></label><label><span>Citation amount</span><input name="citationAmount" placeholder="250"></label><label><span>Court required</span><select name="citationCourtRequired"><option>No</option><option>Yes</option></select></label><label><span>Court date</span><input name="citationCourtDate" type="datetime-local"></label></div><label><span>Ticket notes</span><textarea name="citationNotes" rows="3"></textarea></label><div class="actions"><button type="button" onclick="aiCompleteTrafficOutcome('Citation')">AI Complete Citation</button><button type="button" onclick="generateTrafficOutcomePdf('ticket')">Generate Ticket PDF</button></div>`;
+  if (outcome === 'Citation') return `<h4>Citation / Ticket</h4><div class="form-grid"><label><span>Violation</span><input name="citationViolation" placeholder="Speeding / reckless driving"></label><label><span>Citation amount</span><input name="citationAmount" placeholder="250"></label><label><span>Court required</span><select name="citationCourtRequired"><option>No</option><option>Yes</option></select></label><label><span>Court date</span><input name="citationCourtDate" type="datetime-local"></label></div><label><span>Ticket notes</span><textarea name="citationNotes" rows="3"></textarea></label><div class="actions"><button type="button" onclick="aiCompleteTrafficOutcome('Citation')">AI Complete Citation</button><button type="button" onclick="generateTrafficOutcomePdf('citation')">Generate Ticket PDF</button></div>`;
   if (outcome === 'Warning') return `<h4>Warning</h4><div class="form-grid"><label><span>Warning reason</span><input name="warningReason"></label><label><span>Warning type</span><input name="warningType" placeholder="Verbal / Written"></label></div><label><span>Warning notes</span><textarea name="warningNotes" rows="3"></textarea></label><div class="actions"><button type="button" onclick="aiCompleteTrafficOutcome('Warning')">AI Complete Warning</button><button type="button" onclick="generateTrafficOutcomePdf('warning')">Generate Warning PDF</button></div>`;
-  if (outcome === 'Arrest') return `<h4>Arrest Transition</h4><label><span>Charges</span><textarea name="arrestCharges" rows="2"></textarea></label><label><span>Probable cause / narrative</span><textarea name="arrestNarrative" rows="3"></textarea></label><label><span>Jail / fine if applicable</span><input name="arrestPenalty"></label><div class="actions"><button type="button" onclick="createArrestFromTrafficStop()">Create Arrest Report From Stop</button><button type="button" onclick="aiCompleteTrafficOutcome('Arrest')">AI Complete Arrest Report</button><button type="button" onclick="generateCasePacketFromTrafficStop()">Generate Case Packet</button></div>`;
+  if (outcome === 'Arrest') return `<h4>Arrest Transition</h4><label><span>Charges</span><textarea name="arrestCharges" rows="2"></textarea></label><label><span>Probable cause / narrative</span><textarea name="arrestNarrative" rows="3"></textarea></label><label><span>Jail / fine if applicable</span><input name="arrestPenalty"></label><div class="actions"><button type="button" onclick="createArrestFromTrafficStop()">Create Arrest Report From Stop</button><button type="button" onclick="aiCompleteTrafficOutcome('Arrest')">AI Complete Arrest Report</button><button type="button" onclick="bookJailFromTrafficStop()">Book/Jail Suspect</button><button type="button" onclick="createCourtDateFromTrafficStop()">Create Court Date</button><button type="button" onclick="generateCasePacketFromTrafficStop()">Generate Case Packet</button></div>`;
   return '';
 }
 
@@ -1600,48 +1606,112 @@ function bindTrafficOutcomeFlow(form) {
     panel.innerHTML = trafficOutcomeTemplate(select.value);
     panel.classList.toggle('hidden', !select.value);
   };
-  select.addEventListener('change', render);
+  select.onchange = render;
   render();
 }
 
-function aiCompleteTrafficOutcome(outcome) {
-  const form = document.getElementById('traffic-form');
-  if (!form) return;
-  if (outcome === 'Citation') {
-    if (!form.citationViolation.value) form.citationViolation.value = form.trafficReason.value || 'Traffic violation';
-    if (!form.citationNotes.value) form.citationNotes.value = `Citation issued for ${form.citationViolation.value} at ${form.trafficLocation.value}. Officer-entered stop facts preserved.`;
-  } else if (outcome === 'Warning') {
-    if (!form.warningReason.value) form.warningReason.value = form.trafficReason.value || 'Traffic warning';
-    if (!form.warningNotes.value) form.warningNotes.value = `Driver was warned for ${form.warningReason.value} at ${form.trafficLocation.value}.`;
-  } else if (outcome === 'Arrest') {
-    if (!form.arrestCharges.value) form.arrestCharges.value = form.trafficReason.value || 'Charges pending review';
-    if (!form.arrestNarrative.value) form.arrestNarrative.value = `Traffic stop at ${form.trafficLocation.value} involving ${form.driverName.value} and plate ${form.trafficPlate.value}. Probable cause and officer observations require review.`;
-  }
-  showToast(`${outcome} fields completed from stop facts`, 'success');
+function trafficAiEndpoint(outcome) {
+  if (outcome === 'Citation') return '/api/cad/ai/traffic-citation';
+  if (outcome === 'Warning') return '/api/cad/ai/traffic-warning';
+  return '/api/cad/ai/traffic-arrest';
 }
 
-function generateTrafficOutcomePdf(type) {
-  window.print();
-  showToast(`${type === 'ticket' ? 'Ticket' : 'Warning'} printable PDF flow opened`, 'success');
+function fillIfEmpty(form, fieldName, value) {
+  if (!form?.[fieldName] || value === undefined || value === null || value === '') return;
+  if (!String(form[fieldName].value || '').trim()) form[fieldName].value = value;
+}
+
+async function aiCompleteTrafficOutcome(outcome) {
+  const form = document.getElementById('traffic-form');
+  if (!form) return;
+  try {
+    const res = await fetch(trafficAiEndpoint(outcome), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(getFormData(form)) });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'CAD AI request failed');
+    const s = data.suggestions || data;
+    if (outcome === 'Citation') {
+      fillIfEmpty(form, 'citationViolation', s.violation);
+      fillIfEmpty(form, 'citationAmount', s.citation_amount || s.citationAmount);
+      fillIfEmpty(form, 'citationCourtRequired', s.court_required || s.courtRequired);
+      fillIfEmpty(form, 'citationCourtDate', s.court_date || s.courtDate);
+      fillIfEmpty(form, 'citationNotes', s.notes);
+    } else if (outcome === 'Warning') {
+      fillIfEmpty(form, 'warningReason', s.warning_reason || s.warningReason);
+      fillIfEmpty(form, 'warningType', s.warning_type || s.warningType);
+      fillIfEmpty(form, 'warningNotes', s.notes);
+    } else {
+      fillIfEmpty(form, 'arrestCharges', s.charges);
+      fillIfEmpty(form, 'arrestNarrative', s.arrest_narrative || s.probable_cause || s.probableCause);
+      fillIfEmpty(form, 'arrestPenalty', s.jail_recommendation || s.jailRecommendation);
+    }
+    showToast(`${outcome} AI suggestions filled for review`, 'success');
+  } catch (err) { showToast(err.message || 'CAD AI request failed', 'error'); }
+}
+
+async function ensureTrafficStopSaved() {
+  const form = document.getElementById('traffic-form');
+  if (!form) throw new Error('Traffic stop form not found');
+  const currentId = form.dataset.trafficStopId;
+  const data = getFormData(form);
+  if (currentId) data.id = currentId;
+  const stop = await addTrafficStop(data);
+  form.dataset.trafficStopId = stop.id || stop.stop_id || stop.traffic_stop_id;
+  return { stop, data: getFormData(form), id: form.dataset.trafficStopId };
+}
+
+async function generateTrafficOutcomePdf(type) {
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const route = type === 'warning' ? 'warning-pdf' : 'citation-pdf';
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/${route}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Traffic PDF generation failed');
+    showToast(`Traffic PDF generated: ${out.download_url}`, 'success');
+    if (out.download_url) window.open(out.download_url, '_blank', 'noopener');
+  } catch (err) { showToast(err.message || 'Traffic PDF generation failed', 'error'); }
 }
 
 async function createArrestFromTrafficStop() {
-  const form = document.getElementById('traffic-form');
-  if (!form) return;
-  const data = getFormData(form);
   try {
-    const arrest = await addArrest({ suspectName: data.driverName, charges: data.arrestCharges || data.trafficReason, arrestingOfficer: data.officerName, arrestLocation: data.trafficLocation, narrative: data.arrestNarrative, penalty: data.arrestPenalty, reportNotes: `Created from traffic stop for plate ${data.trafficPlate}. Vehicle: ${data.vehicleInfo}.` });
+    const { id, data } = await ensureTrafficStopSaved();
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/create-arrest`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Unable to create arrest report');
+    await loadData();
     renderArrestsTable();
-    showToast(`Arrest report created: ${arrest.id || arrest.arrest_id}`, 'success');
+    showToast(`${out.created ? 'Arrest report created' : 'Existing arrest report opened'}: ${out.arrest?.id || out.arrest?.arrest_id}`, 'success');
+    return out.arrest;
   } catch (err) { showToast(err.message || 'Unable to create arrest report', 'error'); }
+}
+
+async function bookJailFromTrafficStop() {
+  if (!confirm('Book/Jail this suspect for the selected traffic stop?')) return;
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/book-jail`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Unable to book suspect');
+    if (typeof loadJail === 'function') await loadJail();
+    showToast('Suspect booked/jailed for this stop', 'success');
+  } catch (err) { showToast(err.message || 'Unable to book suspect', 'error'); }
+}
+
+async function createCourtDateFromTrafficStop() {
+  if (!confirm('Create a court date for this traffic stop arrest?')) return;
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/court-date`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Unable to create court date');
+    if (typeof loadCourtHearings === 'function') await loadCourtHearings();
+    showToast(`Court date created: ${out.hearing?.id || out.hearing?.hearing_id}`, 'success');
+  } catch (err) { showToast(err.message || 'Unable to create court date', 'error'); }
 }
 
 async function generateCasePacketFromTrafficStop() {
   try {
-    const res = await fetch('/api/cad/case-packets/generate', {method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Traffic Stop Case Packet'})});
-    const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.error || 'Case packet failed');
-    showToast(`Case packet generated: ${data.case_id}`, 'success');
+    const { id } = await ensureTrafficStopSaved();
+    await generateCasePacket({ title: 'Traffic Stop Case Packet', traffic_stop_id: id });
   } catch (err) { showToast(err.message || 'Case packet failed', 'error'); }
 }
 
@@ -1649,16 +1719,22 @@ function handleTrafficForm() {
   const form = document.getElementById('traffic-form');
   if (!form) return;
   bindTrafficOutcomeFlow(form);
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    addTrafficStop(data);
-    updateDashboard();
-    renderTrafficTable();
-    addActivity('Traffic Stop', `Traffic stop logged for ${data.driverName} (${data.trafficPlate})`);
-    showToast('Traffic stop logged successfully', 'success');
-    form.reset();
-    bindTrafficOutcomeFlow(form);
+    const submit = form.querySelector('[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      const stop = await addTrafficStop(getFormData(form));
+      form.dataset.trafficStopId = stop.id || stop.stop_id || stop.traffic_stop_id;
+      updateDashboard();
+      renderTrafficTable();
+      addActivity('Traffic Stop', `Traffic stop logged for ${stop.driverName || form.driverName?.value} (${stop.trafficPlate || stop.plate || form.trafficPlate?.value})`);
+      showToast('Traffic stop logged successfully', 'success');
+    } catch (err) {
+      showToast(err.message || 'Traffic stop save failed', 'error');
+    } finally {
+      if (submit) submit.disabled = false;
+    }
   });
 }
 

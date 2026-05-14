@@ -2,6 +2,7 @@ import os
 import json
 import random
 import re
+from io import BytesIO
 import smtplib
 import logging
 import secrets
@@ -2677,14 +2678,7 @@ def _upsert_traffic_stop(data):
     if obj is None:
         obj = TrafficStop(community_id=community_id, stop_id=t_id)
         db.session.add(obj)
-    obj.driver_name = data.get('driverName', '')
-    obj.plate       = data.get('trafficPlate', data.get('plate', ''))
-    obj.reason      = data.get('trafficReason', data.get('reason', ''))
-    obj.outcome     = data.get('trafficOutcome', data.get('outcome', ''))
-    obj.officer     = data.get('officer', '')
-    obj.location    = data.get('location', '')
-    obj.notes       = data.get('notes', '')
-    obj.updated_at  = datetime.utcnow()
+    _apply_traffic_stop_payload(obj, data)
 
 
 def _upsert_call911(data):
@@ -4173,9 +4167,12 @@ def clear_bolo(bolo_id):
     return jsonify({'success': True})
 
 
-@police_required
 @app.route('/api/ai/use-of-force', methods=['POST'])
+@require_auth
 def ai_use_of_force():
+    guard, cad_ai_error = _cad_ai_guard()
+    if cad_ai_error:
+        return cad_ai_error
     ai_runtime, ai_error = get_platform_ai_runtime_or_error()
     if ai_error:
         return ai_error
@@ -4345,7 +4342,11 @@ Respond only with the JSON object. No markdown, no extra text."""
 
 
 @app.route('/api/ai/police-report', methods=['POST'])
+@require_auth
 def ai_police_report():
+    guard, cad_ai_error = _cad_ai_guard()
+    if cad_ai_error:
+        return cad_ai_error
     ai_runtime, ai_error = get_platform_ai_runtime_or_error()
     if ai_error:
         return ai_error
@@ -4473,8 +4474,11 @@ def post_radio_log():
 
 
 @app.route('/api/ai/dispatch', methods=['POST'])
-@dispatch_required
+@require_auth
 def ai_dispatch():
+    guard, cad_ai_error = _cad_ai_guard()
+    if cad_ai_error:
+        return cad_ai_error
     ai_runtime, ai_error = get_platform_ai_runtime_or_error()
     if ai_error:
         return ai_error
@@ -4767,9 +4771,12 @@ def _merge_warrant_ai_output(form_values, ai_json):
     return merged
 
 
-@police_required
 @app.route('/api/ai/warrant', methods=['POST'])
+@require_auth
 def ai_warrant():
+    guard, cad_ai_error = _cad_ai_guard()
+    if cad_ai_error:
+        return cad_ai_error
     ai_runtime, ai_error = get_platform_ai_runtime_or_error()
     if ai_error:
         return ai_error
@@ -4849,8 +4856,11 @@ Validate enums before returning JSON: warrant_type must be one of {', '.join(WAR
 
 
 @app.route('/api/ai/generate-call', methods=['POST'])
-@dispatch_required
+@require_auth
 def ai_generate_call():
+    guard, cad_ai_error = _cad_ai_guard()
+    if cad_ai_error:
+        return cad_ai_error
     ai_runtime, ai_error = get_platform_ai_runtime_or_error()
     if ai_error:
         return ai_error
@@ -10023,6 +10033,331 @@ def _link_warrant_subject_to_civilian(warrant, community_id):
 
 
 
+
+def _traffic_stop_payload_metadata(data):
+    keys = (
+        'vehicleInfo', 'vehicle_info', 'driverDob', 'driver_dob', 'driverAddress', 'driver_address',
+        'citationViolation', 'citationAmount', 'citationCourtRequired', 'citationCourtDate', 'citationNotes',
+        'warningReason', 'warningType', 'warningNotes', 'arrestCharges', 'arrestNarrative', 'arrestPenalty',
+        'badge', 'officerBadge', 'traffic_stop_id', 'linked_arrest_id', 'linked_case_id',
+    )
+    return {k: data.get(k) for k in keys if data.get(k) not in (None, '')}
+
+
+def _traffic_stop_notes_with_metadata(stop, data):
+    notes = (data.get('notes') or getattr(stop, 'notes', None) or '').strip()
+    metadata = _traffic_stop_payload_metadata(data)
+    if not metadata:
+        return notes
+    payload = {'public_notes': notes, 'metadata': metadata}
+    return json.dumps(payload, default=str)
+
+
+def _traffic_stop_metadata(stop):
+    notes = getattr(stop, 'notes', None) or ''
+    try:
+        parsed = json.loads(notes)
+        if isinstance(parsed, dict):
+            return parsed.get('metadata') if isinstance(parsed.get('metadata'), dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _traffic_stop_public_notes(stop):
+    notes = getattr(stop, 'notes', None) or ''
+    try:
+        parsed = json.loads(notes)
+        if isinstance(parsed, dict):
+            return parsed.get('public_notes') or ''
+    except Exception:
+        pass
+    return notes
+
+
+def _apply_traffic_stop_payload(stop, data):
+    stop.driver_name = (data.get('driverName') or data.get('driver_name') or stop.driver_name or '').strip()
+    stop.plate = (data.get('trafficPlate') or data.get('plate') or stop.plate or '').strip()
+    stop.reason = (data.get('trafficReason') or data.get('reason') or stop.reason or '').strip()
+    stop.outcome = (data.get('trafficOutcome') or data.get('outcome') or stop.outcome or '').strip()
+    stop.officer = (data.get('officerName') or data.get('officer') or stop.officer or '').strip()
+    stop.location = (data.get('trafficLocation') or data.get('location') or stop.location or '').strip()
+    stop.notes = _traffic_stop_notes_with_metadata(stop, data)
+    stop.updated_at = datetime.utcnow()
+
+
+def _find_traffic_stop_for_cad(community_id, traffic_stop_id):
+    return scoped_query(TrafficStop, community_id).filter_by(stop_id=traffic_stop_id).first()
+
+
+def _traffic_stop_safe_dict(stop):
+    payload = traffic_stop_to_dict(stop)
+    meta = _traffic_stop_metadata(stop)
+    payload.update({
+        'vehicleInfo': meta.get('vehicleInfo') or meta.get('vehicle_info') or '',
+        'driverDob': meta.get('driverDob') or meta.get('driver_dob') or '',
+        'driverAddress': meta.get('driverAddress') or meta.get('driver_address') or '',
+        'notes': _traffic_stop_public_notes(stop),
+        'metadata': {k: v for k, v in meta.items() if k not in {'storage_path', 'api_key'}},
+    })
+    return payload
+
+
+@app.route('/api/cad/traffic-stops', methods=['POST'])
+def cad_traffic_stop_create():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    stop_id = (data.get('id') or data.get('traffic_stop_id') or data.get('stop_id') or f"TRF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}").strip()
+    stop = scoped_query(TrafficStop, community_id).filter_by(stop_id=stop_id).first()
+    if stop is None:
+        stop = TrafficStop(community_id=community_id, stop_id=stop_id, created_at=datetime.utcnow())
+        db.session.add(stop)
+    _apply_traffic_stop_payload(stop, {**data, 'traffic_stop_id': stop_id})
+    _cad_audit('traffic_stop_saved', community_id, stop_id, {'traffic_stop_id': stop_id, 'outcome': stop.outcome})
+    db.session.commit()
+    return jsonify({'success': True, 'traffic_stop': _traffic_stop_safe_dict(stop), 'traffic_stop_id': stop.stop_id})
+
+
+def _traffic_pdf_storage_error():
+    storage_cfg = get_storage_config()
+    storage_root = storage_cfg.get('root')
+    if (
+        storage_cfg.get('mode') != 'local_volume'
+        or not storage_cfg.get('direct_uploads_enabled')
+        or not storage_root
+        or not os.path.isdir(os.path.expanduser(storage_root))
+    ):
+        return 'PDF storage is not configured. Enable local evidence storage to generate traffic PDFs.'
+    return None
+
+
+def _traffic_pdf_bytes(kind, stop, data, community_id):
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise RuntimeError('ReportLab is required to generate traffic PDFs') from exc
+    community_name, cad_name = _community_display_names(community_id)
+    meta = {**_traffic_stop_metadata(stop), **(data or {})}
+    number = f"{kind.upper()}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(2).upper()}"
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    y = height - 54
+    title = 'Traffic Citation' if kind == 'citation' else 'Traffic Warning'
+    rows = [
+        ('Community', community_name), ('CAD', cad_name), (f'{title} #', number), ('Traffic Stop #', stop.stop_id),
+        ('Officer / Badge', f"{stop.officer or meta.get('officerName') or ''} {meta.get('badge') or meta.get('officerBadge') or ''}".strip()),
+        ('Driver', stop.driver_name), ('DOB', meta.get('driverDob') or meta.get('driver_dob') or ''),
+        ('Address', meta.get('driverAddress') or meta.get('driver_address') or ''),
+        ('Vehicle', meta.get('vehicleInfo') or meta.get('vehicle_info') or ''), ('Plate', stop.plate),
+        ('Location', stop.location), ('Issue Date', datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')),
+    ]
+    if kind == 'citation':
+        rows.extend([
+            ('Violation', meta.get('citationViolation') or stop.reason),
+            ('Fine Amount', meta.get('citationAmount') or ''),
+            ('Court Required', meta.get('citationCourtRequired') or 'No'),
+            ('Court Date', meta.get('citationCourtDate') or ''),
+            ('Notes / Narrative', meta.get('citationNotes') or _traffic_stop_public_notes(stop)),
+        ])
+    else:
+        rows.extend([
+            ('Warning Reason', meta.get('warningReason') or stop.reason),
+            ('Warning Type', meta.get('warningType') or 'Written'),
+            ('Notes', meta.get('warningNotes') or _traffic_stop_public_notes(stop)),
+        ])
+    c.setFont('Helvetica-Bold', 16)
+    c.drawString(54, y, title)
+    y -= 28
+    c.setFont('Helvetica', 10)
+    for label, value in rows:
+        value = str(value or '—')
+        c.setFont('Helvetica-Bold', 9)
+        c.drawString(54, y, f'{label}:')
+        c.setFont('Helvetica', 9)
+        text = c.beginText(170, y)
+        for line in [value[i:i+88] for i in range(0, len(value), 88)] or ['—']:
+            text.textLine(line)
+            y -= 12
+        c.drawText(text)
+        y -= 5
+        if y < 72:
+            c.showPage()
+            y = height - 54
+    c.setFont('Helvetica-Oblique', 8)
+    c.drawString(54, 38, 'Generated by GTAVCAD. Review for accuracy before issuing.')
+    c.save()
+    return buffer.getvalue(), number
+
+
+def _store_traffic_pdf(kind, stop, data, community_id):
+    storage_error = _traffic_pdf_storage_error()
+    if storage_error:
+        return None, None, storage_error
+    pdf_bytes, number = _traffic_pdf_bytes(kind, stop, data, community_id)
+    attachment_id = f"ATT-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}"
+    filename = f"{number}.pdf"
+    stored_leaf = f'{secrets.token_hex(12)}_{filename}'
+    rel_path = relative_storage_path(community_id, 'traffic_stop', stop.stop_id, attachment_id, stored_leaf)
+    _, save_error = _write_pdf_bytes_to_local_storage(pdf_bytes, rel_path)
+    if save_error:
+        return None, None, 'Traffic PDF could not be stored securely'
+    description = f"Generated traffic {kind} PDF {number} for stop {stop.stop_id}"
+    attachment = EvidenceAttachment(
+        attachment_id=attachment_id,
+        community_id=community_id,
+        uploaded_by_user_id=session.get('user_id'),
+        original_filename=filename,
+        stored_filename=stored_leaf,
+        file_type=f"Traffic {kind.title()} PDF",
+        mime_type='application/pdf',
+        file_size=len(pdf_bytes),
+        storage_mode='local_volume',
+        storage_path=rel_path,
+        description=description,
+        category=f"Traffic {kind.title()} PDF",
+        review_status='Generated',
+        is_deleted=False,
+        created_at=datetime.utcnow(),
+    )
+    evidence = Evidence(
+        evidence_id=f"EVD-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}",
+        community_id=community_id,
+        evidence_type=f"Traffic {kind.title()} PDF",
+        evidence_description=description,
+        collected_by=_actor_name(),
+        officer=_actor_name(),
+        storage_status='Generated',
+        chain_of_custody=f'Generated from traffic stop {stop.stop_id}; attachment {attachment_id}',
+        status='Active',
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(attachment)
+    db.session.add(evidence)
+    return attachment, number, None
+
+
+def _traffic_pdf_endpoint(traffic_stop_id, kind):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    stop = _find_traffic_stop_for_cad(community_id, traffic_stop_id)
+    if not stop:
+        return _cad_json_error('Traffic stop not found', 404)
+    data = request.get_json(silent=True) or {}
+    attachment, number, err = _store_traffic_pdf(kind, stop, data, community_id)
+    if err:
+        return _cad_json_error(err, 400 if 'configured' in err else 500)
+    _cad_audit(f'traffic_{kind}_pdf_generated', community_id, stop.stop_id, {'traffic_stop_id': stop.stop_id, 'attachment_id': attachment.attachment_id})
+    db.session.commit()
+    return jsonify({'success': True, 'traffic_stop_id': stop.stop_id, f'{kind}_number': number, 'attachment_id': attachment.attachment_id, 'download_url': _attachment_download_url(attachment)})
+
+
+@app.route('/api/cad/traffic-stops/<traffic_stop_id>/citation-pdf', methods=['POST'])
+def cad_traffic_stop_citation_pdf(traffic_stop_id):
+    return _traffic_pdf_endpoint(traffic_stop_id, 'citation')
+
+
+@app.route('/api/cad/traffic-stops/<traffic_stop_id>/warning-pdf', methods=['POST'])
+def cad_traffic_stop_warning_pdf(traffic_stop_id):
+    return _traffic_pdf_endpoint(traffic_stop_id, 'warning')
+
+
+def _traffic_arrest_for_stop(community_id, stop_id):
+    token = f'traffic_stop_id={stop_id}'
+    return scoped_query(Arrest, community_id).filter(Arrest.report_notes.ilike(f'%{token}%')).order_by(Arrest.created_at.desc()).first()
+
+
+def _create_or_get_traffic_arrest(community_id, stop, data):
+    existing = _traffic_arrest_for_stop(community_id, stop.stop_id)
+    if existing:
+        return existing, False
+    meta = {**_traffic_stop_metadata(stop), **(data or {})}
+    civilian = _find_civilian_for_arrest('', stop.driver_name)
+    arrest_id = f"arr-traffic-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
+    notes = f"Created from traffic stop. traffic_stop_id={stop.stop_id}; vehicle={meta.get('vehicleInfo') or ''}; plate={stop.plate}"
+    arrest = Arrest(
+        community_id=community_id,
+        arrest_id=arrest_id,
+        civilian_id=civilian.civilian_id if civilian else '',
+        suspect_name=stop.driver_name,
+        charges=(meta.get('arrestCharges') or data.get('charges') or stop.reason or '').strip(),
+        arresting_officer=stop.officer or data.get('officerName') or '',
+        arrest_location=stop.location,
+        penalty=(meta.get('arrestPenalty') or data.get('penalty') or '').strip(),
+        report_notes=notes,
+        narrative=(meta.get('arrestNarrative') or data.get('narrative') or stop.reason or '').strip(),
+        status='Active',
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.session.add(arrest)
+    return arrest, True
+
+
+@app.route('/api/cad/traffic-stops/<traffic_stop_id>/create-arrest', methods=['POST'])
+def cad_traffic_stop_create_arrest(traffic_stop_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    stop = _find_traffic_stop_for_cad(community_id, traffic_stop_id)
+    if not stop:
+        return _cad_json_error('Traffic stop not found', 404)
+    arrest, created = _create_or_get_traffic_arrest(community_id, stop, request.get_json(silent=True) or {})
+    _cad_audit('traffic_stop_arrest_created' if created else 'traffic_stop_arrest_reused', community_id, traffic_stop_id, {'traffic_stop_id': traffic_stop_id, 'arrest_id': arrest.arrest_id})
+    db.session.commit()
+    return jsonify({'success': True, 'created': created, 'arrest': arrest_to_dict(arrest)})
+
+
+@app.route('/api/cad/traffic-stops/<traffic_stop_id>/book-jail', methods=['POST'])
+def cad_traffic_stop_book_jail(traffic_stop_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    stop = _find_traffic_stop_for_cad(community_id, traffic_stop_id)
+    if not stop:
+        return _cad_json_error('Traffic stop not found', 404)
+    arrest, created = _create_or_get_traffic_arrest(community_id, stop, request.get_json(silent=True) or {})
+    inmate, booking, _hearing = _ensure_arrest_custody_and_hearing(arrest)
+    _cad_audit('traffic_stop_jail_booked', community_id, traffic_stop_id, {'traffic_stop_id': traffic_stop_id, 'arrest_id': arrest.arrest_id, 'created_arrest': created})
+    db.session.commit()
+    return jsonify({'success': True, 'arrest': arrest_to_dict(arrest), 'booking': jail_booking_to_dict(booking) if booking else None, 'inmate': inmate_to_dict(inmate) if inmate else None})
+
+
+@app.route('/api/cad/traffic-stops/<traffic_stop_id>/court-date', methods=['POST'])
+def cad_traffic_stop_court_date(traffic_stop_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    stop = _find_traffic_stop_for_cad(community_id, traffic_stop_id)
+    if not stop:
+        return _cad_json_error('Traffic stop not found', 404)
+    arrest, created = _create_or_get_traffic_arrest(community_id, stop, request.get_json(silent=True) or {})
+    hearing = scoped_query(Hearing, community_id).filter_by(arrest_id=arrest.arrest_id).first()
+    if hearing is None:
+        hearing = Hearing(
+            community_id=community_id,
+            hearing_id=f"hearing-{int(datetime.utcnow().timestamp() * 1000)}-{secrets.token_hex(5)}",
+            civilian_id=arrest.civilian_id or '',
+            suspect_name=arrest.suspect_name or '',
+            charges=arrest.charges or '',
+            hearing_type='Arraignment',
+            scheduled_at=(request.get_json(silent=True) or {}).get('courtDate') or _default_hearing_time(),
+            notes=f'Created from traffic stop {stop.stop_id}.',
+            arrest_id=arrest.arrest_id,
+            filing_officer=arrest.arresting_officer or _actor_name(),
+            status='Scheduled',
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.session.add(hearing)
+    _cad_audit('traffic_stop_court_date_created', community_id, traffic_stop_id, {'traffic_stop_id': traffic_stop_id, 'arrest_id': arrest.arrest_id, 'hearing_id': hearing.hearing_id, 'created_arrest': created})
+    db.session.commit()
+    return jsonify({'success': True, 'arrest': arrest_to_dict(arrest), 'hearing': hearing_to_dict(hearing)})
+
 @app.route('/api/cad/warrants/find-civilian', methods=['POST'])
 def cad_warrant_find_civilian():
     community_id, error = _require_cad_community()
@@ -10088,16 +10423,21 @@ def cad_case_packet_generate():
     data = request.get_json(silent=True) or {}
     arrest_id = (data.get('arrest_id') or '').strip()
     warrant_id = (data.get('warrant_id') or '').strip()
+    traffic_stop_id = (data.get('traffic_stop_id') or '').strip()
     civilian_id = (data.get('civilian_id') or '').strip()
     arrest = scoped_query(Arrest, community_id).filter_by(arrest_id=arrest_id).first() if arrest_id else None
     warrant = _find_warrant_for_cad(community_id, warrant_id) if warrant_id else None
+    traffic_stop = _find_traffic_stop_for_cad(community_id, traffic_stop_id) if traffic_stop_id else None
     if not civilian_id:
         civilian_id = (arrest.civilian_id if arrest else '') or (warrant.civilian_id if warrant else '')
     title = data.get('title') or f"Case Packet {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
     case_id = f"CASE-PKT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}"
-    case = CaseFile(community_id=community_id, case_id=case_id, case_number=case_id, title=title, case_type='case_packet', linked_arrest_id=arrest_id or None, linked_warrant_id=warrant_id or None, defendant_civilian_id=civilian_id or None, charges=(arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None), report_notes=data.get('notes') or 'Generated case packet record. Evidence metadata/counts only; storage paths are not exposed.', created_by=_actor_name(), status='open', created_at=datetime.utcnow())
+    packet_notes = data.get('notes') or 'Generated case packet record. Evidence metadata/counts only; storage paths are not exposed.'
+    if traffic_stop:
+        packet_notes = f'{packet_notes} Linked traffic_stop_id={traffic_stop.stop_id}; plate={traffic_stop.plate}; location={traffic_stop.location}.'
+    case = CaseFile(community_id=community_id, case_id=case_id, case_number=case_id, title=title, case_type='case_packet', linked_arrest_id=arrest_id or None, linked_warrant_id=warrant_id or None, defendant_civilian_id=civilian_id or None, charges=(arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None), report_notes=packet_notes, created_by=_actor_name(), status='open', created_at=datetime.utcnow())
     db.session.add(case)
-    _cad_audit('case_packet_generated', community_id, case_id, {'case_id': case_id, 'arrest_id': arrest_id, 'warrant_id': warrant_id, 'civilian_id': civilian_id})
+    _cad_audit('case_packet_generated', community_id, case_id, {'case_id': case_id, 'arrest_id': arrest_id, 'warrant_id': warrant_id, 'traffic_stop_id': traffic_stop_id, 'civilian_id': civilian_id})
     db.session.commit()
     return jsonify({'success': True, 'case_packet': _case_to_dict(case), 'case_id': case_id})
 
@@ -10863,6 +11203,46 @@ def cad_ai_evidence_summary():
     if not ai_result or not isinstance(ai_result[0], dict):
         return ai_result
     return jsonify({'success': True, 'source': 'attachment_metadata_only', **ai_result[0]})
+
+
+def _cad_traffic_ai(kind, payload):
+    guard, err = _cad_ai_guard(case_id=payload.get('case_id'))
+    if err:
+        return err
+    cfg = get_ai_config()
+    if not cfg.get('configured'):
+        return jsonify({'success': False, 'error': 'CAD AI is not configured.'}), 503
+    schemas = {
+        'traffic_citation': 'violation, citation_amount, court_required, court_date, notes, missing_info, review_required',
+        'traffic_warning': 'warning_reason, warning_type, notes, missing_info, review_required',
+        'traffic_arrest': 'charges, arrest_narrative, probable_cause, jail_recommendation, court_recommendation, missing_info, review_required',
+    }
+    ai_result = _ai_json_route(
+        kind,
+        _default_ai_system_rules('Traffic stop AI must preserve officer-entered facts, fill missing fields only, label suggestions review-only, and never create records.'),
+        f"Return JSON keys: {schemas[kind]}. Preserve all supplied facts and use empty strings for unknowns. Input: {json.dumps(payload)}",
+        {'traffic_stop_id': payload.get('traffic_stop_id'), 'outcome': payload.get('trafficOutcome') or payload.get('outcome')},
+    )
+    if not ai_result or not isinstance(ai_result[0], dict):
+        return ai_result
+    out = ai_result[0]
+    out['review_required'] = True
+    return jsonify({'success': True, 'suggestions': out, **out})
+
+
+@app.route('/api/cad/ai/traffic-citation', methods=['POST'])
+def cad_ai_traffic_citation():
+    return _cad_traffic_ai('traffic_citation', request.get_json(silent=True) or {})
+
+
+@app.route('/api/cad/ai/traffic-warning', methods=['POST'])
+def cad_ai_traffic_warning():
+    return _cad_traffic_ai('traffic_warning', request.get_json(silent=True) or {})
+
+
+@app.route('/api/cad/ai/traffic-arrest', methods=['POST'])
+def cad_ai_traffic_arrest():
+    return _cad_traffic_ai('traffic_arrest', request.get_json(silent=True) or {})
 
 @app.route('/api/cad/ai/charge-suggestions', methods=['POST'])
 def cad_ai_charge_suggestions():
