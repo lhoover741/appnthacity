@@ -10460,9 +10460,43 @@ def cad_case_packet_generate():
         packet_notes = f'{packet_notes} Linked traffic_stop_id={traffic_stop.stop_id}; plate={traffic_stop.plate}; location={traffic_stop.location}.'
     case = CaseFile(community_id=community_id, case_id=case_id, case_number=case_id, title=title, case_type='case_packet', linked_arrest_id=arrest_id or None, linked_warrant_id=warrant_id or None, defendant_civilian_id=civilian_id or None, charges=(arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None), report_notes=packet_notes, created_by=_actor_name(), status='open', created_at=datetime.utcnow())
     db.session.add(case)
+    evidence = Evidence(
+        community_id=community_id,
+        evidence_id=f"EVD-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}",
+        case_number=case_id,
+        evidence_type='CASE PACKET',
+        evidence_description=f'Generated case packet for {case_id}',
+        officer=_actor_name(),
+        storage_status='Generated'
+    )
+    db.session.add(evidence)
+    case.linked_evidence_ids = evidence.evidence_id
+    case.evidence_ids = evidence.evidence_id
     _cad_audit('case_packet_generated', community_id, case_id, {'case_id': case_id, 'arrest_id': arrest_id, 'warrant_id': warrant_id, 'traffic_stop_id': traffic_stop_id, 'civilian_id': civilian_id})
     db.session.commit()
     return jsonify({'success': True, 'case_packet': _case_to_dict(case), 'case_id': case_id})
+
+@app.route('/api/cad/case-packets', methods=['GET'])
+def cad_case_packets_list():
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    packets = scoped_query(CaseFile, community_id).filter(func.lower(CaseFile.case_type) == 'case_packet').order_by(CaseFile.created_at.desc()).limit(200).all()
+    return jsonify({'success': True, 'case_packets': [_case_to_dict(packet) for packet in packets]})
+
+@app.route('/api/cad/case-packets/<case_id>', methods=['DELETE'])
+def cad_case_packet_delete(case_id):
+    community_id, error = _require_cad_community()
+    if error:
+        return error
+    case = scoped_query(CaseFile, community_id).filter(or_(CaseFile.case_id == case_id, CaseFile.case_number == case_id), func.lower(CaseFile.case_type) == 'case_packet').first()
+    if not case:
+        return _cad_json_error('Case packet not found', 404)
+    case.status = 'archived'
+    case.updated_at = datetime.utcnow()
+    _cad_audit('case_packet_archived', community_id, case.case_id, {'case_id': case.case_id})
+    db.session.commit()
+    return jsonify({'success': True})
 
 @app.route('/api/cad/warrants', methods=['GET'])
 def cad_warrants_list():
