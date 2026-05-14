@@ -287,6 +287,9 @@ async function applyCommunityBranding() {
     if (target === 'cad' || target === 'cad.html' || target === 'police' || target === 'police.html') {
       return `/c/${CURRENT_COMMUNITY_SLUG}/cad`;
     }
+    if (target === 'civilian-portal' || target === 'civilian-dashboard') {
+      return `/c/${CURRENT_COMMUNITY_SLUG}/civilian-portal`;
+    }
     const normalized = target.endsWith('.html') ? target : `${target}.html`;
     return `/c/${CURRENT_COMMUNITY_SLUG}/${normalized}`;
   };
@@ -301,6 +304,8 @@ async function applyCommunityBranding() {
     '/': '',
     'rules.html': 'rules.html',
     'civilian.html': 'civilian.html',
+    'civilian-portal': 'civilian-portal',
+    'civilian-dashboard': 'civilian-dashboard',
     'police.html': 'police.html',
     'cad.html': 'cad.html',
     'dmv.html': 'dmv.html',
@@ -312,6 +317,8 @@ async function applyCommunityBranding() {
     'index.html': '',
     'rules': 'rules.html',
     'civilian': 'civilian.html',
+    'civilian-portal': 'civilian-portal',
+    'civilian-dashboard': 'civilian-dashboard',
     'police': 'police.html',
     'cad': 'cad.html',
     'dmv': 'dmv.html',
@@ -356,6 +363,9 @@ async function applyCommunityBranding() {
       colors: {
         primary: community.primary_color || '#ff2d2d',
         secondary: community.secondary_color || '#8b0000',
+        accent: community.accent_color || community.primary_color || '#ff2d2d',
+        background: community.background_color || '',
+        text: community.text_color || '',
       }
     };
     window.GTAVCAD_CURRENT_USER = data.user || window.GTAVCAD_CURRENT_USER || null;
@@ -364,6 +374,9 @@ async function applyCommunityBranding() {
     document.title = `${window.GTAVCAD_CONTEXT.cadName || window.GTAVCAD_CONTEXT.communityName} | ${window.GTAVCAD_CONTEXT.platformName}`;
     document.documentElement.style.setProperty('--accent', window.GTAVCAD_CONTEXT.colors.primary);
     document.documentElement.style.setProperty('--accent-dark', window.GTAVCAD_CONTEXT.colors.secondary);
+    document.documentElement.style.setProperty('--tenant-accent', window.GTAVCAD_CONTEXT.colors.accent);
+    if (window.GTAVCAD_CONTEXT.colors.background) document.documentElement.style.setProperty('--tenant-background', window.GTAVCAD_CONTEXT.colors.background);
+    if (window.GTAVCAD_CONTEXT.colors.text) document.documentElement.style.setProperty('--tenant-text', window.GTAVCAD_CONTEXT.colors.text);
     document.querySelectorAll('[data-community-name]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.communityName; });
     document.querySelectorAll('[data-community-cad-name]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.cadName; });
     document.querySelectorAll('.brand').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.platformName; });
@@ -660,12 +673,18 @@ async function add911Call(record) {
   }
 }
 
-function addTrafficStop(record) {
-  record.id = generateId('stop');
-  record.createdAt = new Date().toISOString();
-  GTAVCADData.trafficStops.push(record);
-  saveData();
-  return record;
+async function addTrafficStop(record) {
+  const payload = { ...record, id: record.id || record.traffic_stop_id || generateId('stop') };
+  const res = await fetch('/api/cad/traffic-stops', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Traffic stop save failed');
+  await loadData();
+  return data.traffic_stop || { ...payload, id: data.traffic_stop_id, createdAt: new Date().toISOString() };
 }
 
 async function addArrest(record) {
@@ -1074,6 +1093,7 @@ function renderWarrantsTable(filter = 'active') {
             <button class="button button-secondary" onclick="updateWarrantStatus('${escapeAttr(id)}', 'Withdrawn')">Withdraw</button>
           ` : ''}
           <button class="button button-primary" onclick="generateWarrantPdf('${escapeAttr(id)}')">Generate PDF</button>
+          <button class="button button-secondary" onclick="generateCasePacket({warrant_id:'${escapeAttr(id)}'})">Generate Case Packet</button>
           ${downloadButton}
         </td>
       </tr>
@@ -1104,7 +1124,7 @@ function renderArrestsTable() {
       <td>${arrest.location}</td>
       <td>${arrest.penalty}</td>
       <td>${arrest.evidenceAttached}</td>
-      <td>${formatDate(arrest.createdAt)}</td>
+      <td>${formatDate(arrest.createdAt)}<br><button class="button button-secondary" onclick="generateCasePacket({arrest_id:'${escapeAttr(arrest.id)}',civilian_id:'${escapeAttr(arrest.civilianId || arrest.civilian_id || '')}'})">Generate Case Packet</button></td>
     </tr>
   `).join('');
 
@@ -1557,18 +1577,164 @@ function handle911Form() {
   });
 }
 
+
+async function generateCasePacket(payload = {}) {
+  try {
+    const res = await fetch('/api/cad/case-packets/generate', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Case packet generation failed');
+    showToast(`Case packet generated: ${data.case_id}`, 'success');
+    return data.case_packet;
+  } catch (err) {
+    showToast(err.message || 'Case packet generation failed', 'error');
+    throw err;
+  }
+}
+
+function trafficOutcomeTemplate(outcome) {
+  if (outcome === 'Citation') return `<h4>Citation / Ticket</h4><div class="form-grid"><label><span>Violation</span><input name="citationViolation" placeholder="Speeding / reckless driving"></label><label><span>Citation amount</span><input name="citationAmount" placeholder="250"></label><label><span>Court required</span><select name="citationCourtRequired"><option>No</option><option>Yes</option></select></label><label><span>Court date</span><input name="citationCourtDate" type="datetime-local"></label></div><label><span>Ticket notes</span><textarea name="citationNotes" rows="3"></textarea></label><div class="actions"><button type="button" onclick="aiCompleteTrafficOutcome('Citation')">AI Complete Citation</button><button type="button" onclick="generateTrafficOutcomePdf('citation')">Generate Ticket PDF</button></div>`;
+  if (outcome === 'Warning') return `<h4>Warning</h4><div class="form-grid"><label><span>Warning reason</span><input name="warningReason"></label><label><span>Warning type</span><input name="warningType" placeholder="Verbal / Written"></label></div><label><span>Warning notes</span><textarea name="warningNotes" rows="3"></textarea></label><div class="actions"><button type="button" onclick="aiCompleteTrafficOutcome('Warning')">AI Complete Warning</button><button type="button" onclick="generateTrafficOutcomePdf('warning')">Generate Warning PDF</button></div>`;
+  if (outcome === 'Arrest') return `<h4>Arrest Transition</h4><label><span>Charges</span><textarea name="arrestCharges" rows="2"></textarea></label><label><span>Probable cause / narrative</span><textarea name="arrestNarrative" rows="3"></textarea></label><label><span>Jail / fine if applicable</span><input name="arrestPenalty"></label><div class="actions"><button type="button" onclick="createArrestFromTrafficStop()">Create Arrest Report From Stop</button><button type="button" onclick="aiCompleteTrafficOutcome('Arrest')">AI Complete Arrest Report</button><button type="button" onclick="bookJailFromTrafficStop()">Book/Jail Suspect</button><button type="button" onclick="createCourtDateFromTrafficStop()">Create Court Date</button><button type="button" onclick="generateCasePacketFromTrafficStop()">Generate Case Packet</button></div>`;
+  return '';
+}
+
+function bindTrafficOutcomeFlow(form) {
+  const select = form.querySelector('[name="trafficOutcome"]');
+  const panel = document.getElementById('traffic-outcome-flow');
+  if (!select || !panel) return;
+  const render = () => {
+    panel.innerHTML = trafficOutcomeTemplate(select.value);
+    panel.classList.toggle('hidden', !select.value);
+  };
+  select.onchange = render;
+  render();
+}
+
+function trafficAiEndpoint(outcome) {
+  if (outcome === 'Citation') return '/api/cad/ai/traffic-citation';
+  if (outcome === 'Warning') return '/api/cad/ai/traffic-warning';
+  return '/api/cad/ai/traffic-arrest';
+}
+
+function fillIfEmpty(form, fieldName, value) {
+  if (!form?.[fieldName] || value === undefined || value === null || value === '') return;
+  if (!String(form[fieldName].value || '').trim()) form[fieldName].value = value;
+}
+
+async function aiCompleteTrafficOutcome(outcome) {
+  const form = document.getElementById('traffic-form');
+  if (!form) return;
+  try {
+    const res = await fetch(trafficAiEndpoint(outcome), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(getFormData(form)) });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'CAD AI request failed');
+    const s = data.suggestions || data;
+    if (outcome === 'Citation') {
+      fillIfEmpty(form, 'citationViolation', s.violation);
+      fillIfEmpty(form, 'citationAmount', s.citation_amount || s.citationAmount);
+      fillIfEmpty(form, 'citationCourtRequired', s.court_required || s.courtRequired);
+      fillIfEmpty(form, 'citationCourtDate', s.court_date || s.courtDate);
+      fillIfEmpty(form, 'citationNotes', s.notes);
+    } else if (outcome === 'Warning') {
+      fillIfEmpty(form, 'warningReason', s.warning_reason || s.warningReason);
+      fillIfEmpty(form, 'warningType', s.warning_type || s.warningType);
+      fillIfEmpty(form, 'warningNotes', s.notes);
+    } else {
+      fillIfEmpty(form, 'arrestCharges', s.charges);
+      fillIfEmpty(form, 'arrestNarrative', s.arrest_narrative || s.probable_cause || s.probableCause);
+      fillIfEmpty(form, 'arrestPenalty', s.jail_recommendation || s.jailRecommendation);
+    }
+    showToast(`${outcome} AI suggestions filled for review`, 'success');
+  } catch (err) { showToast(err.message || 'CAD AI request failed', 'error'); }
+}
+
+async function ensureTrafficStopSaved() {
+  const form = document.getElementById('traffic-form');
+  if (!form) throw new Error('Traffic stop form not found');
+  const currentId = form.dataset.trafficStopId;
+  const data = getFormData(form);
+  if (currentId) data.id = currentId;
+  const stop = await addTrafficStop(data);
+  form.dataset.trafficStopId = stop.id || stop.stop_id || stop.traffic_stop_id;
+  return { stop, data: getFormData(form), id: form.dataset.trafficStopId };
+}
+
+async function generateTrafficOutcomePdf(type) {
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const route = type === 'warning' ? 'warning-pdf' : 'citation-pdf';
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/${route}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Traffic PDF generation failed');
+    showToast(`Traffic PDF generated: ${out.download_url}`, 'success');
+    if (out.download_url) window.open(out.download_url, '_blank', 'noopener');
+  } catch (err) { showToast(err.message || 'Traffic PDF generation failed', 'error'); }
+}
+
+async function createArrestFromTrafficStop() {
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/create-arrest`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Unable to create arrest report');
+    await loadData();
+    renderArrestsTable();
+    showToast(`${out.created ? 'Arrest report created' : 'Existing arrest report opened'}: ${out.arrest?.id || out.arrest?.arrest_id}`, 'success');
+    return out.arrest;
+  } catch (err) { showToast(err.message || 'Unable to create arrest report', 'error'); }
+}
+
+async function bookJailFromTrafficStop() {
+  if (!confirm('Book/Jail this suspect for the selected traffic stop?')) return;
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/book-jail`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Unable to book suspect');
+    if (typeof loadJail === 'function') await loadJail();
+    showToast('Suspect booked/jailed for this stop', 'success');
+  } catch (err) { showToast(err.message || 'Unable to book suspect', 'error'); }
+}
+
+async function createCourtDateFromTrafficStop() {
+  if (!confirm('Create a court date for this traffic stop arrest?')) return;
+  try {
+    const { id, data } = await ensureTrafficStopSaved();
+    const res = await fetch(`/api/cad/traffic-stops/${encodeURIComponent(id)}/court-date`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const out = await res.json();
+    if (!res.ok || !out.success) throw new Error(out.error || 'Unable to create court date');
+    if (typeof loadCourtHearings === 'function') await loadCourtHearings();
+    showToast(`Court date created: ${out.hearing?.id || out.hearing?.hearing_id}`, 'success');
+  } catch (err) { showToast(err.message || 'Unable to create court date', 'error'); }
+}
+
+async function generateCasePacketFromTrafficStop() {
+  try {
+    const { id } = await ensureTrafficStopSaved();
+    await generateCasePacket({ title: 'Traffic Stop Case Packet', traffic_stop_id: id });
+  } catch (err) { showToast(err.message || 'Case packet failed', 'error'); }
+}
+
 function handleTrafficForm() {
   const form = document.getElementById('traffic-form');
   if (!form) return;
-  form.addEventListener('submit', (event) => {
+  bindTrafficOutcomeFlow(form);
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = getFormData(form);
-    addTrafficStop(data);
-    updateDashboard();
-    renderTrafficTable();
-    addActivity('Traffic Stop', `Traffic stop logged for ${data.driverName} (${data.plate})`);
-    showToast('Traffic stop logged successfully', 'success');
-    form.reset();
+    const submit = form.querySelector('[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      const stop = await addTrafficStop(getFormData(form));
+      form.dataset.trafficStopId = stop.id || stop.stop_id || stop.traffic_stop_id;
+      updateDashboard();
+      renderTrafficTable();
+      addActivity('Traffic Stop', `Traffic stop logged for ${stop.driverName || form.driverName?.value} (${stop.trafficPlate || stop.plate || form.trafficPlate?.value})`);
+      showToast('Traffic stop logged successfully', 'success');
+    } catch (err) {
+      showToast(err.message || 'Traffic stop save failed', 'error');
+    } finally {
+      if (submit) submit.disabled = false;
+    }
   });
 }
 
@@ -2026,7 +2192,7 @@ function getCivilianDashboardUrl(civilianId = '') {
 
 function renderKeyValueGrid(container, rows) {
   if (!container) return;
-  container.innerHTML = rows.map(([label, value]) => `<div class="record-field"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || '—')}</strong></div>`).join('');
+  container.innerHTML = rows.map(([label, value]) => `<div class="profile-row"><span class="profile-label">${escapeHtml(label)}:</span><span class="profile-value">${escapeHtml(value || '—')}</span></div>`).join('');
 }
 
 function renderDashboardEmpty(container, message) {
@@ -2053,7 +2219,14 @@ function renderCivilianDashboard(data) {
   if (!data.civilian) {
     if (content) content.classList.add('hidden');
     if (selectorCard) selectorCard.classList.toggle('hidden', profiles.length === 0);
-    if (status) status.textContent = profiles.length ? 'Select a civilian profile to continue.' : 'No civilian profiles are linked to your account in this community.';
+    if (status) {
+      if (profiles.length) {
+        status.textContent = 'Choose Civilian for This Session';
+      } else {
+        const createUrl = CURRENT_COMMUNITY_SLUG ? `/c/${CURRENT_COMMUNITY_SLUG}/civilian.html` : '/civilian.html';
+        status.innerHTML = `No civilian profiles are linked to your account in this community.<br><a class="button button-primary" href="${createUrl}">Create Civilian Profile</a>`;
+      }
+    }
     return;
   }
   if (status) status.classList.add('hidden');

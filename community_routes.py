@@ -554,6 +554,15 @@ def get_current_community_context():
         or (user_id and community.owner_user_id == user_id)
     )
 
+    def config_value(key, default):
+        row = Config.query.filter_by(key=key, community_id=community.community_id).first()
+        if not row or row.value in (None, ''):
+            return default
+        try:
+            return json.loads(row.value)
+        except Exception:
+            return row.value
+
     return jsonify({
         'success': True,
         'platform': {'name': 'GTAVCAD', 'domain': 'gtavcad.app'},
@@ -564,6 +573,9 @@ def get_current_community_context():
             'cad_name': community.cad_name,
             'primary_color': community.primary_color,
             'secondary_color': community.secondary_color,
+            'accent_color': config_value('accent_color', '#ff2d2d'),
+            'background_color': config_value('background_color', '#0b0b0d'),
+            'text_color': config_value('text_color', '#f6f6f6'),
             'logo_url': community.logo_url,
         },
         'membership': {

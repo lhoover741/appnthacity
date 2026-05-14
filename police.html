@@ -465,7 +465,8 @@
             <label><span>Plate number</span><input name="trafficPlate" type="text" required /></label>
             <label><span>Driver name</span><input name="driverName" type="text" required /></label>
             <label><span>Reason for stop</span><textarea name="trafficReason" rows="3" required></textarea></label>
-            <label><span>Outcome</span><select name="trafficOutcome" required><option value="">Select</option><option>Citation</option><option>Warning</option><option>Arrest</option></select></label>
+            <label><span>Outcome</span><select name="trafficOutcome" id="trafficOutcome" required><option value="">Select</option><option>Citation</option><option>Warning</option><option>Arrest</option></select></label>
+            <div id="traffic-outcome-flow" class="traffic-outcome-panel hidden"></div>
             <button class="button button-primary" type="submit">Log Traffic Stop</button>
             <div class="form-status" id="traffic-status"></div>
           </form>
@@ -522,7 +523,7 @@
           <h3>Add Warrant</h3>
           <form id="warrant-form" class="system-form">
             <label><span>Warrant Type</span><select name="warrant_type" id="warrantType" required><option>Arrest Warrant</option><option>Search Warrant</option><option>Bench Warrant</option><option>Administrative Warrant</option><option>Extradition Warrant</option><option>Fugitive Warrant</option><option>Alias Warrant</option></select></label>
-            <label><span>Subject / target name</span><input name="subject_name" type="text" required /></label>
+            <label><span>Subject / target name</span><input name="subject_name" type="text" required /></label><div class="actions"><button type="button" id="find-warrant-civilian-btn">Find Civilian</button><span id="find-warrant-civilian-status" class="form-status"></span></div>
             <label><span>Subject DOB</span><input name="subject_dob" type="date" /></label>
             <label><span>Subject address</span><input name="subject_address" type="text" /></label>
             <label><span>Charges / basis</span><input name="charges_or_basis" type="text" required /></label>
@@ -1658,6 +1659,39 @@
       }
     });
 
+
+    document.getElementById('find-warrant-civilian-btn')?.addEventListener('click', async function () {
+      const form = document.getElementById('warrant-form');
+      const status = document.getElementById('find-warrant-civilian-status');
+      const subject = form?.subject_name?.value?.trim();
+      if (!subject) { status.textContent = 'Enter a subject name first.'; return; }
+      status.textContent = 'Searching civilian database…';
+      try {
+        const res = await fetch('/api/cad/warrants/find-civilian', { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subject_name: subject}) });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Civilian lookup failed');
+        if (data.multiple && Array.isArray(data.matches) && data.matches.length) {
+          status.innerHTML = `Multiple exact civilians found. Select one before autofill: <select id="warrant-civilian-match-select">${data.matches.map((c, i) => `<option value="${i}">${escapeHtml(c.name || c.civilian_id || 'Civilian')} · DOB ${escapeHtml(c.dob || c.date_of_birth || '—')}</option>`).join('')}</select> <button type="button" id="warrant-civilian-match-apply">Use Selected</button>`;
+          document.getElementById('warrant-civilian-match-apply')?.addEventListener('click', () => {
+            const idx = Number(document.getElementById('warrant-civilian-match-select')?.value || 0);
+            const selected = data.matches[idx];
+            if (!selected) return;
+            fillWarrantField('subject_dob', selected.dob || selected.date_of_birth);
+            fillWarrantField('subject_address', selected.address);
+            status.textContent = `Selected ${selected.name || 'civilian'}; empty DOB/address fields were autofilled.`;
+          });
+          return;
+        }
+        if (!data.civilian) {
+          status.textContent = data.matches?.length ? 'No exact civilian match found. Fuzzy candidates were not auto-filled.' : 'No exact civilian match found.';
+          return;
+        }
+        fillWarrantField('subject_dob', data.civilian.dob || data.civilian.date_of_birth);
+        fillWarrantField('subject_address', data.civilian.address);
+        status.textContent = `Autofilled empty DOB/address fields for ${data.civilian.name || subject}.`;
+      } catch (err) { status.textContent = err.message || 'Civilian lookup failed.'; }
+    });
+
     /* ── AI WARRANT ── */
     function fillWarrantField(name, value, options = {}) {
       const overwrite = options.overwrite === true;
@@ -1994,9 +2028,9 @@
         }).join('');
 
         const wHtml = section('Related Warrants', '📋', warrants, w =>
-          `<div style="background:#0a0a0a;border:1px solid #e0525244;border-left:3px solid #e05252;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(w.warrantName || w.suspectName)}</strong> <span style="color:#e05252;margin-left:8px;font-size:0.75rem;">${fmt(w.warrantStatus || w.status || 'Active')}</span><br><span style="color:#aaa;">${fmt(w.warrantCharges || w.charges)}</span> · Issued by ${fmt(w.warrantIssuer || w.issuer)}</div>`);
+          `<div style="background:#0a0a0a;border:1px solid #e0525244;border-left:3px solid #e05252;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(w.warrantName || w.suspectName)}</strong> <span style="color:#e05252;margin-left:8px;font-size:0.75rem;">${fmt(w.warrantStatus || w.status || 'Active')}</span><br><span style="color:#aaa;">${fmt(w.warrantCharges || w.charges)}</span> · Issued by ${fmt(w.warrantIssuer || w.issuer)}<br><button class="button button-secondary" onclick="generateCasePacket({warrant_id:'${escapeHtml(w.warrant_id || w.id || '')}'})">Generate Case Packet</button></div>`);
         const aHtml = section('Related Arrests', '🔒', arrests, a =>
-          `<div style="background:#0a0a0a;border:1px solid #f5a62344;border-left:3px solid #f5a623;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(a.suspectName)}</strong> <span style="color:#aaa;font-size:0.72rem;">${fmt(a.id)}</span><br><span style="color:#aaa;">${fmt(a.charges)}</span><br>Officer: ${fmt(a.arrestingOfficer)} · Arrest Date: ${fmt(a.createdAt ? new Date(a.createdAt).toLocaleString() : '')} · Penalty: ${fmt(a.penalty)}${a.reportNotes || a.narrative ? `<br><span style="color:#888;font-style:italic;">${fmt(a.reportNotes || a.narrative)}</span>` : ''}</div>`);
+          `<div style="background:#0a0a0a;border:1px solid #f5a62344;border-left:3px solid #f5a623;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(a.suspectName)}</strong> <span style="color:#aaa;font-size:0.72rem;">${fmt(a.id)}</span><br><span style="color:#aaa;">${fmt(a.charges)}</span><br>Officer: ${fmt(a.arrestingOfficer)} · Arrest Date: ${fmt(a.createdAt ? new Date(a.createdAt).toLocaleString() : '')} · Penalty: ${fmt(a.penalty)}${a.reportNotes || a.narrative ? `<br><span style="color:#888;font-style:italic;">${fmt(a.reportNotes || a.narrative)}</span>` : ''}<br><button class="button button-secondary" onclick="generateCasePacket({arrest_id:'${escapeHtml(a.id || a.arrest_id || '')}',civilian_id:'${escapeHtml(a.civilianId || '')}'})">Generate Case Packet</button></div>`);
         const cHtml = section('Related Citations', '🧾', citations, c =>
           `<div style="background:#0a0a0a;border:1px solid #4c9af544;border-left:3px solid #4c9af5;border-radius:8px;padding:10px 14px;font-size:0.83rem;"><strong>${fmt(c.violation)}</strong> <span style="color:#aaa;">${fmt(c.status)}</span><br>Fine: ${fmt(c.fineAmount)} · Officer: ${fmt(c.issuingOfficer)} · ${fmt(c.location)}</div>`);
         const jHtml = section('Related Jail/Custody Records', '🚔', jailRecords, j =>
