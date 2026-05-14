@@ -516,6 +516,7 @@ const GTAVCADData = {
   evidenceAttachmentConfig: { direct_uploads_enabled: false, direct_upload_message: 'Direct uploads are not configured. Attach an external evidence link instead.' },
   trafficStops: [],
   calls911: [],
+  casePackets: [],
   officers: [
     { id: '1L-01', name: 'Chief Unit', status: 'Available', lastUpdate: new Date().toISOString() },
     { id: '2L-12', name: 'Patrol Unit', status: 'En Route', lastUpdate: new Date().toISOString() },
@@ -549,6 +550,13 @@ async function loadData() {
       const payload = await res.json();
       const data = payload && payload.data ? payload.data : payload;
       Object.assign(GTAVCADData, data);
+      try {
+        const packetRes = await fetch('/api/cad/case-packets', { credentials: 'include' });
+        const packetData = await packetRes.json();
+        if (packetRes.ok && packetData.success) GTAVCADData.casePackets = packetData.case_packets || [];
+      } catch (packetError) {
+        console.warn('Case packet load failed:', packetError);
+      }
       try {
         const configRes = await fetch('/api/cad/evidence/attachments/config');
         const configData = await configRes.json();
@@ -978,7 +986,7 @@ function renderCallQueue() {
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">📞</div>
-        <h3>No active calls</h3>
+        <h3>No active 911 calls.</h3>
         <p>All emergency calls have been resolved.</p>
       </div>
     `;
@@ -1592,12 +1600,75 @@ async function generateCasePacket(payload = {}) {
     const res = await fetch('/api/cad/case-packets/generate', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || 'Case packet generation failed');
+    await loadData();
+    renderCasePacketsTable();
+    renderEvidenceTable();
     showToast(`Case packet generated: ${data.case_id}`, 'success');
     return data.case_packet;
   } catch (err) {
     showToast(err.message || 'Case packet generation failed', 'error');
     throw err;
   }
+}
+
+function renderCasePacketsTable() {
+  const tbody = document.getElementById('case-packets-tbody');
+  if (!tbody) return;
+  const packets = (GTAVCADData.casePackets || []).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  if (!packets.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty-row">No case packets generated yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = packets.map((p) => {
+    const status = (p.status || 'open');
+    const viewButton = `<button class="button button-ghost" onclick="viewCasePacket('${escapeAttr(p.case_id)}')">View</button>`;
+    const downloadButton = p.download_url ? `<a class="button button-secondary" href="${escapeAttr(p.download_url)}">Download PDF</a>` : '';
+    const evidenceButton = p.evidence_attachment_id ? `<button class="button button-secondary" onclick="focusEvidenceItem('${escapeAttr(p.evidence_attachment_id)}')">Open Evidence</button>` : '';
+    const deleteButton = `<button class="button button-ghost" onclick="deleteCasePacket('${escapeAttr(p.case_id)}')">Delete</button>`;
+    return `<tr>
+      <td>${escapeHtml(p.case_number || p.case_id || '—')}</td>
+      <td>${escapeHtml((p.involved_civilians || [])[0] || p.subject_name || '—')}</td>
+      <td>${escapeHtml(p.type || 'case_packet')}</td>
+      <td>${escapeHtml(p.linked_arrest_id || '—')}</td>
+      <td>${escapeHtml(p.linked_warrant_id || '—')}</td>
+      <td>${escapeHtml(p.linked_traffic_stop_id || p.traffic_stop_id || '—')}</td>
+      <td>${escapeHtml(p.created_by || '—')}</td>
+      <td>${formatDate(p.created_at)}</td>
+      <td><span class="badge badge-secondary">${escapeHtml(status)}</span></td>
+      <td class="table-actions">${viewButton} ${downloadButton} ${evidenceButton} ${deleteButton}</td>
+    </tr>`;
+  }).join('');
+}
+window.renderCasePacketsTable = renderCasePacketsTable;
+window.viewCasePacket = (caseId) => { if (caseId) window.open(`/api/cad/cases/${encodeURIComponent(caseId)}`, '_blank', 'noopener'); };
+window.deleteCasePacket = async (caseId) => {
+  if (!caseId || !window.confirm('Archive this case packet?')) return;
+  const res = await fetch(`/api/cad/case-packets/${encodeURIComponent(caseId)}`, { method: 'DELETE', credentials: 'include' });
+  const data = await res.json();
+  if (!res.ok || !data.success) throw new Error(data.error || 'Case packet delete failed');
+  await loadData();
+  renderCasePacketsTable();
+};
+window.focusEvidenceItem = (itemId) => {
+  const row = document.querySelector(`#evidence-tbody tr td:first-child`);
+  document.querySelector('[data-cad-module-target="evidence"]')?.click();
+  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+
+function initCadMapFilters() {
+  document.querySelectorAll('.cad-map-filter').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.mapTarget;
+      const filter = btn.dataset.mapFilter || 'all';
+      document.querySelectorAll(`.cad-map-filter[data-map-target="${target}"]`).forEach((b) => b.classList.toggle('active', b === btn));
+      const canvas = document.querySelector(`.cad-map-canvas[data-map-target="${target}"]`);
+      if (!canvas) return;
+      canvas.querySelectorAll('.cad-map-marker').forEach((marker) => {
+        const cat = String(marker.dataset.mapCategory || '');
+        marker.style.display = (filter === 'all' || cat.includes(filter)) ? '' : 'none';
+      });
+    });
+  });
 }
 
 function trafficOutcomeTemplate(outcome) {
@@ -2356,7 +2427,9 @@ async function initApp() {
     renderArrestsTable();
     renderTrafficTable();
     renderEvidenceTable();
+    renderCasePacketsTable();
     renderOfficersBoard();
+    initCadMapFilters();
   }
 
   setActiveNav();
