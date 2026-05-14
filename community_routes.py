@@ -14,7 +14,7 @@ import secrets
 import string
 import logging
 from datetime import datetime, timedelta
-from flask import Blueprint, request, session, jsonify, g
+from flask import Blueprint, request, session, jsonify, g, current_app
 from database import db
 from models import (
     User, Config, Community, CommunityMember, CommunityInvite
