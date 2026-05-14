@@ -390,14 +390,23 @@ async function applyCommunityBranding() {
       }
     }
 
-    const communityCtxName = document.querySelector('[data-context-community]');
-    if (communityCtxName) communityCtxName.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community';
+    document.querySelectorAll('[data-context-community]').forEach((el) => { el.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community'; });
     const communityCtxCad = document.querySelector('[data-context-cad]');
     if (communityCtxCad) communityCtxCad.textContent = window.GTAVCAD_CONTEXT.cadName || 'CAD';
-    const communityCtxRole = document.querySelector('[data-context-role]');
-    if (communityCtxRole) communityCtxRole.textContent = window.GTAVCAD_CONTEXT.community_role || window.GTAVCAD_CONTEXT.platform_role || window.GTAVCAD_CONTEXT.role || (membership ? membership.role : 'No membership');
-    const usernameEl = document.querySelector('[data-context-username]');
-    if (usernameEl) usernameEl.textContent = data.user?.username || 'Unknown';
+    const resolvedRole = window.GTAVCAD_CONTEXT.community_role || window.GTAVCAD_CONTEXT.platform_role || window.GTAVCAD_CONTEXT.role || (membership ? membership.role : 'No membership');
+    document.querySelectorAll('[data-context-role]').forEach((el) => { el.textContent = resolvedRole; });
+    const resolvedUsername = data.user?.username || 'Unknown';
+    document.querySelectorAll('[data-context-username]').forEach((el) => { el.textContent = resolvedUsername; });
+    
+    const cadTopbarCommunity = document.getElementById('cad-topbar-community');
+    if (cadTopbarCommunity) cadTopbarCommunity.textContent = window.GTAVCAD_CONTEXT.communityName || 'Unknown Community';
+    const cadTopbarUsername = document.getElementById('cad-topbar-username');
+    if (cadTopbarUsername) cadTopbarUsername.textContent = resolvedUsername;
+    const cadTopbarRole = document.getElementById('cad-topbar-role');
+    if (cadTopbarRole) cadTopbarRole.textContent = resolvedRole;
+    const cadTopbarDepartment = document.getElementById('cad-topbar-department');
+    if (cadTopbarDepartment) cadTopbarDepartment.textContent = window.GTAVCAD_CONTEXT.department || '—';
+
     document.querySelectorAll('[data-cad-access-badge]').forEach((el) => { el.textContent = (data.user?.can_access_police_cad === true) ? 'CAD ACCESS' : 'CAD LOCKED'; });
     document.querySelectorAll('[data-exit-impersonation]').forEach((el) => { el.classList.toggle('hidden', data.user?.impersonation_active !== true); });
     bindAuthenticatedControls();
