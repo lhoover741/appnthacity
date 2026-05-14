@@ -1223,7 +1223,7 @@ function renderEvidenceTable() {
       const action = `${openAction} <button class="button button-ghost" type="button" onclick="deleteEvidenceAttachment('${escapeAttr(item.attachment_id)}')">Delete</button>`;
       const size = item.file_size ? `${Math.round(item.file_size / 1024)} KB` : '—';
       return `
-        <tr>
+        <tr data-evidence-id="${escapeAttr(item.evidence_id || '')}" data-attachment-id="${escapeAttr(item.attachment_id || '')}" data-evidence-attachment-id="${escapeAttr(item.attachment_id || '')}">
           <td>${escapeHtml(item.attachment_id)}</td>
           <td>${escapeHtml(item.case_id || item.evidence_id || item.arrest_id || item.warrant_id || item.court_packet_id || '—')}</td>
           <td>${escapeHtml(item.uploaded_by?.username || item.uploaded_by?.user_id || '—')}</td>
@@ -1237,7 +1237,7 @@ function renderEvidenceTable() {
     }
     const storageClass = item.storageStatus ? `badge-${String(item.storageStatus).toLowerCase().replace(' ', '-')}` : 'badge-secondary';
     return `
-      <tr>
+      <tr data-evidence-id="${escapeAttr(item.id || '')}">
         <td>${escapeHtml(item.id)}</td>
         <td>${escapeHtml(item.caseNumber)}</td>
         <td>${escapeHtml(item.officer || item.evidenceOfficer)}</td>
@@ -1623,7 +1623,15 @@ function renderCasePacketsTable() {
     const status = (p.status || 'open');
     const viewButton = `<button class="button button-ghost" onclick="viewCasePacket('${escapeAttr(p.case_id)}')">View</button>`;
     const downloadButton = p.download_url ? `<a class="button button-secondary" href="${escapeAttr(p.download_url)}">Download PDF</a>` : '';
-    const evidenceButton = p.evidence_attachment_id ? `<button class="button button-secondary" onclick="focusEvidenceItem('${escapeAttr(p.evidence_attachment_id)}')">Open Evidence</button>` : '';
+    const linkedEvidenceIdsRaw = p.linked_evidence_ids || p.linked_evidence_id || p.evidence_id || p.evidence_attachment_id || [];
+    const linkedEvidenceIds = Array.isArray(linkedEvidenceIdsRaw)
+      ? linkedEvidenceIdsRaw.filter(Boolean).map((value) => String(value))
+      : String(linkedEvidenceIdsRaw || '').split(',').map((value) => value.trim()).filter(Boolean);
+    const linkedEvidencePrimary = linkedEvidenceIds[0] || '';
+    const linkedEvidenceCount = linkedEvidenceIds.length;
+    const evidenceButton = linkedEvidencePrimary
+      ? `<button class="button button-secondary" onclick="focusEvidenceItem('${escapeAttr(linkedEvidencePrimary)}')">Open Evidence${linkedEvidenceCount > 1 ? ` (${linkedEvidenceCount})` : ''}</button>`
+      : '';
     const deleteButton = `<button class="button button-ghost" onclick="deleteCasePacket('${escapeAttr(p.case_id)}')">Delete</button>`;
     return `<tr>
       <td>${escapeHtml(p.case_number || p.case_id || '—')}</td>
@@ -1650,9 +1658,22 @@ window.deleteCasePacket = async (caseId) => {
   renderCasePacketsTable();
 };
 window.focusEvidenceItem = (itemId) => {
-  const row = document.querySelector(`#evidence-tbody tr td:first-child`);
   document.querySelector('[data-cad-module-target="evidence"]')?.click();
-  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const safeId = String(itemId || '').trim();
+  if (!safeId) {
+    showToast('Linked evidence was not found in the current Evidence Lock-Up view.', 'error');
+    return;
+  }
+  const escapedId = (window.CSS && typeof window.CSS.escape === 'function') ? window.CSS.escape(safeId) : safeId.replace(/["\\]/g, '\\$&');
+  const selector = `#evidence-tbody tr[data-evidence-id="${escapedId}"], #evidence-tbody tr[data-attachment-id="${escapedId}"], #evidence-tbody tr[data-evidence-attachment-id="${escapedId}"]`;
+  const row = document.querySelector(selector);
+  if (!row) {
+    showToast('Linked evidence was not found in the current Evidence Lock-Up view.', 'error');
+    return;
+  }
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('evidence-highlight', 'case-packet-highlight');
+  window.setTimeout(() => row.classList.remove('evidence-highlight', 'case-packet-highlight'), 3000);
 };
 
 function initCadMapFilters() {
