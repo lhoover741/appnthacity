@@ -6,6 +6,7 @@ Create Date: 2026-05-13
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 revision = '010'
@@ -15,14 +16,30 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('civilians', schema=None) as batch_op:
-        try:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    try:
+        columns = {column['name'] for column in inspector.get_columns('civilians')}
+    except Exception:
+        columns = set()
+
+    if 'user_id' not in columns:
+        with op.batch_alter_table('civilians', schema=None) as batch_op:
             batch_op.add_column(sa.Column('user_id', sa.Integer(), nullable=True))
-        except Exception:
-            pass
+
+    try:
+        indexes = {index.get('name') for index in inspector.get_indexes('civilians')}
+    except Exception:
+        indexes = set()
+    if 'idx_civilians_user_id' not in indexes:
+        op.create_index('idx_civilians_user_id', 'civilians', ['user_id'], unique=False)
 
 
 def downgrade():
+    try:
+        op.drop_index('idx_civilians_user_id', table_name='civilians')
+    except Exception:
+        pass
     with op.batch_alter_table('civilians', schema=None) as batch_op:
         try:
             batch_op.drop_column('user_id')
