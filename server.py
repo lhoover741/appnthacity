@@ -10456,16 +10456,22 @@ def cad_case_packet_generate():
     title = data.get('title') or f"Case Packet {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
     case_id = f"CASE-PKT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3).upper()}"
     packet_notes = data.get('notes') or 'Generated case packet record. Evidence metadata/counts only; storage paths are not exposed.'
+    professional_sections = (
+        "Packet Cover Page; Charge Sheet; Arrest Report; Incident Narrative; Declaration of Probable Cause; "
+        "Booking Records; Identification Records; Evidence Log; Consent to Search / Waiver / Search Authority; "
+        "Witness / Victim Statements; Supplementary Reports; Court / Hearing Information; Emergency Protective Order; "
+        "Officer Certification / Review Notes. AI-DRAFTED SECTION — OFFICER REVIEW REQUIRED."
+    )
     if traffic_stop:
         packet_notes = f'{packet_notes} Linked traffic_stop_id={traffic_stop.stop_id}; plate={traffic_stop.plate}; location={traffic_stop.location}.'
-    case = CaseFile(community_id=community_id, case_id=case_id, case_number=case_id, title=title, case_type='case_packet', linked_arrest_id=arrest_id or None, linked_warrant_id=warrant_id or None, defendant_civilian_id=civilian_id or None, charges=(arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None), report_notes=packet_notes, created_by=_actor_name(), status='open', created_at=datetime.utcnow())
+    case = CaseFile(community_id=community_id, case_id=case_id, case_number=case_id, title=title, case_type='case_packet', linked_arrest_id=arrest_id or None, linked_warrant_id=warrant_id or None, defendant_civilian_id=civilian_id or None, charges=(arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None), report_notes=f"{packet_notes}\n\n{professional_sections}\nGTAVCAD roleplay court packet. AI-drafted sections require officer review before use in court RP.", created_by=_actor_name(), status='open', created_at=datetime.utcnow())
     db.session.add(case)
     evidence = Evidence(
         community_id=community_id,
         evidence_id=f"EVD-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}-{secrets.token_hex(3).upper()}",
         case_number=case_id,
-        evidence_type='CASE PACKET',
-        evidence_description=f'Generated case packet for {case_id}',
+        evidence_type='CASE PACKET PDF',
+        evidence_description=f'Generated court packet for {(arrest.suspect_name if arrest else (warrant.subject_name if warrant else "Unknown Subject"))} — {((arrest.charges if arrest else None) or (warrant.charges_or_basis if warrant else None) or case_id)}',
         officer=_actor_name(),
         storage_status='Generated'
     )
