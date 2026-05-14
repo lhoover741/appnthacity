@@ -411,10 +411,10 @@ def create_community():
             'redirect_url': redirect_url,
         }), 201
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        logger.error(f'Error creating community: {e}')
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.exception('Error creating community')
+        return jsonify({'success': False, 'error': 'Unable to create community right now.'}), 500
 
 
 # ----------------------------------------
@@ -509,10 +509,10 @@ def create_invite_for_selected_community():
             'message': 'Invite code created',
             'invite': invite.to_dict(),
         }), 201
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        logger.error(f'Error creating invite: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
+        current_app.logger.exception('Error creating invite')
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 
 @community_bp.route('/accept-invite', methods=['POST'])
@@ -725,10 +725,10 @@ def join_with_invite():
             'redirect': f'/c/{community.slug}/',
         }), 201
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        logger.error(f'Error joining community: {e}')
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.exception('Error joining community via invite')
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 
 # ----------------------------------------
@@ -828,10 +828,10 @@ def create_invite_code(community_id):
             'invite': invite.to_dict(),
         }), 201
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        logger.error(f'Error creating invite: {e}')
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.exception('Error creating community invite code')
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 
 @community_bp.route('/<community_id>/invites/<invite_code>', methods=['DELETE'])
@@ -862,10 +862,10 @@ def revoke_invite_code(community_id, invite_code):
             'message': 'Invite code revoked',
         }), 200
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        logger.error(f'Error revoking invite: {e}')
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.exception('Error revoking invite code')
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 
 # ----------------------------------------

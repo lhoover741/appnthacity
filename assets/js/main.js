@@ -2652,7 +2652,17 @@ window.GTAVCADData = GTAVCADData;
     const gangBtn=document.querySelector('[data-cad-module-target="gang-investigations"]');
     if(gangBtn && role && !allowed.includes(role)) gangBtn.style.display='none';
 
-    const addFeed=(badge,msg)=>{if(!feed) return; const d=document.createElement('div'); d.className='cad-feed-item'; d.innerHTML=`<span class="cad-badge ${badge}">${new Date().toLocaleTimeString()}</span> ${msg}`; feed.prepend(d)};
+    const addFeed=(badge,msg)=>{
+      if(!feed) return;
+      const d=document.createElement('div');
+      d.className='cad-feed-item';
+      const badgeEl=document.createElement('span');
+      badgeEl.className=`cad-badge ${badge}`;
+      badgeEl.textContent=new Date().toLocaleTimeString();
+      d.appendChild(badgeEl);
+      d.appendChild(document.createTextNode(` ${msg}`));
+      feed.prepend(d);
+    };
     const switchTo=(name)=>{modules.forEach(m=>m.classList.toggle('active',m.dataset.cadModule===name));buttons.forEach(b=>b.classList.toggle('active',b.dataset.cadModuleTarget===name));if(title) title.textContent=labels[name]||name; localStorage.setItem(key,name)};
     buttons.forEach(b=>b.addEventListener('click',()=>switchTo(b.dataset.cadModuleTarget)));
     document.querySelectorAll('[data-cad-quick-action]').forEach(btn=>btn.addEventListener('click',()=>{const m=btn.dataset.cadQuickAction;switchTo(m); const f=btn.dataset.cadFocus; if(f){const el=document.querySelector(f); if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.focus();}}}));
