@@ -1711,3 +1711,12 @@ button:disabled {
 #case-packets-tbody td{word-break:break-word;vertical-align:top}
 #case-packets-tbody .table-actions{display:flex;flex-wrap:wrap;gap:6px}
 .cad-table-wrap,.table-wrap{overflow-x:auto}
+.case-packet-viewer-modal.hidden{display:none}
+.case-packet-viewer-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px}
+.case-packet-viewer-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.65)}
+.case-packet-viewer-panel{position:relative;z-index:1;width:min(820px,96vw);max-height:90vh;overflow:auto;background:#121212;border:1px solid #333;border-radius:12px;padding:14px}
+.case-packet-viewer-header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.case-packet-viewer-content{display:grid;gap:8px;margin:10px 0}
+.case-packet-viewer-content p{margin:0;word-break:break-word}
+.case-packet-viewer-actions{display:flex;flex-wrap:wrap;gap:8px}
+@media (max-width: 768px){.case-packet-viewer-panel{padding:10px}.case-packet-viewer-actions .button{padding:10px 14px}}
