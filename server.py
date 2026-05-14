@@ -208,6 +208,96 @@ def _session_hydrate_user(user):
 
     return is_platform_owner
 
+
+def ensure_civilians_user_id_schema():
+    """Safely add the nullable civilians.user_id column/index on drifted databases."""
+    try:
+        inspector = sa_inspect(db.engine)
+        if 'civilians' not in inspector.get_table_names():
+            return False
+
+        columns = {column['name'] for column in inspector.get_columns('civilians')}
+        dialect = db.engine.dialect.name
+        statements = []
+        if 'user_id' not in columns:
+            if dialect == 'postgresql':
+                statements.append('ALTER TABLE civilians ADD COLUMN IF NOT EXISTS user_id INTEGER')
+            else:
+                statements.append('ALTER TABLE civilians ADD COLUMN user_id INTEGER')
+
+        index_name = 'idx_civilians_user_id'
+        try:
+            index_names = {index.get('name') for index in inspector.get_indexes('civilians')}
+        except Exception:
+            index_names = set()
+        if index_name not in index_names:
+            if dialect == 'postgresql':
+                statements.append(f'CREATE INDEX IF NOT EXISTS {index_name} ON civilians (user_id)')
+            else:
+                statements.append(f'CREATE INDEX {index_name} ON civilians (user_id)')
+
+        if not statements:
+            return True
+
+        with db.engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+        logger.info('civilians.user_id schema sync completed statements=%s', len(statements))
+        return True
+    except Exception as exc:
+        logger.warning(
+            'civilians.user_id schema sync skipped request_id=%s error=%s',
+            getattr(g, 'request_id', None),
+            exc,
+        )
+        return False
+
+
+def _safe_commit_last_login(user):
+    """Update last_login without allowing schema drift to break successful auth."""
+    try:
+        user.last_login = datetime.utcnow()
+        db.session.commit()
+        return True
+    except Exception as exc:
+        db.session.rollback()
+        logger.warning(
+            'Auth last_login update skipped request_id=%s user_id=%s error=%s',
+            getattr(g, 'request_id', None),
+            getattr(user, 'id', None),
+            exc,
+        )
+        return False
+
+
+def _safe_get_user_community_membership(user_id):
+    """Resolve active membership without letting optional context break login."""
+    try:
+        return get_user_community_membership(user_id)
+    except Exception as exc:
+        db.session.rollback()
+        logger.warning(
+            'Auth membership lookup skipped request_id=%s user_id=%s error=%s',
+            getattr(g, 'request_id', None),
+            user_id,
+            exc,
+        )
+        return None, None
+
+
+def _safe_user_can_access_police_cad(owner=False, community_role=None, user=None, membership=None):
+    """Serialize CAD access defensively so auth/session endpoints do not 500."""
+    try:
+        return user_can_access_police_cad(owner, community_role, user=user, membership=membership)
+    except Exception as exc:
+        logger.warning(
+            'Auth CAD access serialization skipped request_id=%s user_id=%s error=%s',
+            getattr(g, 'request_id', None),
+            getattr(user, 'id', None),
+            exc,
+        )
+        return False
+
 # Production logging configuration
 if os.environ.get('FLASK_ENV') == 'production':
     logging.getLogger('werkzeug').setLevel(logging.WARNING)  # Reduce Flask request logging
@@ -777,6 +867,17 @@ def require_police_cad_access():
 def get_user_community_membership(user_id):
     if not user_id:
         return None, None
+    selected_community_id = session.get('selected_community_id') or session.get('active_community_id')
+    if selected_community_id:
+        membership = CommunityMember.query.filter_by(
+            user_id=user_id,
+            community_id=selected_community_id,
+            status='Active',
+        ).first()
+        if membership:
+            community = Community.query.filter_by(community_id=membership.community_id).first()
+            if community:
+                return membership, community
     membership = CommunityMember.query.filter_by(user_id=user_id, status='Active').first()
     if not membership:
         return None, None
@@ -1186,6 +1287,7 @@ def backfill_criminal_record_links():
 with app.app_context():
     try:
         db.create_all()
+        ensure_civilians_user_id_schema()
         ensure_evidence_attachment_schema()
         ensure_arrest_automation_schema()
         backfill_criminal_record_links()
@@ -2292,6 +2394,7 @@ def civilian_dashboard_api():
     if error:
         return error
     community_id = community['community_id']
+    ensure_civilians_user_id_schema()
     selected_id = (request.args.get('civilian_id') or '').strip()
     owned_query = scoped_query(Civilian, community_id).filter_by(user_id=user_id)
     profiles = owned_query.order_by(Civilian.created_at.desc()).all()
@@ -3105,6 +3208,32 @@ def admin_session():
 # User Authentication Routes
 @app.route('/api/auth/login', methods=['POST'])
 def user_login():
+    try:
+        return _user_login_impl()
+    except Exception as exc:
+        db.session.rollback()
+        identifier = ''
+        try:
+            data = request.get_json(silent=True) or {}
+            identifier = (data.get('username') or data.get('email') or '').strip().lower()
+        except Exception:
+            identifier = ''
+        logger.exception(
+            'Auth login exception request_id=%s identifier=%s user_id=%s error=%s',
+            getattr(g, 'request_id', None),
+            identifier,
+            session.get('user_id'),
+            exc,
+        )
+        return jsonify({
+            'success': False,
+            'error': 'Login failed due to a temporary server issue. Please try again.',
+            'code': 'AUTH_TEMPORARY_ERROR',
+            'request_id': getattr(g, 'request_id', None),
+        }), 500
+
+
+def _user_login_impl():
     data = request.get_json(silent=True) or {}
     identifier = (data.get('username') or data.get('email') or '').strip()
     password = data.get('password', '').strip()
@@ -3142,21 +3271,45 @@ def user_login():
         logger.warning("Auth login failed: invalid credentials user_id=%s ip=%s", user.id, request.remote_addr)
         return jsonify({'success': False, 'error': 'Invalid username or password', 'code': 'INVALID_CREDENTIALS'}), 401
 
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.session.commit()
+    ensure_civilians_user_id_schema()
+    _safe_commit_last_login(user)
 
-    is_owner = _session_hydrate_user(user)
-    session.permanent = True
-    session['community_id'] = _user_field(user, 'community_id', None)
-    session.modified = True
+    try:
+        is_owner = _session_hydrate_user(user)
+        session.permanent = True
+        session['community_id'] = _user_field(user, 'community_id', None)
+        session.modified = True
 
-    membership, community = get_user_community_membership(user.id)
-    community_id = _user_field(user, 'community_id', None) or (membership.community_id if membership else None)
-    community_slug = (community.slug if community else None) or session.get('selected_community_slug')
-    community_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
-    requires_community_setup = False if is_owner else not bool(community_id)
-    redirect_target = get_post_login_redirect(is_owner, community_slug, requires_community_setup)
+        membership, community = _safe_get_user_community_membership(user.id)
+        community_id = _user_field(user, 'community_id', None) or (membership.community_id if membership else None)
+        community_slug = community.slug if community else None
+        community_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
+        if membership and community:
+            session['selected_community_id'] = community.community_id
+            session['active_community_id'] = community.community_id
+            session['selected_community_slug'] = community.slug
+        else:
+            session.pop('active_community_id', None)
+            session.pop('selected_community_id', None)
+            session.pop('selected_community_slug', None)
+        requires_community_setup = False if is_owner else not bool(community_id)
+        redirect_target = get_post_login_redirect(is_owner, community_slug, requires_community_setup)
+    except Exception as exc:
+        db.session.rollback()
+        session.clear()
+        logger.exception(
+            'Auth login exception request_id=%s identifier=%s user_id=%s error=%s',
+            getattr(g, 'request_id', None),
+            identifier_lower,
+            getattr(user, 'id', None),
+            exc,
+        )
+        return jsonify({
+            'success': False,
+            'error': 'Login failed due to a temporary server issue. Please try again.',
+            'code': 'AUTH_TEMPORARY_ERROR',
+            'request_id': getattr(g, 'request_id', None),
+        }), 500
 
     logger.info("Auth login success login_success=true user_id=%s username=%s role=%s platform_role=%s is_platform_owner=%s session_keys=%s redirect=%s session_modified=%s",
                 user.id, session.get('username'), session.get('role'), session.get('platform_role'), is_owner, sorted(list(session.keys())), redirect_target, session.modified)
@@ -3174,7 +3327,7 @@ def user_login():
             'community_slug': community_slug,
             'community_role': community_role,
             'requires_community_setup': requires_community_setup,
-            'can_access_police_cad': user_can_access_police_cad(is_owner, community_role, user=user, membership=membership),
+            'can_access_police_cad': _safe_user_can_access_police_cad(is_owner, community_role, user=user, membership=membership),
         },
         'redirect': redirect_target
     })
@@ -3239,9 +3392,9 @@ def user_session():
         return jsonify({'success': False, 'authenticated': False, 'error': 'User not found or inactive', 'code': 'USER_INACTIVE'}), 401
 
     owner = is_platform_owner()
-    membership, community = get_user_community_membership(user.id)
+    membership, community = _safe_get_user_community_membership(user.id)
     community_id = _user_field(user, 'community_id', None) or (membership.community_id if membership else None)
-    community_slug = (community.slug if community else None) or session.get('selected_community_slug')
+    community_slug = community.slug if community else None
     community_role = normalize_community_role(getattr(membership, 'role', None)) if membership else None
     can_manage_community = bool(owner or community_role in COMMUNITY_ADMIN_ROLES or (community and community.owner_user_id == user.id))
     requires_community_setup = False if owner else not bool(community_id)
@@ -3264,7 +3417,7 @@ def user_session():
             'impersonation_active': bool(session.get('impersonating_community_id')),
             'can_manage_community': can_manage_community,
             'is_community_admin': can_manage_community,
-            'can_access_police_cad': user_can_access_police_cad(owner, community_role, user=user, membership=membership),
+            'can_access_police_cad': _safe_user_can_access_police_cad(owner, community_role, user=user, membership=membership),
         },
         'redirect': redirect_target,
     })
@@ -5531,6 +5684,7 @@ def create_civilian():
         if not isinstance(current_user_id, int):
             return jsonify({'success': False, 'error': 'Authentication required'}), 401
 
+        ensure_civilians_user_id_schema()
         civilian_id = f"CIV-{datetime.now().strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
         civilian = Civilian(community_id=community_id, user_id=current_user_id, civilian_id=civilian_id, **mapped)
 
