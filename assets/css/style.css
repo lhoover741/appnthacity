@@ -1720,3 +1720,10 @@ button:disabled {
 .case-packet-viewer-content p{margin:0;word-break:break-word}
 .case-packet-viewer-actions{display:flex;flex-wrap:wrap;gap:8px}
 @media (max-width: 768px){.case-packet-viewer-panel{padding:10px}.case-packet-viewer-actions .button{padding:10px 14px}}
+
+.cad-card-header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.cad-inline-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}
+.cad-inline-form input,.cad-inline-form select{width:100%;background:#0f0f0f;border:1px solid #303030;color:#ddd;border-radius:8px;padding:8px}
+.cad-inline-form button{grid-column:1/-1}
+.gang-map-span{grid-column:1/-1}
+@media (max-width: 768px){.cad-inline-form{grid-template-columns:1fr}.gang-map-span{grid-column:auto}}
