@@ -517,6 +517,11 @@ const GTAVCADData = {
   trafficStops: [],
   calls911: [],
   casePackets: [],
+  gangProfiles: [],
+  gangInvestigations: [],
+  gangWatchlist: [],
+  gangIntelNotes: [],
+  gangPackets: [],
   officers: [
     { id: '1L-01', name: 'Chief Unit', status: 'Available', lastUpdate: new Date().toISOString() },
     { id: '2L-12', name: 'Patrol Unit', status: 'En Route', lastUpdate: new Date().toISOString() },
@@ -2491,6 +2496,42 @@ async function initCivilianDashboard() {
   }
 }
 
+
+function renderGangModule(){
+  const renderEmpty=(el,msg,colspan=1)=>{ if(!el) return; el.innerHTML=`<div class="cad-empty-state">${msg}</div>`; };
+  const profilesEl=document.getElementById('gang-profiles-list');
+  if(profilesEl){
+    if(!(GTAVCADData.gangProfiles||[]).length) renderEmpty(profilesEl,'No gang profiles created yet.');
+    else profilesEl.innerHTML=`<div class="cad-table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Territory</th><th>Threat</th><th>Status</th></tr></thead><tbody>${GTAVCADData.gangProfiles.map(g=>`<tr><td>${escapeHtml(g.gangName||'')}</td><td>${escapeHtml(g.territory||'—')}</td><td>${escapeHtml(g.threatLevel||'Low')}</td><td>${escapeHtml(g.status||'Active')}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+  const casesEl=document.getElementById('gang-cases-list');
+  if(casesEl){
+    if(!(GTAVCADData.gangInvestigations||[]).length) renderEmpty(casesEl,'No gang investigation cases opened yet.');
+    else casesEl.innerHTML=`<div class="cad-table-wrap"><table class="data-table"><thead><tr><th>Investigation ID</th><th>Title</th><th>Linked Gang</th><th>Status</th><th>Actions</th></tr></thead><tbody>${GTAVCADData.gangInvestigations.map(c=>`<tr><td>${escapeHtml(c.investigationId||'')}</td><td>${escapeHtml(c.caseTitle||'')}</td><td>${escapeHtml(c.linkedGang||'—')}</td><td>${escapeHtml(c.status||'Open')}</td><td class="table-actions"><button class="button button-secondary" data-gang-view="${escapeAttr(c.id)}">View</button><button class="button button-secondary" data-gang-evidence="${escapeAttr(c.id)}">Add Evidence</button><button class="button button-secondary" data-gang-packet="${escapeAttr(c.id)}">Generate Gang Investigation Packet</button><button class="button button-secondary" data-gang-close="${escapeAttr(c.id)}">Close Case</button></td></tr>`).join('')}</tbody></table></div>`;
+  }
+  const watchEl=document.getElementById('gang-watchlist-list');
+  if(watchEl){
+    if(!(GTAVCADData.gangWatchlist||[]).length) renderEmpty(watchEl,'No suspects currently on the gang watchlist.');
+    else watchEl.innerHTML=`<div class="cad-table-wrap"><table class="data-table"><thead><tr><th>Suspect</th><th>Gang</th><th>Threat</th><th>Status</th><th>Links</th></tr></thead><tbody>${GTAVCADData.gangWatchlist.map(w=>`<tr><td>${escapeHtml(w.suspectName||'')}</td><td>${escapeHtml(w.gangAffiliation||'—')}</td><td>${escapeHtml(w.threatLevel||'Low')}</td><td>${escapeHtml(w.status||'Watching')}</td><td><button class="button button-secondary" data-watch-lookup="${escapeAttr(w.suspectName||'')}">Lookup Civilian</button><button class="button button-secondary" data-watch-warrants="${escapeAttr(w.suspectName||'')}">Warrants/Arrests</button></td></tr>`).join('')}</tbody></table></div>`;
+  }
+  const intelEl=document.getElementById('gang-intel-list');
+  if(intelEl){
+    if(!(GTAVCADData.gangIntelNotes||[]).length) renderEmpty(intelEl,'No intelligence notes recorded yet.');
+    else intelEl.innerHTML=`<ul>${GTAVCADData.gangIntelNotes.map(n=>`<li><strong>${escapeHtml(n.noteId||'NOTE')}</strong> • ${escapeHtml(n.linkedGang||'Unlinked')} • ${escapeHtml(n.sourceReliability||'Unverified')}<br>${escapeHtml(n.note||'')}</li>`).join('')}</ul>`;
+  }
+  const packetEl=document.getElementById('gang-packet-list');
+  if(packetEl){
+    packetEl.innerHTML=(GTAVCADData.gangPackets||[]).map(p=>`<div class="cad-card"><strong>${escapeHtml(p.title)}</strong><div>Metadata Only — No PDF attached</div><div>AI-DRAFTED SECTION — OFFICER REVIEW REQUIRED</div></div>`).join('')||'<div class="cad-empty-state">No gang packets generated yet.</div>';
+  }
+}
+
+function initGangModule(){
+  const toggle=(btn,form)=>{const b=document.getElementById(btn),f=document.getElementById(form); if(b&&f){b.addEventListener('click',()=>f.classList.toggle('hidden')); f.addEventListener('submit',(e)=>{e.preventDefault();const rec=Object.fromEntries(new FormData(f).entries()); rec.id=generateId('gang'); rec.createdAt=new Date().toISOString(); if(form==='gang-profile-form') GTAVCADData.gangProfiles.unshift(rec); if(form==='gang-case-form'){ if(!rec.investigationId) rec.investigationId=generateId('INV'); GTAVCADData.gangInvestigations.unshift(rec);} if(form==='gang-watchlist-form') GTAVCADData.gangWatchlist.unshift(rec); if(form==='gang-intel-form'){ rec.noteId=generateId('NOTE'); rec.createdBy=(window.GTAVCAD_CURRENT_USER&&window.GTAVCAD_CURRENT_USER.username)||'Officer'; rec.createdDate=new Date().toISOString(); GTAVCADData.gangIntelNotes.unshift(rec);} saveData(); f.reset(); f.classList.add('hidden'); renderGangModule();});}};
+  toggle('gang-profile-toggle','gang-profile-form');toggle('gang-case-toggle','gang-case-form');toggle('gang-watchlist-toggle','gang-watchlist-form');toggle('gang-intel-toggle','gang-intel-form');
+  document.getElementById('generate-gang-packet')?.addEventListener('click',()=>{const packet={id:generateId('gangpkt'),title:'GANG INVESTIGATION PACKET PDF',type:'gang_packet',created_at:new Date().toISOString(),summary:'AI-DRAFTED SECTION — OFFICER REVIEW REQUIRED'}; GTAVCADData.gangPackets.unshift(packet); GTAVCADData.casePackets.unshift({...packet,case_id:packet.id,download_url:'',linked_evidence_ids:[]}); GTAVCADData.evidence.unshift({id:generateId('evd'),officer:'System',type:'GANG INVESTIGATION PACKET PDF',description:'Metadata Only — No PDF attached',link:'',createdAt:new Date().toISOString()}); saveData(); renderGangModule(); renderCasePacketsTable(); renderEvidenceTable(); showToast('Gang investigation packet generated (metadata only).','success');});
+  document.addEventListener('click',(e)=>{const t=e.target; if(!(t instanceof HTMLElement)) return; if(t.dataset.gangClose){const rec=GTAVCADData.gangInvestigations.find(x=>x.id===t.dataset.gangClose); if(rec){rec.status='Closed'; saveData(); renderGangModule();}} if(t.dataset.watchLookup){document.querySelector('[data-cad-module-target="lookup"]')?.click(); const i=document.querySelector('#civilian-lookup-form [name="lookupName"]'); if(i){i.value=t.dataset.watchLookup; i.focus();}} if(t.dataset.watchWarrants){document.querySelector('[data-cad-module-target="warrants"]')?.click();}});
+  renderGangModule();
+}
 // Initialize
 async function initApp() {
   await applyCommunityBranding();
@@ -2530,6 +2571,7 @@ async function initApp() {
     renderCasePacketsTable();
     renderOfficersBoard();
     initCadMapFilters();
+    initGangModule();
   }
 
   setActiveNav();
