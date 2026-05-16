@@ -280,32 +280,50 @@ function ensureTenantAuthNav(user = {}) {
 async function applyCommunityBranding() {
   if (!CURRENT_COMMUNITY_SLUG) return null;
 
+  const communityRouteMap = {
+    '': `/c/${CURRENT_COMMUNITY_SLUG}/`,
+    '/': `/c/${CURRENT_COMMUNITY_SLUG}/`,
+    'index': `/c/${CURRENT_COMMUNITY_SLUG}/`,
+    'index.html': `/c/${CURRENT_COMMUNITY_SLUG}/`,
+    'rules': `/c/${CURRENT_COMMUNITY_SLUG}/rules.html`,
+    'rules.html': `/c/${CURRENT_COMMUNITY_SLUG}/rules.html`,
+    'civilian': `/c/${CURRENT_COMMUNITY_SLUG}/civilian.html`,
+    'civilian.html': `/c/${CURRENT_COMMUNITY_SLUG}/civilian.html`,
+    'police': `/c/${CURRENT_COMMUNITY_SLUG}/cad`,
+    'police.html': `/c/${CURRENT_COMMUNITY_SLUG}/cad`,
+    'cad': `/c/${CURRENT_COMMUNITY_SLUG}/cad`,
+    'cad.html': `/c/${CURRENT_COMMUNITY_SLUG}/cad`,
+    'dmv': `/c/${CURRENT_COMMUNITY_SLUG}/dmv.html`,
+    'dmv.html': `/c/${CURRENT_COMMUNITY_SLUG}/dmv.html`,
+    'donations': `/c/${CURRENT_COMMUNITY_SLUG}/donations.html`,
+    'donations.html': `/c/${CURRENT_COMMUNITY_SLUG}/donations.html`,
+    'businesses': `/c/${CURRENT_COMMUNITY_SLUG}/businesses.html`,
+    'businesses.html': `/c/${CURRENT_COMMUNITY_SLUG}/businesses.html`,
+    'applications': `/c/${CURRENT_COMMUNITY_SLUG}/applications.html`,
+    'applications.html': `/c/${CURRENT_COMMUNITY_SLUG}/applications.html`,
+    'complaints': `/c/${CURRENT_COMMUNITY_SLUG}/complaints.html`,
+    'complaints.html': `/c/${CURRENT_COMMUNITY_SLUG}/complaints.html`,
+    'join': `/c/${CURRENT_COMMUNITY_SLUG}/join.html`,
+    'join.html': `/c/${CURRENT_COMMUNITY_SLUG}/join.html`,
+  };
+
   const buildCommunityHref = (target = '') => {
-    if (!target || target === '/' || target === 'index' || target === 'index.html') {
-      return `/c/${CURRENT_COMMUNITY_SLUG}/`;
-    }
-    if (target === 'cad' || target === 'cad.html' || target === 'police' || target === 'police.html') {
-      return `/c/${CURRENT_COMMUNITY_SLUG}/cad`;
-    }
-    if (target === 'civilian-portal' || target === 'civilian-dashboard') {
-      return `/c/${CURRENT_COMMUNITY_SLUG}/civilian-portal`;
-    }
-    const normalized = target.endsWith('.html') ? target : `${target}.html`;
-    return `/c/${CURRENT_COMMUNITY_SLUG}/${normalized}`;
+    const normalizedTarget = String(target || '').trim().toLowerCase();
+    return communityRouteMap[normalizedTarget] || null;
   };
 
   const communityLinks = document.querySelectorAll('[data-community-link]');
   communityLinks.forEach((link) => {
     const target = link.getAttribute('data-community-link') || '';
-    link.href = buildCommunityHref(target);
+    const href = buildCommunityHref(target);
+    if (href) link.href = href;
   });
 
   const tenantPageMap = {
-    '/': '',
+    '/': '/',
+    'index.html': 'index.html',
     'rules.html': 'rules.html',
     'civilian.html': 'civilian.html',
-    'civilian-portal': 'civilian-portal',
-    'civilian-dashboard': 'civilian-dashboard',
     'police.html': 'police.html',
     'cad.html': 'cad.html',
     'dmv.html': 'dmv.html',
@@ -314,24 +332,22 @@ async function applyCommunityBranding() {
     'complaints.html': 'complaints.html',
     'donations.html': 'donations.html',
     'join.html': 'join.html',
-    'index.html': '',
-    'rules': 'rules.html',
-    'civilian': 'civilian.html',
-    'civilian-portal': 'civilian-portal',
-    'civilian-dashboard': 'civilian-dashboard',
-    'police': 'police.html',
-    'cad': 'cad.html',
-    'dmv': 'dmv.html',
-    'businesses': 'businesses.html',
-    'applications': 'applications.html',
-    'complaints': 'complaints.html',
-    'donations': 'donations.html',
-    'join': 'join.html',
+    'rules': 'rules',
+    'civilian': 'civilian',
+    'police': 'police',
+    'cad': 'cad',
+    'dmv': 'dmv',
+    'businesses': 'businesses',
+    'applications': 'applications',
+    'complaints': 'complaints',
+    'donations': 'donations',
+    'join': 'join',
   };
   document.querySelectorAll('a[href]').forEach((link) => {
     const href = link.getAttribute('href');
     if (Object.prototype.hasOwnProperty.call(tenantPageMap, href)) {
-      link.href = buildCommunityHref(tenantPageMap[href]);
+      const resolved = buildCommunityHref(tenantPageMap[href]);
+      if (resolved) link.href = resolved;
     }
   });
 
