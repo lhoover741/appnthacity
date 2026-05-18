@@ -48,6 +48,7 @@ document.getElementById('register-form').addEventListener('submit', async (event
   const res = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(form))});
   const data = await res.json();
   if (!res.ok || !data.success) { status.textContent = data.error || 'Registration failed'; return; }
+  if (window.rememberGtavcadAccessToken) window.rememberGtavcadAccessToken(data);
   status.textContent = 'Account created. Checking invite…';
   const inviteRedirect = await joinPendingInviteAfterAuth();
   window.location.href = inviteRedirect || data.redirect_url || '/communities?onboarding=1';
