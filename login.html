@@ -72,6 +72,7 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
       button.textContent = 'Login';
       return;
     }
+    if (window.rememberGtavcadAccessToken) window.rememberGtavcadAccessToken(data);
     status.textContent = 'Login successful. Checking invite…';
     const inviteRedirect = await joinPendingInviteAfterAuth();
     window.location.href = inviteRedirect || data.redirect || data.redirect_url || '/community-setup';

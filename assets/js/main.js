@@ -118,6 +118,88 @@ function getCommunitySlugFromPath() {
 
 const CURRENT_COMMUNITY_SLUG = getCommunitySlugFromPath();
 
+
+const GTAVCAD_AUTH_TOKEN_KEY = 'gtavcad_access_token';
+
+function storageGet(key) {
+  try { return localStorage.getItem(key) || sessionStorage.getItem(key) || ''; } catch { return ''; }
+}
+
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+function storageRemove(key) {
+  try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch {}
+}
+
+function getConfiguredApiBaseUrl() {
+  const configured = window.GTAVCAD_API_BASE_URL
+    || document.querySelector('meta[name="gtavcad-api-base-url"]')?.getAttribute('content')
+    || storageGet('gtavcad_api_base_url');
+  if (!configured) return '';
+  try {
+    const parsed = new URL(configured, window.location.origin);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    return parsed.origin;
+  } catch {
+    return '';
+  }
+}
+
+function rememberGtavcadAccessToken(payload = {}) {
+  if (payload.access_token) storageSet(GTAVCAD_AUTH_TOKEN_KEY, payload.access_token);
+}
+
+function clearGtavcadAccessToken() {
+  storageRemove(GTAVCAD_AUTH_TOKEN_KEY);
+}
+
+function buildGtavcadApiUrl(rawUrl) {
+  const apiBase = getConfiguredApiBaseUrl();
+  const url = new URL(rawUrl, window.location.origin);
+  const isApi = url.pathname.startsWith('/api/');
+  if (!isApi) return { url: rawUrl, isApi: false };
+  if (CURRENT_COMMUNITY_SLUG && !url.searchParams.has('community_slug')) {
+    url.searchParams.set('community_slug', CURRENT_COMMUNITY_SLUG);
+  }
+  if (apiBase) {
+    const target = new URL(url.pathname + url.search, apiBase);
+    return { url: target.href, isApi: true };
+  }
+  return { url: `${url.pathname}${url.search}`, isApi: true };
+}
+
+function installSharedBackendFetch() {
+  if (!window.fetch || window.__gtavcadSharedFetchInstalled) return;
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const originalUrl = typeof input === 'string' ? input : input?.url;
+    if (!originalUrl) return nativeFetch(input, init);
+    const resolved = buildGtavcadApiUrl(originalUrl);
+    if (!resolved.isApi) return nativeFetch(input, init);
+
+    const mergedInit = { credentials: 'include', ...init };
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
+    const token = storageGet(GTAVCAD_AUTH_TOKEN_KEY);
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    mergedInit.headers = headers;
+
+    if (input instanceof Request) {
+      input = new Request(resolved.url, input);
+      return nativeFetch(input, mergedInit);
+    }
+    return nativeFetch(resolved.url, mergedInit);
+  };
+  window.__gtavcadSharedFetchInstalled = true;
+}
+
+installSharedBackendFetch();
+window.rememberGtavcadAccessToken = rememberGtavcadAccessToken;
+window.clearGtavcadAccessToken = clearGtavcadAccessToken;
+window.getConfiguredApiBaseUrl = getConfiguredApiBaseUrl;
+
 const CAD_ACCESS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin', 'Police', 'Officer', 'LEO', 'Dispatch', 'Dispatcher', 'EMS', 'DOJ', 'Staff'];
 const CAD_ADMIN_BYPASS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'];
 const COMMUNITY_ADMIN_ACCESS_ROLES = ['PlatformOwner', 'CommunityOwner', 'CommunityAdmin', 'Owner', 'Admin'];
@@ -195,6 +277,7 @@ async function gtavcadLogout() {
     localStorage.removeItem(key);
     sessionStorage.removeItem(key);
   });
+  clearGtavcadAccessToken();
   window.location.href = '/login';
 }
 
@@ -218,26 +301,6 @@ function bindAuthenticatedControls() {
 
 window.gtavcadLogout = gtavcadLogout;
 window.gtavcadExitImpersonation = gtavcadExitImpersonation;
-
-if (CURRENT_COMMUNITY_SLUG && window.fetch) {
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    let url = typeof input === 'string' ? input : input && input.url;
-    if (url && url.startsWith('/api/')) {
-      const separator = url.includes('?') ? '&' : '?';
-      url = `${url}${separator}community_slug=${encodeURIComponent(CURRENT_COMMUNITY_SLUG)}`;
-      const mergedInit = { credentials: 'include', ...(init || {}) };
-      if (typeof input === 'string') {
-        input = url;
-      } else {
-        input = new Request(url, input);
-      }
-      return nativeFetch(input, mergedInit);
-    }
-    return nativeFetch(input, init);
-  };
-}
-
 
 function userCanManageCommunity(user = {}) {
   if (user.can_manage_community === true || user.is_community_admin === true) return true;
@@ -501,6 +564,7 @@ async function refreshAuthNavigation() {
 
 bindAuthenticatedControls();
 refreshAuthNavigation();
+connectSharedRealtimeAlerts();
 
 // Shared frontend data model. This browser cache is not authoritative for tenant
 // context; route slug and server-provided GTAVCAD_CONTEXT always win.
@@ -1413,6 +1477,57 @@ async function updateOfficerStatus(officerId, newStatus) {
     renderOfficersBoard();
     addActivity('Officer Status', `${officerId} status changed to ${newStatus}`);
     showToast(`${officerId} status updated to ${newStatus}`, 'info');
+  }
+}
+
+
+function loadSocketIoClient() {
+  if (window.io) return Promise.resolve(window.io);
+  if (window.__gtavcadSocketIoPromise) return window.__gtavcadSocketIoPromise;
+  window.__gtavcadSocketIoPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
+    script.crossOrigin = 'anonymous';
+    script.onload = () => resolve(window.io);
+    script.onerror = () => reject(new Error('Socket.IO client failed to load'));
+    document.head.appendChild(script);
+  });
+  return window.__gtavcadSocketIoPromise;
+}
+
+async function connectSharedRealtimeAlerts() {
+  if (!CURRENT_COMMUNITY_SLUG || !isOfficerCadPage() || window.__gtavcadRealtimeSocket) return;
+  try {
+    const ioClient = await loadSocketIoClient();
+    if (!ioClient) return;
+    const apiBase = getConfiguredApiBaseUrl() || window.location.origin;
+    const socket = ioClient(apiBase, {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      auth: { token: storageGet(GTAVCAD_AUTH_TOKEN_KEY), community_slug: CURRENT_COMMUNITY_SLUG },
+    });
+    window.__gtavcadRealtimeSocket = socket;
+
+    socket.on('connect', () => socket.emit('community:join', { community_slug: CURRENT_COMMUNITY_SLUG }));
+    socket.on('alert:new', (payload = {}) => {
+      const alert = payload.alert || payload;
+      showToast(`${alert.type || alert.alert_type || 'ALERT'}: ${alert.message || 'New CAD alert'}`, 'warning');
+      if (typeof loadAlerts === 'function') loadAlerts().catch(() => {});
+    });
+    socket.on('radio:log', (payload = {}) => {
+      const entry = payload.entry || payload;
+      showToast(`Radio ${entry.unit || ''}: ${entry.message || 'New radio traffic'}`, 'info');
+      if (typeof loadRadioLog === 'function') loadRadioLog().catch(() => {});
+    });
+    socket.on('officer:status', (payload = {}) => {
+      const session = payload.session || {};
+      showToast(`${payload.callsign || session.callsign || session.id || 'Unit'} status: ${payload.status || session.status || 'Updated'}`, 'info');
+      loadData().catch(() => {});
+    });
+    socket.on('officer:session', () => loadData().catch(() => {}));
+    socket.on('cad:data_updated', () => loadData().catch(() => {}));
+  } catch (error) {
+    if (window.GTAVCAD_DEBUG === true) console.warn('Realtime alerts unavailable:', error.message || error);
   }
 }
 

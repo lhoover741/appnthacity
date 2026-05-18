@@ -9,6 +9,9 @@ import secrets
 import string
 import uuid
 import time
+import base64
+import hashlib
+import hmac
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timedelta
@@ -313,12 +316,15 @@ app.config['SECRET_KEY'] = os.environ['SECRET_KEY']
 app.secret_key = app.config['SECRET_KEY']
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Configure secure session cookies
+# Configure secure session cookies. Production defaults support gtavcad.com
+# calling the shared gtavcad.app backend with credentials while still requiring
+# HTTPS. Override explicitly per environment when the frontend and API are same-origin.
+_is_production_env = (os.environ.get('FLASK_ENV') or os.environ.get('APP_ENV') or '').strip().lower() == 'production'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
-app.config['SESSION_COOKIE_DOMAIN'] = None
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+app.config['SESSION_COOKIE_SAMESITE'] = os.environ.get('SESSION_COOKIE_SAMESITE') or ('None' if _is_production_env else 'Lax')
+app.config['SESSION_COOKIE_SECURE'] = (os.environ.get('SESSION_COOKIE_SECURE') or '').strip().lower() in {'1', 'true', 'yes', 'on'} or _is_production_env
+app.config['SESSION_COOKIE_DOMAIN'] = os.environ.get('SESSION_COOKIE_DOMAIN') or None
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=int(os.environ.get('SESSION_LIFETIME_DAYS', '7')))
 
 
 configure_database(app)
@@ -602,7 +608,7 @@ def _parse_socketio_allowed_origins():
     env_name = (os.environ.get('FLASK_ENV') or os.environ.get('APP_ENV') or '').strip().lower()
     is_production = env_name == 'production'
     configured = os.environ.get('SOCKETIO_ALLOWED_ORIGINS')
-    production_defaults = ['https://gtavcad.app', 'https://www.gtavcad.app']
+    production_defaults = ['https://gtavcad.com', 'https://www.gtavcad.com', 'https://gtavcad.app', 'https://www.gtavcad.app']
     development_defaults = [
         'http://localhost:5000',
         'http://127.0.0.1:5000',
@@ -639,6 +645,175 @@ def _parse_socketio_allowed_origins():
 
     logger.info('Socket.IO CORS allowlist configured count=%s origins=%s', len(origins), origins)
     return origins
+
+# ---------------------------------------------------------------------------
+# Shared production frontend/API origin and token helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_http_origin(value):
+    raw = (value or '').strip()
+    if not raw or raw == '*':
+        return None
+    if '://' not in raw:
+        raw = f'https://{raw}'
+    try:
+        parsed = urlsplit(raw)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {'http', 'https'} or not parsed.netloc or not hostname:
+        return None
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), '', '', ''))
+
+
+def _add_http_origin(origins, seen, value):
+    origin = _normalize_http_origin(value)
+    if origin and origin not in seen:
+        origins.append(origin)
+        seen.add(origin)
+
+
+def _parse_http_allowed_origins():
+    configured = os.environ.get('CORS_ALLOWED_ORIGINS') or os.environ.get('HTTP_ALLOWED_ORIGINS')
+    defaults = [
+        'https://gtavcad.com',
+        'https://www.gtavcad.com',
+        'https://gtavcad.app',
+        'https://www.gtavcad.app',
+    ]
+    if not _is_production_env:
+        defaults.extend([
+            'http://localhost:5000',
+            'http://127.0.0.1:5000',
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+        ])
+    origins, seen = [], set()
+    for raw in (configured.split(',') if configured else defaults):
+        _add_http_origin(origins, seen, raw)
+    return set(origins)
+
+
+HTTP_ALLOWED_ORIGINS = _parse_http_allowed_origins()
+
+
+def _jwt_b64url_encode(raw_bytes):
+    return base64.urlsafe_b64encode(raw_bytes).rstrip(b'=').decode('ascii')
+
+
+def _jwt_b64url_decode(value):
+    padding = '=' * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode('ascii'))
+
+
+def _jwt_secret():
+    return os.environ.get('JWT_SECRET') or app.config.get('SECRET_KEY')
+
+
+def _jwt_issuer():
+    return os.environ.get('JWT_ISSUER', 'gtavcad')
+
+
+def _jwt_audience():
+    return os.environ.get('JWT_AUDIENCE', 'gtavcad-web')
+
+
+def _jwt_ttl_seconds():
+    try:
+        return max(300, int(os.environ.get('JWT_ACCESS_TOKEN_TTL_SECONDS', '604800')))
+    except ValueError:
+        return 604800
+
+
+def create_access_token(user, tenant=None):
+    """Create an HS256 JWT for shared gtavcad.com/gtavcad.app API auth."""
+    now = int(time.time())
+    jti = secrets.token_urlsafe(32)
+    payload = {
+        'iss': _jwt_issuer(),
+        'aud': _jwt_audience(),
+        'iat': now,
+        'nbf': now,
+        'exp': now + _jwt_ttl_seconds(),
+        'sub': str(user.id),
+        'jti': jti,
+        'username': _user_field(user, 'username', ''),
+        'platform_role': _user_field(user, 'platform_role', None) or _user_field(user, 'role', 'Civilian'),
+        'tenant': tenant,
+    }
+    header = {'alg': 'HS256', 'typ': 'JWT'}
+    signing_input = '.'.join([
+        _jwt_b64url_encode(json.dumps(header, separators=(',', ':')).encode('utf-8')),
+        _jwt_b64url_encode(json.dumps(payload, separators=(',', ':')).encode('utf-8')),
+    ])
+    signature = hmac.new(_jwt_secret().encode('utf-8'), signing_input.encode('ascii'), hashlib.sha256).digest()
+    token = f'{signing_input}.{_jwt_b64url_encode(signature)}'
+    try:
+        db.session.add(UserSession(
+            user_id=user.id,
+            session_token=jti,
+            tenant=tenant,
+            ip_address=request.remote_addr if request else None,
+            active=True,
+        ))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.warning('Unable to persist JWT session user_id=%s: %s', user.id, exc)
+    return token
+
+
+def decode_access_token(token):
+    try:
+        header_b64, payload_b64, signature_b64 = token.split('.', 2)
+        signing_input = f'{header_b64}.{payload_b64}'
+        expected = hmac.new(_jwt_secret().encode('utf-8'), signing_input.encode('ascii'), hashlib.sha256).digest()
+        supplied = _jwt_b64url_decode(signature_b64)
+        if not hmac.compare_digest(expected, supplied):
+            return None
+        header = json.loads(_jwt_b64url_decode(header_b64).decode('utf-8'))
+        payload = json.loads(_jwt_b64url_decode(payload_b64).decode('utf-8'))
+        now = int(time.time())
+        if header.get('alg') != 'HS256' or payload.get('iss') != _jwt_issuer() or payload.get('aud') != _jwt_audience():
+            return None
+        if now < int(payload.get('nbf', 0)) or now >= int(payload.get('exp', 0)):
+            return None
+        stored = UserSession.query.filter_by(session_token=payload.get('jti'), active=True).first()
+        if not stored:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def hydrate_session_from_bearer_token():
+    if session.get('user_id'):
+        return False
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.lower().startswith('bearer '):
+        return False
+    payload = decode_access_token(auth_header.split(None, 1)[1].strip())
+    if not payload:
+        return False
+    try:
+        user_id = int(payload.get('sub'))
+    except (TypeError, ValueError):
+        return False
+    user = User.query.get(user_id)
+    if not user or not user.active:
+        return False
+    _session_hydrate_user(user)
+    token_tenant = payload.get('tenant')
+    if token_tenant and not session.get('selected_community_id'):
+        community = get_community_by_any_id(token_tenant)
+        if community:
+            session['selected_community_id'] = community.community_id
+            session['active_community_id'] = community.community_id
+            session['selected_community_slug'] = community.slug
+            session.modified = True
+    g.auth_token_payload = payload
+    return True
 
 
 # Initialize Flask-Migrate
@@ -696,6 +871,23 @@ def emit_community_event(event_name, payload, community_id=None):
 @socketio.on('connect')
 def socket_connect(auth=None):
     sid = getattr(request, 'sid', None)
+    if not session.get('user_id') and isinstance(auth, dict) and auth.get('token'):
+        payload = decode_access_token(str(auth.get('token')).strip())
+        if payload:
+            try:
+                user = User.query.get(int(payload.get('sub')))
+            except (TypeError, ValueError):
+                user = None
+            if user and user.active:
+                _session_hydrate_user(user)
+                token_tenant = payload.get('tenant')
+                if token_tenant:
+                    community = get_community_by_any_id(token_tenant)
+                    if community:
+                        session['selected_community_id'] = community.community_id
+                        session['active_community_id'] = community.community_id
+                        session['selected_community_slug'] = community.slug
+                        session.modified = True
     user_id, community_id, room_name = get_user_room_context()
     if not user_id or not community_id or not room_name:
         logger.warning('Socket auth failed: missing user/session context')
@@ -767,18 +959,28 @@ from community_routes import register_community_routes
 
 @app.before_request
 def inject_community_context():
-    """Attach tenant context for /c/<slug> routes and selected community sessions."""
+    """Attach shared auth and tenant context for API and /c/<slug> routes."""
     g.request_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
     g.request_started_at = time.time()
     g.client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if request.method == 'OPTIONS' and request.headers.get('Origin') in HTTP_ALLOWED_ORIGINS:
+        return ('', 204)
     if request.path.startswith('/static/') or request.path.startswith('/assets/'):
         return None
+    hydrate_session_from_bearer_token()
     community_context_middleware()
     return None
 
 
 @app.after_request
 def enrich_response_metadata(response):
+    origin = request.headers.get('Origin')
+    if origin in HTTP_ALLOWED_ORIGINS:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers') or 'Authorization, Content-Type, X-Requested-With, X-Request-ID'
+        response.headers.add('Vary', 'Origin')
     response.headers['X-Request-ID'] = getattr(g, 'request_id', 'unknown')
     duration_ms = int((time.time() - getattr(g, 'request_started_at', time.time())) * 1000)
     if request.path.startswith('/api/'):
@@ -3329,11 +3531,15 @@ def _user_login_impl():
             'request_id': getattr(g, 'request_id', None),
         }), 500
 
+    access_token = create_access_token(user, tenant=community_id)
     logger.info("Auth login success login_success=true user_id=%s username=%s role=%s platform_role=%s is_platform_owner=%s session_keys=%s redirect=%s session_modified=%s",
                 user.id, session.get('username'), session.get('role'), session.get('platform_role'), is_owner, sorted(list(session.keys())), redirect_target, session.modified)
     return jsonify({
         'success': True,
         'authenticated': True,
+        'access_token': access_token,
+        'token_type': 'Bearer',
+        'expires_in': _jwt_ttl_seconds(),
         'user': {
             'id': user.id,
             'username': _user_field(user, 'username', ''),
@@ -3378,9 +3584,13 @@ def user_register():
     db.session.commit()
 
     _session_hydrate_user(user)
+    access_token = create_access_token(user)
 
     return jsonify({
         'success': True,
+        'access_token': access_token,
+        'token_type': 'Bearer',
+        'expires_in': _jwt_ttl_seconds(),
         'user': user.to_dict(),
         'communities': [],
         'community_count': 0,
@@ -3392,6 +3602,19 @@ def user_register():
 
 @app.route('/api/auth/logout', methods=['POST'])
 def user_logout():
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.lower().startswith('bearer '):
+        payload = decode_access_token(auth_header.split(None, 1)[1].strip())
+        if payload and payload.get('jti'):
+            try:
+                UserSession.query.filter_by(session_token=payload.get('jti')).update({
+                    'active': False,
+                    'invalidated_at': datetime.utcnow(),
+                })
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                logger.warning('Unable to invalidate bearer token on logout: %s', exc)
     session.clear()
     return jsonify({'success': True})
 
@@ -4470,7 +4693,9 @@ def post_radio_log():
         db.session.rollback()
         logger.error(f'post_radio_log error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
-    return jsonify({'success': True, 'entry': radio_to_dict(entry_obj)})
+    entry_dict = radio_to_dict(entry_obj)
+    emit_community_event('radio:log', {'entry': entry_dict, 'community_id': get_current_community_id()})
+    return jsonify({'success': True, 'entry': entry_dict})
 
 
 @app.route('/api/ai/dispatch', methods=['POST'])
@@ -5108,8 +5333,10 @@ def patch_officer_status():
         db.session.rollback()
         logger.error(f'patch_officer_status error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+    session_payload = session_to_dict(s)
+    emit_community_event('officer:status', {'session': session_payload, 'callsign': officer_id, 'status': new_status, 'community_id': community_id}, community_id=community_id)
     logger.info(f"Officer status update: {officer_id} → {new_status}")
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'session': session_payload})
 
 
 @app.route('/api/officer-sessions', methods=['GET'])
@@ -5180,8 +5407,10 @@ def post_officer_session():
         logger.error(f'post_officer_session error: {e}')
         return jsonify({'success': False, 'error': 'Unable to start officer session.'}), 500
 
+    session_payload = officer_session_response(s)
+    emit_community_event('officer:session', {'action': 'started', 'session': session_payload, 'community_id': get_current_community_id()})
     logger.info(f"Officer login: {callsign} ({name}) — {department}")
-    return jsonify({'success': True, 'session': officer_session_response(s)})
+    return jsonify({'success': True, 'session': session_payload})
 
 
 @app.route('/api/officer-sessions/end', methods=['POST'])
@@ -5204,6 +5433,7 @@ def end_officer_session():
         db.session.rollback()
         logger.error(f'end_officer_session error: {e}')
         return jsonify({'success': False, 'error': 'Unable to end officer session.'}), 500
+    emit_community_event('officer:session', {'action': 'ended', 'callsign': callsign, 'community_id': get_current_community_id()})
     logger.info(f"Officer end shift: {callsign}")
     return jsonify({'success': True})
 
@@ -5226,6 +5456,7 @@ def end_officer_session_for_callsign(callsign):
         db.session.rollback()
         logger.error(f'delete_officer_session error: {e}')
         return jsonify({'success': False, 'error': 'Unable to end officer session.'}), 500
+    emit_community_event('officer:session', {'action': 'ended', 'callsign': callsign, 'community_id': get_current_community_id()})
     logger.info(f"Officer end shift: {callsign}")
     return jsonify({'success': True})
 
@@ -5270,6 +5501,7 @@ def post_alert():
         logger.error(f'post_alert error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
     alert_dict = alert_to_dict(alert_obj)
+    emit_community_event('alert:new', {'alert': alert_dict, 'community_id': get_current_community_id()})
     logger.info(f"Alert broadcast: {alert_id} — {alert_type} by {issued_by}")
     return jsonify({'success': True, 'alert': alert_dict})
 
@@ -5335,6 +5567,7 @@ def post_cad_data():
 
     try:
         save_cad_data(data)
+        emit_community_event('cad:data_updated', {'community_id': get_current_community_id(), 'updated_at': datetime.utcnow().isoformat()})
         return jsonify({'success': True})
     except Exception as e:
         db.session.rollback()
