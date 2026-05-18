@@ -8268,10 +8268,6 @@ def serve_static(path):
     return frontend_page('index.html')
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
-
-
 def configured_platform_owner_matches_user(user):
     owner_email = (os.getenv('PLATFORM_OWNER_EMAIL') or '').strip().lower()
     owner_username = (os.getenv('PLATFORM_OWNER_USERNAME') or '').strip().lower()
@@ -11556,3 +11552,8 @@ def cad_ai_charge_suggestions():
         return ai_result
     out = ai_result[0]
     return jsonify({'success': True, 'suggestions': out.get('suggestions', []), 'warnings': out.get('warnings', [])})
+
+
+if __name__ == '__main__':
+    bind_port = int(os.getenv('PORT', '5000'))
+    socketio.run(app, host='0.0.0.0', port=bind_port, debug=False)
